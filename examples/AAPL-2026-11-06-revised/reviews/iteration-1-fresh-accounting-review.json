@@ -1,0 +1,221 @@
+{
+  "reviewer": "fresh_accounting_r1",
+  "review_date": "2026-11-06",
+  "scope": "Independent adversarial accounting/valuation review of frozen iteration1. No application code imported or executed; calculations were independently implemented from the frozen assumptions and cross-checked to raw filing and workbook records.",
+  "frozen_hashes": {
+    "memo.md": "e218eeb66da34e0720a0de6143790e02c7bed6e3d872e4b166780b37b5fb41ea",
+    "assumptions.json": "e94d87748ba3a49cdc2fb65b316a7e647eda909842a63540617673d8a744464c",
+    "valuation.json": "15b4a22f868f65b0080f8f64ba57413fd5441f72c87076894e1ed95eb2b28e9d",
+    "sources.json": "9785132cddd08f881b7f217e49a161aa75a9982b3249aa3587ab751b4d45ee66",
+    "review-manifest.json": "4a052cc6b174ebfb1a88e996d79629bf1de133e64820375520287bc985709ee7"
+  },
+  "conclusion": {
+    "computational_status": "PASS: no material arithmetic, category aggregation, financing double count, terminal handoff or reverse-DCF error found.",
+    "underwriting_status": "Not yet demonstrated to match DeepValue-level underwriting rigor. The conditional valuation is reproducible, but the central issuer required-return choice and empirical capital/cash-conversion calibration remain insufficiently evidenced. The missing cash-tax/provision distinction has a bounded explicit fix and existing20%/24% stresses; it is not an inconsistent tax claim. These are economic-underwriting gaps, not grounds to label disclosed assumptions false actuals.",
+    "confirmed_material_accounting_errors": 0,
+    "confirmed_low_severity_inconsistencies": 1,
+    "publication_blocker_from_arithmetic": false,
+    "publication_caution": "Do not present computational reproducibility or this review as certification of a $146.90 fair value. Resolve or clearly retain the substantive underwriting limits below."
+  },
+  "confirmed_findings": [
+    {
+      "id": "ACCT-F1",
+      "severity": "low",
+      "classification": "confirmed stale cross-reference",
+      "location": {
+        "file": "/workspace/scratch/aapl-a-plus-iteration1/sources.json",
+        "line": 3558,
+        "json_pointer": "/29/data/facts_and_interpretation/method"
+      },
+      "excerpt": "These discount-rateassumptions are sharply different from house9.5%WACC/3%g.",
+      "evidence": "memo.md lines 7 and 119 and the frozen discount-rate calculation use 10.7248895764%, not 9.5%. Phillip inputs of 6.5%/3.5% are correctly sourced; the erroneous number is the house comparator in the curated source summary.",
+      "impact": "Does not alter numerical results, but the source packet is internally inconsistent.",
+      "specific_fix": "Remove the house comparison from this source-fact field, or update it to the frozen 10.72% WACC while marking it as an analyst comparison."
+    }
+  ],
+  "underwriting_gaps": [
+    {
+      "id": "ACCT-U1",
+      "severity": "medium",
+      "classification": "normalization and support gap; not an arithmetic error",
+      "location": {
+        "file": "/workspace/scratch/aapl-a-plus-iteration1/memo.md",
+        "lines": [
+          101,
+          103
+        ]
+      },
+      "excerpts": [
+        "The forecast uses $3 of incremental revenue per $1 of net operating investment, including working capital.",
+        "Cash operating tax is 17% in all cases. ... The former matches the latest effective-rate anchor but is not proven permanent;"
+      ],
+      "evidence": [
+        {
+          "file": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "lines": [
+            706,
+            708,
+            712,
+            713,
+            714,
+            715,
+            716,
+            717,
+            718,
+            719,
+            720,
+            721,
+            726,
+            1061,
+            1069
+          ],
+          "calculation": "The filing reports FY2026 GAAP tax provision $27.062bn on reported pretax income $159.237bn (16.995%). The exact cash-tax excerpt is \"Cash paid for income taxes, net in 2026 consisted of the following (in millions)\" followed by \"Total $34,588\". $34.588bn/$159.237bn=21.721%. This is a consolidated cash-income-tax-paid / reported-consolidated-pretax-income ratio, NOT an observed unlevered operating cash-tax rate. It cannot, by itself, establish the correct forecast rate. The 17% is explicitly normalized from expense-rate evidence and management guidance; no inconsistent claim that actual paid taxes equal17% was found."
+        },
+        {
+          "calculation": "From the raw cash-flow statement, FY2026 operating asset/liability movements sum to -$14.858bn; capex $9.041bn less D&A $13.423bn implies a simple cash-flow net-investment proxy of $10.476bn. FY2025 the same mechanical proxy is $26.017bn. Revenue increases were $62.673bn and $25.126bn, so the simple incremental sales/capital ratios vary from 5.98x to 0.97x. These are incomplete proxies, not measured sustainable ROIIC; their volatility is exactly why normalization is necessary."
+        }
+      ],
+      "conditional_effects": {
+        "base_value_sales_to_capital_1_5": 142.01616164062932,
+        "base_value_sales_to_capital_2": 144.4588470948915,
+        "base_value_sales_to_capital_3": 146.9015325491537,
+        "base_value_sales_to_capital_6": 149.34421800341588,
+        "weighted_value_tax_21_72_percent": 141.767207847507,
+        "note": "Isolated calculations; the 21.72% case is a diagnostic, not a claim that historical paid taxes should be perpetuated."
+      },
+      "specific_fix": "Bounded fix: add two sentences distinguishing FY2026 GAAP ETR17.0% and reported cash taxes $34.588bn (21.72% of consolidated pretax income), and state that 17% forward cash operating tax is a normalized house assumption supported by expense-rate guidance rather than the cash-paid ratio. Identify any known timing/nonoperating reasons for the gap; if they cannot be fully reconciled, say so explicitly and point to the already computed20%/24% stresses. Separately add a compact multi-year NOPAT-to-cash/reinvestment bridge to support3x; do not infer a replacement parameter mechanically from historical cash taxes or one year of capex.",
+      "blocks_claim_of_full_underwriting": "Only the broader unsupported cash-conversion calibration; the tax presentation gap alone is not material enough to block the memo.",
+      "assessment": "The issue is missing cash-versus-provision context and empirical cash-conversion support, not a demonstrable inconsistent tax claim or a demand to replace17% with21.72%. Existing20%/24% tax diagnostics already bound much of the valuation risk. A concise factual distinction resolves the presentation gap; full underwriting still benefits from a normalized cash-conversion bridge."
+    },
+    {
+      "id": "ACCT-U2",
+      "severity": "medium",
+      "classification": "central required-return calibration gap; disclosed proxy is coherent",
+      "location": {
+        "file": "/workspace/scratch/aapl-a-plus-iteration1/memo.md",
+        "lines": [
+          13,
+          114,
+          123,
+          125,
+          164
+        ]
+      },
+      "excerpts": [
+        "The Computers/Peripherals beta is a transparent sector proxy, not an observed Apple-specific risk parameter.",
+        "The next research priority is a better issuer-specific risk and cash-conversion case"
+      ],
+      "evidence": "The January 2026 Computers/Peripherals row truly reports 36 firms and a 1.32 cash-corrected unlevered beta. WACC math is correct. However, the record does not establish why that risk exposure is a better long-term Apple calibration than the other broad electronics proxies already recorded in S34 or an issuer-specific regression/bottom-up mix. The named Phillip counterfactual proves rate importance, but does not resolve the proxy choice.",
+      "conditional_effects": {
+        "unlevered_beta_0_93_wacc": 0.0901188924688334,
+        "unlevered_beta_0_93_base_value": 190.20201246291018,
+        "unlevered_beta_0_94_wacc": 0.09055812332255314,
+        "unlevered_beta_0_94_base_value": 188.78309144126064,
+        "selected_beta_1_32_base_value": 146.9015325491537,
+        "note": "Alternative sector numbers are source-recorded comparators, not endorsed substitute betas. Other inputs are fixed."
+      },
+      "specific_fix": "Provide one dated issuer-specific beta cross-check with a stated index/window/frequency and one bottom-up hardware/Services risk mapping, reconcile cash and lease conventions, and show a defendable required-return range. Explain why the chosen point is suitable for this business rather than relying on the sector label.",
+      "blocks_claim_of_full_underwriting": true
+    },
+    {
+      "id": "ACCT-U3",
+      "severity": "low",
+      "classification": "compensation settlement-equivalence remains approximate; no confirmed double count",
+      "location": {
+        "file": "/workspace/scratch/aapl-a-plus-iteration1/memo.md",
+        "line": 97
+      },
+      "excerpt": "The house retains GAAP stock compensation inside forecast R&D/SG&A and treats that charge as a cash-equivalent employee cost while holding current ordinary shares fixed. It therefore makes no second deduction of the $24.1 billion accounting amount.",
+      "evidence": [
+        {
+          "file": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "lines": [
+            1166,
+            1175,
+            1181,
+            1183,
+            1188,
+            1189
+          ],
+          "calculation": "142.405m outstanding RSUs at $227.67 weighted grant-date value imply approximately $32.421bn total grant-date value, versus $24.1bn unrecognized expense. The approximately $8.321bn difference shows that future unrecognized accounting expense and all existing claims are not interchangeable amounts. Actual vesting also entails both share issuance and cash tax withholding."
+        }
+      ],
+      "assessment": "Retaining SBC as a cash-equivalent operating cost with fixed current common shares is a coherent approximation. Adding all gross RSUs to the denominator or deducting the $24.1bn on top would not automatically be an improvement and may double count labor cost. This review cannot establish that the projected aggregate GAAP expense is exactly equivalent to the economic settlement of already earned awards and future grants; no material omission is proven.",
+      "specific_fix": "Label the convention explicitly as an approximation and add a bounded, consistently restated settlement sensitivity or award runoff check covering existing awards, future grants, tax withholding and SBC tax benefits. If claims are separately valued, remove the matching future compensation amounts consistently rather than stacking adjustments.",
+      "blocks_claim_of_full_underwriting": false
+    }
+  ],
+  "accepted_conventions_and_passes": [
+    {
+      "topic": "Category-to-EBIT bridge",
+      "assessment": "PASS",
+      "details": "Five category actuals sum to $478.834bn. FY2026 gross profit increase $38.401bn minus R&D increase $11.215bn minus SG&A increase $2.173bn equals EBIT increase $25.013bn. FY2027 base category revenues total $522.930560bn, group-margin gross profit $241.8292861bn less $52.1721bn R&D and $32.15592bn SG&A equals $157.5012661bn EBIT. No invented category margins are passed off as actuals."
+    },
+    {
+      "topic": "52/53-week calendar",
+      "assessment": "PASS",
+      "details": "Independently deriving each last Saturday of September produces 53 weeks in FY2028 and FY2034 and 52 in all other explicit years. All component growth arrays follow (1+underlying growth)*current/prior weeks-1. Expense arrays follow the same convention. Maximum floating-point expense difference was $0.0000153; uniform weekly density is clearly a house simplification. FY2036 and terminal year are 52-week periods."
+    },
+    {
+      "topic": "Explicit net reinvestment and terminal continuity",
+      "assessment": "PASS as disclosed assumptions",
+      "details": "Base FY2027 ($522.930560bn-$478.834bn)/3=$14.698853333bn net reinvestment. NOPAT $130.726050863bn minus reinvestment gives FCFF $116.027197530bn. Final FCFF $229.210381271bn becomes terminal NOPAT $246.306952536bn*(1-.03/.50)=$231.528535384bn, a 1.011365% increase. Continuing forecast sales/capital only in the terminal year raises value to $149.013952228. High perpetual ROIC is disclosed as a franchise assumption, not claimed as measured historical return."
+    },
+    {
+      "topic": "Dated CAPM/WACC",
+      "assessment": "PASS arithmetic and archive date decoding",
+      "details": "Raw ERP workbook xl/workbook.xml sets date1904=1; serial44865 decodes to 2026-11-01. Raw cells C220=.0494 and I220=.0441 match the rate pair. S34 row supplies beta1.32. Raw AA yield CSV gives 5.51% on November5. E=$344.17*14.532182bn=$5,001.54107894bn; included D=$80.111bn+$1.456bn=$81.567bn. betaE=1.32*[1+.75*D/E]=1.33614528977; costE=10.8324007279%; WACC=10.7248895764%. Marginal25% and operating17% serve distinct purposes and are explicitly house assumptions."
+    },
+    {
+      "topic": "Equity bridge, debt, cash and leases",
+      "assessment": "PASS",
+      "details": "Raw balance sheet cash/securities $36.305bn+$20.417bn+$80.213bn=$136.935bn. Financial debt $1.997bn commercial paper+$9.906bn current term+$68.208bn noncurrent term=$80.111bn. Net financial cash=$56.824bn. Finance lease current $.700bn+noncurrent $.756bn=$1.456bn is deducted exactly once outside financial debt. Operating lease rent remains in GAAP EBIT, so no separate operating lease deduction is internally coherent. Classification of all cash as surplus remains a disclosed judgment."
+    },
+    {
+      "topic": "Share count and dates",
+      "assessment": "PASS with disclosed date limitations",
+      "details": "Cover page reports 14,532,182,000 shares outstanding October23; this is not the annual diluted weighted average. No forecast share shrinkage is assumed. September26 opening balance sheet, November5 quote and no annual stub correction are disclosed; precision does not eliminate the approximation."
+    },
+    {
+      "topic": "Monitoring/counterfactual mapping",
+      "assessment": "PASS",
+      "details": "All six monitoring rows identify a dated analyst review point, observation/threshold and exact named case; none is represented as company guidance. iPhone and Services growth, temporary/permanent Products margin paths, Services margin exposure and 5% expense reduction match their overrides. The operating-expense threshold corresponds closely to the FY2028 counterfactual expense ratio (~15.46%). Cases remain isolated and are explicitly nonadditive. The $4bn Services-profit threshold is broadly consistent with the first stressed-year 3%-of-$152.063bn profit exposure (~$4.562bn)."
+    },
+    {
+      "topic": "Implied WACC/beta",
+      "assessment": "PASS",
+      "details": "Independent bisection with all base operating and terminal assumptions fixed gives WACC6.3690354677%. Solving the same financing-weight equation gives cost-of-equity beta.3323151300 and unlevered beta.3282996056. The memo correctly calls these conditional algebraic implications, not observed beta or unique market beliefs."
+    }
+  ],
+  "independent_numeric_results": {
+    "bear_per_share": 90.77467712519011,
+    "base_per_share": 146.9015325491537,
+    "bull_per_share": 216.98502361330898,
+    "weighted_per_share": 150.39069145920163,
+    "max_cashflow_row_absolute_difference_currency_units": 0.0003662109375,
+    "counterfactuals_per_share": {
+      "iphone_growth_persistence": 154.08512215573094,
+      "services_growth_monetization": 159.89876256617586,
+      "product_margin_temporary_shock": 146.50197540957657,
+      "product_margin_persistent_shock": 140.83719333610006,
+      "services_profit_exposure": 143.16028943683796,
+      "operating_cost_leverage": 150.11976877552723,
+      "street_revenue_path": 148.3189905531662,
+      "phillip_rate_parameters": 369.80625037452563
+    },
+    "max_counterfactual_difference_per_share": 1.7053025658242404e-13,
+    "base_terminal_value_fraction": 0.520373297797634,
+    "base_wacc_minus_one_point_value": 169.47622463630503,
+    "base_wacc_plus_one_point_value": 129.54833394786493,
+    "weighted_tax_20_percent_value": 144.9096637399042,
+    "weighted_tax_24_percent_value": 137.60162678084095,
+    "cashflow_formula": "FCFF_t=EBIT_t*(1-tax)-(Revenue_t-Revenue_(t-1))/sales_to_capital; PV=sum FCFF_t/(1+WACC)^t; terminal FCFF=last NOPAT*(1+g)*(1-g/ROIC); EV=PV+terminalFCFF/(WACC-g)/(1+WACC)^10; equity=EV+56.824bn-1.456bn; per share=equity/14.532182bn."
+  },
+  "not_findings": [
+    "No independent evidence of fabricated actuals was identified in the scoped financial claims; the raw filing supports the selected values.",
+    "Do not equate a difference between program repurchases $85.8bn and cash-flow repurchases $86.390bn with an error in the reported cash flow. The memo correctly leaves the $.590bn reconciliation unresolved.",
+    "Different operating-tax and marginal-tax assumptions are not inherently inconsistent.",
+    "A permanent franchise ROIC above WACC is economically demanding but not a mathematical error.",
+    "Not separately deducting $24.1bn unrecognized compensation is not by itself evidence of an omitted $24.1bn liability."
+  ]
+}

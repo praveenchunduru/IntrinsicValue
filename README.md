@@ -43,38 +43,33 @@ investmentideas
 
 ## Research and valuation
 
-Full mode is the default. It retrieves keyless market and annual financial data,
-recent SEC filings, and supported issuer releases. Bounded web searches through
-OpenRouter broaden primary and independent evidence without a separate search key.
-Unavailable sources and the limits of excerpt coverage are recorded explicitly.
-An official SEC issuer-directory snapshot is a disclosed mapping fallback; it
-never supplies stale company financial statements. Yahoo financials are secondary
-sources, and their normalized dates are distinguished from actual filing periods.
+Full mode retrieves keyless market/annual financial data, recent SEC filings and
+supported issuer releases. Bounded OpenRouter web searches broaden the evidence
+without a separate search key. Unavailable sources, excerpt limits, secondary
+financial data and issuer-directory mapping fallbacks are disclosed.
 
-Supported primary inline-XBRL facts lock historical balances, share counts and the
-financial-debt/cash/financing-lease bridge before forecasting. Models cannot invent
-rounding residuals or override those reported values. Conflicting or incomplete
-essential primary coverage produces no price target; unknown facts never become zero.
-The all-cash-as-nonoperating classification and unidentified additional claims remain
-explicit house modeling policies, not reported facts.
+Primary inline-XBRL facts lock supported balances, shares and the financial-debt,
+cash and finance-lease bridge. Conflicting or incomplete essential primary coverage
+produces no price target; unknown facts never become zero. Cash classification and
+unidentified additional claims remain explicit house policies, not reported facts.
 
-The full workflow produces evidence synthesis, a source-referenced forecast plan,
-a Python-computed bear/base/bull FCFF DCF, and an argument-led memo. A fresh model
-context reviews the frozen draft, evidence and valuation. Material findings trigger
-targeted research, model corrections, recomputation and prose revision. Corrections
-are bounded by the revision limit and the remaining budget. Unresolved material
-findings remain visible; they are never converted into approval to finish a run.
+The workflow synthesizes evidence, builds a source-referenced forecast plan,
+computes a bear/base/bull FCFF DCF in Python and writes a memo. Fresh-context review
+can trigger targeted research, corrections, recomputation and revision within the
+remaining budget and revision limit. Unresolved material findings remain visible.
 
 The valuation includes operating growth/margins, taxes, incremental sales-to-capital,
 terminal reinvestment at terminal ROIC, discount rates, net debt and noncommon claims,
 scenario weighting, sensitivities and a reverse DCF where a market price is available.
-Optional named `counterfactuals` in assumptions.json override base forecast inputs only;
-Python computes their values, cashflows and revenue paths without changing the house
-probabilities or weighted value. Reverse-DCF solutions also include annual revenue paths.
-Missing actuals are unknown, never silently zero. Forecasts are explicit house
-assumptions. This unlevered FCFF model is not appropriate for every sector or security;
-if essential inputs or an appropriate model are unavailable, no invented price target
-is produced. It does not model a detailed debt refinancing, NOL or capital-lease schedule.
+Optional company-specific operating schedules derive revenue and EBIT from sourced
+starting categories and explicit forward drivers. Dated required-return inputs can
+compute WACC; sector betas, issuer return history and debt-yield proxies retain their
+different conventions and dates. Computed counterfactuals, calibration comparisons
+and monitoring thresholds show conditional value changes without altering house
+scenario weights. See the [underwriting guide](docs/underwriting.md) for schemas,
+accounting conventions, editable plans and limits. Forecasts remain house assumptions;
+this FCFF model does not suit every sector or security and has no detailed refinancing,
+NOL or lease-adjustment schedule.
 
 ## CLI
 
@@ -90,17 +85,8 @@ python -m investmentideas AAPL --profile balanced --budget 2
 python -m investmentideas AAPL --profile economy --budget 2
 python -m investmentideas AAPL --quick --profile economy --budget 1
 
-# Supply focused, dated evidence if a source is unavailable
-python -m investmentideas AAPL --evidence filing.txt --budget 2
-
-# Append archived primary evidence, then investigate independent review notes
-python -m investmentideas AAPL --sources primary-sources.json --budget 3
-
-# Compute explicit forecast counterfactuals and review the same saved run
-python -m investmentideas AAPL --counterfactuals cases.json --budget 3
-
-# Review an edited memo body against the saved evidence and computed model
-python -m investmentideas AAPL --draft edited-body.md --budget 3
+# Replay dated sources and review a supplied company-specific forecast
+python -m investmentideas AAPL --snapshot sources.json --forecast-plan assumptions.json --budget 3
 
 # Investigate independent review notes in the same day's saved full run
 python -m investmentideas AAPL --review-notes findings.txt --max-revisions 6 --budget 3
@@ -108,10 +94,12 @@ python -m investmentideas AAPL --review-notes findings.txt --max-revisions 6 --b
 # Choose an independent final reviewer without repeating completed research
 python -m investmentideas AAPL --review-model openai/gpt-5.4 --budget 3
 
-# Explicit model overrides; unavailable IDs fail rather than silently changing models
-python -m investmentideas AAPL --easy-model qwen/qwen3-30b-a3b-instruct-2507 \
-  --strong-model deepseek/deepseek-v3.2
 ```
+
+Use `--evidence` for focused text, `--sources` for supplemental source records,
+`--counterfactuals` for computed base-case overrides, and `--draft` for an edited
+author body. `--easy-model` and `--strong-model` select explicit model IDs; unavailable
+IDs fail. See `--help` and the [underwriting guide](docs/underwriting.md).
 
 On PowerShell use your preferred local secret mechanism to set
 `$env:OPENROUTER_API_KEY`, or use the browser form. [portable environment example](investmentideas/.env.example) documents the
@@ -129,7 +117,8 @@ for a new same-day snapshot. OS file locks prevent duplicate concurrent full run
 - `source-ledger.json`: paragraph-to-citation mapping; citation syntax is not semantic proof.
 - `assumptions.json`, `valuation.json`, `cashflows.csv`, `sensitivity.csv`: editable inputs and reproducible calculations.
 - `reviews/`, `revisions/`: frozen drafts, recorded findings, model responses and covered-file hashes.
-- `state.json`, `usage.json`: checkpoints, exact requested/returned models, token usage and costs/reservations.
+- `state.json`, `usage.json`: checkpoints, requested/returned models, reported token usage and costs/reservations.
+- `cost-summary.json`: cumulative stage/model costs, retained estimates and reported token-count coverage.
 
 The browser provides authenticated downloads. Edit assumptions and recompute **offline**:
 
@@ -160,18 +149,16 @@ invalidates its prior review; forecasts and completed research are retained.
 Interrupted/failed requests preserve a reservation because a provider may
 already have charged; completed stages are reused.
 
-As observed on 2026-11-06, Qwen cost $0.10/$0.30, DeepSeek $0.26/$0.38, and Sonnet
-$3/$15 per million input/output tokens. Exa Auto search through OpenRouter cost
-$0.007 per request including up to ten results; the runner requests five and reserves
-extra search/context allowance. Prices change. Native search is not enabled merely
-because a model lists a native-search price.
+The cost summary separates provider-reported cost from retained estimates.
+`state.json` also records full-versus-presented valuation-context UTF-8 byte sizes.
+These measurements do not establish token savings, optimal routing or a quality/cost
+frontier; see the [measurement limits](docs/underwriting.md#costs-and-context-size).
 
-A live four-call AAPL economy overview reported **$0.00757138**, but its initial
-memo contained factual/date errors found by independent source inspection. That
-run establishes transport/cost functionality, not a quality benchmark. The full
-pipeline adds primary evidence, computed arithmetic, editable valuation and bounded
-revision. Full-memo cost depends on evidence volume and revision count, so the
-small overview price must not be extrapolated as a promised full-memo cost.
+As observed on 2026-11-06, Qwen cost $0.10/$0.30, DeepSeek $0.26/$0.38, and Sonnet
+$3/$15 per million input/output tokens; Exa Auto search cost $0.007 per request.
+Prices change. A four-call AAPL economy overview reported **$0.00757138** but had
+factual/date errors. It establishes transport/cost functionality, not memo quality
+or a promised full-run price. Full-memo cost depends on evidence and revisions.
 
 Local budgets use conservative input-byte and maximum-output estimates before each
 request. They are **not provider-enforced total spending caps**. Limit a dedicated
@@ -180,17 +167,24 @@ increase the cumulative allowance explicitly if more research or review is neede
 A run can stop with unresolved findings when its budget or revision limit is reached;
 that status is preserved rather than treated as approval.
 
-## Reviewed example
+## Dated examples
 
-The [AAPL memo dated November 6, 2026](examples/AAPL-2026-11-06/memo.md) includes
-its [editable assumptions](examples/AAPL-2026-11-06/assumptions.json),
-[computed valuation](examples/AAPL-2026-11-06/valuation.json),
-[source records](examples/AAPL-2026-11-06/sources.json), primary archives and
-[final model review](examples/AAPL-2026-11-06/review.json).
-The final fresh-context GPT-5.4 review returned pass with zero findings.
-Independent arithmetic checks matched 818 computed numeric fields and passed
-211 arithmetic checks plus 41 memo-number checks. These establish the recorded
-checks, not forecast plausibility or investment certainty.
+The [revised AAPL memo dated November 6, 2026](examples/AAPL-2026-11-06-revised/memo.md)
+uses a company-specific operating bridge, explicit required-return inputs and
+computed observation-to-value cases. Its [assumptions](examples/AAPL-2026-11-06-revised/assumptions.json)
+and [valuation](examples/AAPL-2026-11-06-revised/valuation.json) are editable and
+reproducible offline. Read the review findings and source limits alongside the memo;
+arithmetic and model review do not establish forecast plausibility or investment certainty.
+The [quality record](examples/AAPL-2026-11-06-revised/quality-review.md) includes
+fresh benchmark comparisons, conflicting automated reviews and independent
+adjudications. The editorial assessment is A / near-A+, at core DeepValue benchmark
+parity; the automated attempts did not approve the paper. This agent-directed
+research example is not a guarantee of the same depth for every new ticker.
+Its five additional OpenRouter requests report **$1.665431** in usage cost.
+
+The [earlier AAPL snapshot](examples/AAPL-2026-11-06/memo.md) retains its own
+[source records](examples/AAPL-2026-11-06/sources.json) and
+[model-review record](examples/AAPL-2026-11-06/review.json).
 
 The cumulative AAPL run, including iterative research, corrections and failed or
 formatting requests, recorded **$12.2630191** in reported charges and retained
@@ -203,7 +197,7 @@ fallback for new research.
 Recompute it without an API key:
 
 ```bash
-python -m investmentideas --revalue examples/AAPL-2026-11-06/assumptions.json --output revalued
+python -m investmentideas --revalue examples/AAPL-2026-11-06-revised/assumptions.json --output revalued
 ```
 
 ## Verification and limitations
@@ -214,8 +208,9 @@ python -m pip install .
 investmentideas --help
 ```
 
-All 156 portable tests pass from source and a fresh installation. CI runs synthetic
-evidence and mocked transports on Python 3.10, 3.12 and 3.13 without model calls or
+All **268 tests** pass from source and a fresh installed wheel. The
+[CI matrix](https://github.com/praveenchunduru/IntrinsicValue/actions/runs/42261827883)
+passes on Python 3.10, 3.12 and 3.13. CI runs synthetic evidence and mocked transports without model calls or
 secrets. [Live-validation guidance](docs/openrouter_live_validation.md) explains
 local budget controls and review provenance. Model review is a recorded assessment,
 **not independent publication certification or a guarantee of investment truth**.

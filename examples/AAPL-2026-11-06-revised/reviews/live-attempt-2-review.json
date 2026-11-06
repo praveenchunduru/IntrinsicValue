@@ -1,0 +1,127 @@
+{
+  "iteration": 0,
+  "verdict": "revise",
+  "model_verdict": "revise",
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "major",
+      "issue": "Load-bearing net cash claim uses a non-primary FY2025 figure that conflicts with the 10-K and is not reconciled in the memo\u2019s historical cash table.",
+      "source_refs": [
+        "S2",
+        "S4"
+      ],
+      "fix": "Use the primary FY2025 balance-sheet figures or explicitly reconcile any alternate definition. From S4, FY2025 cash plus securities minus financial debt is 41.742bn, not 33.763bn. If using another measure, define components and dates.",
+      "current_excerpt": "| Net financial cash, before finance leases | Not covered here | 33.763 | 56.824 |",
+      "current_excerpt_match": "literal"
+    },
+    {
+      "id": "F2",
+      "severity": "major",
+      "issue": "The memo presents a 2026 \u2018cash conversion\u2019 ratio using CFO/net income of 1.10x, but the exact math from the cited primary figures is ~1.0978x; the quoted sensitivity-style prose should match computed values, not rounded-up shorthand when used as evidence.",
+      "source_refs": [
+        "S4"
+      ],
+      "fix": "Either show more precise ratios or round consistently without overstating. FY2026 is 145.097/132.175 = 1.0978x; FY2025 is 0.9953x and FY2024 is 1.2616x.",
+      "current_excerpt": "| CFO / net income | 1.26x | 1.00x | 1.10x |",
+      "current_excerpt_match": "literal"
+    },
+    {
+      "id": "F3",
+      "severity": "major",
+      "issue": "The memo treats Morningstar as a \u2018much higher valuation\u2019 challenge, but Morningstar\u2019s disclosed fair value of $290 is below the frozen quote of $344.17, so it is not a contrary explanation for current market price support on its own.",
+      "source_refs": [
+        "S1",
+        "S29"
+      ],
+      "fix": "Reframe precisely: Morningstar is higher than the house valuation, but still below the observed quote. Separate \u2018challenge to house valuation\u2019 from \u2018support for current market price\u2019 to avoid overstating the contrary case.",
+      "current_excerpt": "The important challenge is that cautious near-term units and cost pressure can coexist with a much higher valuation.",
+      "current_excerpt_match": "literal"
+    },
+    {
+      "id": "F4",
+      "severity": "major",
+      "issue": "The strongest contrary explanation is incompletely evidenced because the memo says Phillip\u2019s lower-rate framework can support the quote, but it omits that Phillip\u2019s own published target is still below the frozen quote.",
+      "source_refs": [
+        "S1",
+        "S30"
+      ],
+      "fix": "State that Phillip\u2019s disclosed framework yields a $310 target in the public note, still below $344.17, even though applying only its rate parameters to house cash flows gives $369.81. That distinction is material to decision framing.",
+      "current_excerpt": "Of the reviewed contrary arguments, capitalization of Street-like near-term operations at lower required returns with persistent franchise profits is better evidenced than a decade of 16.52% sales growth: Phillip discloses an actual 6.5%/3.5% framework.",
+      "current_excerpt_match": "literal"
+    },
+    {
+      "id": "F5",
+      "severity": "major",
+      "issue": "The memo labels the market-implied reverse-DCF requirement as \u2018constant annual revenue growth for ten years\u2019 while explicitly holding the base aggregate EBIT-margin path fixed; that is not a full operating requirement and can be misread as a coherent company-level forecast path.",
+      "source_refs": [
+        "S4"
+      ],
+      "fix": "Keep the number but make the omission load-bearing: this is an aggregate revenue-only solve with margins/reinvestment/terminal economics fixed exogenously, not a complete market-implied operating forecast. Flag it more prominently in the headline sentence.",
+      "current_excerpt": "Holding the base aggregate EBIT-margin path, 17% operating tax, 3x sales-to-capital, 3% terminal growth, 50% terminal ROIC and equity bridge fixed, the executable reverse DCF needs 16.52% constant annual revenue growth for ten years to reach $344.17.",
+      "current_excerpt_match": "render-normalized"
+    },
+    {
+      "id": "F6",
+      "severity": "major",
+      "issue": "Base-case tax justification remains economically under-supported because the memo selects 17% cash operating tax while primary evidence shows 2026 cash taxes paid of $34.588bn versus $27.062bn provision, and no reconciliation is available. This assumption materially affects valuation.",
+      "source_refs": [
+        "S4"
+      ],
+      "fix": "Add explicit conclusion risk: 17% is a provision-based assumption despite materially higher current cash taxes, and lack of reconciliation is unresolved. Quantify that this assumption is a major driver and frame it as a key debatable input, not merely a disclosed choice.",
+      "current_excerpt": "Cash operating tax is normalized at 17% in all cases, supported as an expense-rate anchor by the latest effective rate and management\u2019s quarterly guidance rather than claimed to equal cash paid.",
+      "current_excerpt_match": "literal"
+    },
+    {
+      "id": "F7",
+      "severity": "major",
+      "issue": "The memo argues FY2027 operating forecast is \u2018close to consensus\u2019 but compares house gross margin to a public FY2027 consensus gross margin from StockAnalysis whose panel uses non-GAAP adjusted numbers for EPS and does not establish full accounting comparability across metrics; the gross-margin row may still be usable, but the memo does not acknowledge basis uncertainty in that sentence.",
+      "source_refs": [
+        "S24",
+        "S25",
+        "S26"
+      ],
+      "fix": "Qualify that the cited public consensus gross-margin row comes from a secondary vendor panel and is used only as a dated directional comparison, not as verified like-for-like GAAP forecasting evidence.",
+      "current_excerpt": "House FY2027 gross margin is 46.2%; the public consensus table already anticipates 46.34%.",
+      "current_excerpt_match": "literal"
+    },
+    {
+      "id": "F8",
+      "severity": "major",
+      "issue": "The memo cites the 6.37% quote-equating rate as if it is directly comparable to Phillip\u2019s 6.5% WACC, but the former is a reverse-solved constant discount rate under house base operations while Phillip\u2019s 6.5% sits inside a different full model. The current text notes some differences, but the comparison still risks overstating equivalence in the contrary-case framing.",
+      "source_refs": [
+        "S30"
+      ],
+      "fix": "State adjacent to the 6.37% number that it is a model-implied constant rate under house cash flows and terminal structure, not directly comparable to Phillip\u2019s published WACC from a different forecast set. Avoid using the two as near-interchangeable anchors.",
+      "current_excerpt": "Holding the original base terminal growth and every operating input fixed, a constant rate of 6.37% equates value to the frozen quote.",
+      "current_excerpt_match": "render-normalized"
+    },
+    {
+      "id": "section-diligence-questions",
+      "severity": "minor",
+      "issue": "No clear diligence questions section was detected.",
+      "source_refs": [],
+      "fix": "Add a substantive section or clearly identify the evidence gap."
+    }
+  ],
+  "manifest": {
+    "memo_sha256": "96e9a3fec144732e7627b894276d30dabcaa546967b78f3901b4c894871573f8",
+    "sources_sha256": "1c79df145b427ac9fd3a937abdcc7fb5c63b4abd2a5f92bb4776f8521c8fa782",
+    "valuation_sha256": "6c941520e3d464655e1ee68e0c3353c5c9dff26c5d4d7006db62ffc80caff77e",
+    "review_type": "model_peer_review_not_publication_certification"
+  },
+  "diagnostic_scope": {
+    "checks": [
+      "source reference resolution",
+      "decision-section coverage",
+      "explicit quote dates",
+      "explicit model value comparisons"
+    ],
+    "limitations": [
+      "A resolving citation does not establish support for its claim.",
+      "Unlabelled prose numbers are not independently verified here.",
+      "Model review and software checks are not independent certification."
+    ]
+  },
+  "review_model": "openai/gpt-5.4"
+}

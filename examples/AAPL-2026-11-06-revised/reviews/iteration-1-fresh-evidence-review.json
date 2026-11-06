@@ -1,0 +1,59 @@
+{
+  "reviewer": "fresh adversarial evidence reviewer",
+  "review_date": "2026-11-06",
+  "scope": [
+    "memo.md",
+    "memo-body.md",
+    "sources.json",
+    "assumptions.json",
+    "valuation.json",
+    "review-manifest.json"
+  ],
+  "method": "Read-only review of the frozen files against archived original HTML/PDF/XML/JSON and their text extractions; tested source scope and contrary interpretations, not just numerical agreement. A second independent narrow reviewer inspected the rate originals. No paid calls, publishing, source edits, or live refetches.",
+  "frozen_content_verified": {
+    "memo_body_sha256": "07da30fbaa38fa3e2a23705295a2ff676c6cf9ebbf72db9de23f0e3b1e5fc43f",
+    "memo_sha256": "e218eeb66da34e0720a0de6143790e02c7bed6e3d872e4b166780b37b5fb41ea",
+    "sources_canonical_sha256": "21d204cab7439a1e75c8a9f317a0672def2d5db2ee14cebfa6691861bd4980be",
+    "valuation_canonical_sha256": "03244b6cd608672b322cf657ee3bd4d527a36c373aba205bbcad6b8735c0f585",
+    "manifest_match": true,
+    "note": "JSON manifest digests use canonical json.dumps(sort_keys=True, ensure_ascii=False); Markdown digests use file bytes."
+  },
+  "findings": [
+    {
+      "id": "E1",
+      "severity": "low",
+      "material": false,
+      "file": "memo-body.md",
+      "line": 77,
+      "current_excerpt": "These estimate sites share S&P data and are not independent forecasting votes.",
+      "source_refs": [
+        "S24",
+        "S25",
+        "S26",
+        "S27"
+      ],
+      "issue": "Vendor commonality is established for StockAnalysis and Simply Wall St, but the wording generalizes across all four cited sites. The archived MarketScreener footer lists FactSet, Morningstar and S&P Capital IQ as stock-quote providers without establishing the vendor of its estimate panel; the Nasdaq API has no vendor attribution, as sources.json itself states. The evidence supports caution about independence, not an affirmative assertion that every panel shares S&P data.",
+      "specific_fix": "Replace with: \"StockAnalysis and Simply Wall St explicitly share S&P data. Independence of the other panels is not established, so they should not be counted as separate forecasting votes.\"",
+      "effect": "No quoted estimate, model result, or near-term consensus conclusion changes."
+    }
+  ],
+  "material_source_defect_remains": false,
+  "supported_material_claims": [
+    "Frozen USD quote, November 5 regular-session timestamp, September 26 fiscal close, October 23 ordinary shares, and the different observation dates are identified distinctly.",
+    "Fiscal revenue category figures, iPhone contribution to growth, declining observed Services mix, group margins, expense/profit bridge, capital/debt/cash/finance-lease amounts, repurchases, RSU count and unrecognized compensation have original filing support. Historical category units/ASPs and individual hardware margins are not invented.",
+    "Duo October 23 availability is after fiscal close; prospective retail price is not portrayed as realized ASP. Near-term guidance, constrained supply, memory inflation and offsets are attributed to management in a third-party transcript and are not treated as proved demand loss or annual guarantees.",
+    "The installed-device count and CMA UK last-replacement survey are dated and scoped correctly. Survey switching is not relabelled as global annual retention. Future AI access fees are not relabelled as an established price or measured revenue stream.",
+    "Current Ternus/Cook incentive arrangements are supported by the September 1 amendment and distinguished from the January historical proxy. The three Newstead sales have original Form 4 support and their plan/sample limits are preserved.",
+    "Consensus revenue/EBIT amounts and contributor counts have archived panel support; provider fiscal labels, EPS comparability, gating and update differences remain disclosed.",
+    "The Morningstar, Phillip, Wedgewood, Berkshire and Henry Fund arguments match their originals. Named authors, dated holdings/weights, historical versus current forecasts, partial PDF access, and conditional rate comparisons are distinguished.",
+    "The EU/Epic/CMA procedural language and party interests remain bounded. The Services stress is a house exposure test rather than an asserted regulatory expected loss.",
+    "Original workbook explicitly supports the November 1 Excel1904 monthly date, matched 4.94% Treasury and 4.41% sustainable-payout ERP. Original beta table supports January 2026, 36 Computers/Peripherals firms and 1.32 cash-corrected beta. Original FRED/H15 supports the separate daily yield definitions and observation/publication dates. No source claims an observed Apple WACC.",
+    "Forecast growth, margin recovery, tax-shield rate, capital efficiency, perpetual excess returns, scenario weights and observation deadlines are identified as house judgments, not reported actuals or guaranteed causal outcomes."
+  ],
+  "residual_limits": [
+    "This review establishes consistency with archived originals, not independent truth of every issuer, analyst, regulator-party, or data-vendor assertion, and does not certify live freshness after the snapshot.",
+    "No complete paid/login-only Phillip model, consensus respondent universe, issuer-specific empirical beta, or exhaustive insider-history dataset was available; the memo already bounds those limitations.",
+    "No full independent arithmetic or economic-sufficiency certification was performed. Forecast durability, required return, cash conversion and financing conventions can dominate value even when source claims are accurate.",
+    "Source-checking quality does not establish an investment edge or demonstrate superiority to an external product."
+  ]
+}

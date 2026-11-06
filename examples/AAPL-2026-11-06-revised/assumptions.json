@@ -1,0 +1,1920 @@
+{
+  "currency": "USD",
+  "amount_unit": "currency_units",
+  "share_unit": "shares",
+  "valuation_date": "2026-11-06",
+  "actuals": {
+    "revenue": 478834000000,
+    "net_debt": -56824000000,
+    "other_equity_claims": 1456000000,
+    "shares_outstanding": 14532182000
+  },
+  "source_refs": {
+    "revenue": [
+      "S4"
+    ],
+    "net_debt": [
+      "S4"
+    ],
+    "other_equity_claims": [
+      "S4",
+      "assumption: additional unidentified claims are zero, not a reported fact"
+    ],
+    "shares_outstanding": [
+      "S4"
+    ],
+    "market_price": [
+      "S1"
+    ]
+  },
+  "input_dates": {
+    "revenue": {
+      "start_date": "2025-09-28",
+      "end_date": "2026-09-26",
+      "basis": "primary annual duration"
+    },
+    "net_debt": {
+      "instant": "2026-09-26",
+      "basis": "same-period primary financial debt less selected nonoperating assets"
+    },
+    "other_equity_claims": {
+      "instant": "2026-09-26",
+      "basis": "reported finance lease liabilities plus explicit house assumption for unidentified claims"
+    },
+    "shares_outstanding": {
+      "instant": "2026-10-23",
+      "basis": "latest reported ordinary shares outstanding; never annual average or issued shares"
+    },
+    "market_price": {
+      "observed_at": "2026-11-05T21:00:01+00:00",
+      "basis": "regular-session observed quote; not the research date"
+    }
+  },
+  "net_debt_bridge": {
+    "currency": "USD",
+    "as_of": "2026-09-26",
+    "debt": 80111000000,
+    "selected_cash_and_nonoperating_investments": 136935000000,
+    "net_debt": -56824000000,
+    "cash_components": {
+      "cash_and_cash_equivalents": {
+        "value": 36305000000,
+        "source_refs": [
+          "S4"
+        ],
+        "facts": [
+          {
+            "concept": "us-gaap:CashAndCashEquivalentsAtCarryingValue",
+            "source_id": "S4",
+            "context_ref": "c-19",
+            "instant": "2026-09-26",
+            "start_date": null,
+            "end_date": null,
+            "unit": "iso4217:USD",
+            "entity_identifier": "320193",
+            "value": 36305000000
+          }
+        ]
+      },
+      "current_marketable_securities": {
+        "value": 20417000000,
+        "source_refs": [
+          "S4"
+        ],
+        "facts": [
+          {
+            "concept": "us-gaap:MarketableSecuritiesCurrent",
+            "source_id": "S4",
+            "context_ref": "c-19",
+            "instant": "2026-09-26",
+            "start_date": null,
+            "end_date": null,
+            "unit": "iso4217:USD",
+            "entity_identifier": "320193",
+            "value": 20417000000
+          }
+        ]
+      },
+      "noncurrent_marketable_securities": {
+        "value": 80213000000,
+        "source_refs": [
+          "S4"
+        ],
+        "facts": [
+          {
+            "concept": "us-gaap:MarketableSecuritiesNoncurrent",
+            "source_id": "S4",
+            "context_ref": "c-19",
+            "instant": "2026-09-26",
+            "start_date": null,
+            "end_date": null,
+            "unit": "iso4217:USD",
+            "entity_identifier": "320193",
+            "value": 80213000000
+          }
+        ]
+      }
+    },
+    "debt_components": {
+      "commercial_paper": {
+        "value": 1997000000,
+        "source_refs": [
+          "S4"
+        ],
+        "facts": [
+          {
+            "concept": "us-gaap:CommercialPaper",
+            "source_id": "S4",
+            "context_ref": "c-19",
+            "instant": "2026-09-26",
+            "start_date": null,
+            "end_date": null,
+            "unit": "iso4217:USD",
+            "entity_identifier": "320193",
+            "value": 1997000000
+          }
+        ]
+      },
+      "current_term_debt": {
+        "value": 9906000000,
+        "source_refs": [
+          "S4"
+        ],
+        "facts": [
+          {
+            "concept": "us-gaap:LongTermDebtCurrent",
+            "source_id": "S4",
+            "context_ref": "c-19",
+            "instant": "2026-09-26",
+            "start_date": null,
+            "end_date": null,
+            "unit": "iso4217:USD",
+            "entity_identifier": "320193",
+            "value": 9906000000
+          }
+        ]
+      },
+      "noncurrent_term_debt": {
+        "value": 68208000000,
+        "source_refs": [
+          "S4"
+        ],
+        "facts": [
+          {
+            "concept": "us-gaap:LongTermDebtNoncurrent",
+            "source_id": "S4",
+            "context_ref": "c-19",
+            "instant": "2026-09-26",
+            "start_date": null,
+            "end_date": null,
+            "unit": "iso4217:USD",
+            "entity_identifier": "320193",
+            "value": 68208000000
+          }
+        ]
+      }
+    },
+    "cash_classification_policy": "Explicit house modeling policy: all reported cash and cash equivalents plus current and noncurrent marketable securities are classified as nonoperating assets. This does not establish that all cash is economically surplus or that required operating cash is zero.",
+    "explanation": "Exact sum of reported financial-debt components minus the exact sum of selected cash and marketable securities. No rounding residual or second cash add-back is permitted. Finance leases are outside this debt subtotal.",
+    "lease_policy": "Finance leases are excluded from financial debt and deducted once in other equity claims. Operating lease liabilities are not added under the unadjusted operating-EBIT convention; capitalizing them would require a consistent EBIT and reinvestment restatement."
+  },
+  "other_claims_bridge": {
+    "currency": "USD",
+    "as_of": "2026-09-26",
+    "reported_finance_lease_liabilities": 1456000000,
+    "finance_leases_included_in_net_debt": false,
+    "additional_unidentified_claims": 0,
+    "additional_unidentified_claims_basis": "Explicit house assumption: additional unidentified equity claims are zero. This is not a reported fact or evidence that no additional claims exist; identified finance lease liabilities are deducted once as other equity claims, outside financial net debt.",
+    "other_equity_claims": 1456000000,
+    "source_facts": [
+      {
+        "concept": "us-gaap:FinanceLeaseLiability",
+        "source_id": "S4",
+        "context_ref": "c-19",
+        "instant": "2026-09-26",
+        "start_date": null,
+        "end_date": null,
+        "unit": "iso4217:USD",
+        "entity_identifier": "320193",
+        "value": 1456000000
+      }
+    ],
+    "lease_policy": "Finance leases are excluded from financial debt and deducted once in other equity claims. Operating lease liabilities are not added under the unadjusted operating-EBIT convention; capitalizing them would require a consistent EBIT and reinvestment restatement."
+  },
+  "market_price": 344.17,
+  "reported_inputs": {
+    "actuals": {
+      "revenue": 478834000000,
+      "net_debt": -56824000000,
+      "other_equity_claims": 1456000000,
+      "shares_outstanding": 14532182000
+    },
+    "currency": "USD",
+    "source_refs": {
+      "revenue": [
+        "S4"
+      ],
+      "net_debt": [
+        "S4"
+      ],
+      "other_equity_claims": [
+        "S4",
+        "assumption: additional unidentified claims are zero, not a reported fact"
+      ],
+      "shares_outstanding": [
+        "S4"
+      ],
+      "market_price": [
+        "S1"
+      ]
+    },
+    "input_dates": {
+      "revenue": {
+        "start_date": "2025-09-28",
+        "end_date": "2026-09-26",
+        "basis": "primary annual duration"
+      },
+      "net_debt": {
+        "instant": "2026-09-26",
+        "basis": "same-period primary financial debt less selected nonoperating assets"
+      },
+      "other_equity_claims": {
+        "instant": "2026-09-26",
+        "basis": "reported finance lease liabilities plus explicit house assumption for unidentified claims"
+      },
+      "shares_outstanding": {
+        "instant": "2026-10-23",
+        "basis": "latest reported ordinary shares outstanding; never annual average or issued shares"
+      },
+      "market_price": {
+        "observed_at": "2026-11-05T21:00:01+00:00",
+        "basis": "regular-session observed quote; not the research date"
+      }
+    },
+    "net_debt_bridge": {
+      "currency": "USD",
+      "as_of": "2026-09-26",
+      "debt": 80111000000,
+      "selected_cash_and_nonoperating_investments": 136935000000,
+      "net_debt": -56824000000,
+      "cash_components": {
+        "cash_and_cash_equivalents": {
+          "value": 36305000000,
+          "source_refs": [
+            "S4"
+          ],
+          "facts": [
+            {
+              "concept": "us-gaap:CashAndCashEquivalentsAtCarryingValue",
+              "source_id": "S4",
+              "context_ref": "c-19",
+              "instant": "2026-09-26",
+              "start_date": null,
+              "end_date": null,
+              "unit": "iso4217:USD",
+              "entity_identifier": "320193",
+              "value": 36305000000
+            }
+          ]
+        },
+        "current_marketable_securities": {
+          "value": 20417000000,
+          "source_refs": [
+            "S4"
+          ],
+          "facts": [
+            {
+              "concept": "us-gaap:MarketableSecuritiesCurrent",
+              "source_id": "S4",
+              "context_ref": "c-19",
+              "instant": "2026-09-26",
+              "start_date": null,
+              "end_date": null,
+              "unit": "iso4217:USD",
+              "entity_identifier": "320193",
+              "value": 20417000000
+            }
+          ]
+        },
+        "noncurrent_marketable_securities": {
+          "value": 80213000000,
+          "source_refs": [
+            "S4"
+          ],
+          "facts": [
+            {
+              "concept": "us-gaap:MarketableSecuritiesNoncurrent",
+              "source_id": "S4",
+              "context_ref": "c-19",
+              "instant": "2026-09-26",
+              "start_date": null,
+              "end_date": null,
+              "unit": "iso4217:USD",
+              "entity_identifier": "320193",
+              "value": 80213000000
+            }
+          ]
+        }
+      },
+      "debt_components": {
+        "commercial_paper": {
+          "value": 1997000000,
+          "source_refs": [
+            "S4"
+          ],
+          "facts": [
+            {
+              "concept": "us-gaap:CommercialPaper",
+              "source_id": "S4",
+              "context_ref": "c-19",
+              "instant": "2026-09-26",
+              "start_date": null,
+              "end_date": null,
+              "unit": "iso4217:USD",
+              "entity_identifier": "320193",
+              "value": 1997000000
+            }
+          ]
+        },
+        "current_term_debt": {
+          "value": 9906000000,
+          "source_refs": [
+            "S4"
+          ],
+          "facts": [
+            {
+              "concept": "us-gaap:LongTermDebtCurrent",
+              "source_id": "S4",
+              "context_ref": "c-19",
+              "instant": "2026-09-26",
+              "start_date": null,
+              "end_date": null,
+              "unit": "iso4217:USD",
+              "entity_identifier": "320193",
+              "value": 9906000000
+            }
+          ]
+        },
+        "noncurrent_term_debt": {
+          "value": 68208000000,
+          "source_refs": [
+            "S4"
+          ],
+          "facts": [
+            {
+              "concept": "us-gaap:LongTermDebtNoncurrent",
+              "source_id": "S4",
+              "context_ref": "c-19",
+              "instant": "2026-09-26",
+              "start_date": null,
+              "end_date": null,
+              "unit": "iso4217:USD",
+              "entity_identifier": "320193",
+              "value": 68208000000
+            }
+          ]
+        }
+      },
+      "cash_classification_policy": "Explicit house modeling policy: all reported cash and cash equivalents plus current and noncurrent marketable securities are classified as nonoperating assets. This does not establish that all cash is economically surplus or that required operating cash is zero.",
+      "explanation": "Exact sum of reported financial-debt components minus the exact sum of selected cash and marketable securities. No rounding residual or second cash add-back is permitted. Finance leases are outside this debt subtotal.",
+      "lease_policy": "Finance leases are excluded from financial debt and deducted once in other equity claims. Operating lease liabilities are not added under the unadjusted operating-EBIT convention; capitalizing them would require a consistent EBIT and reinvestment restatement."
+    },
+    "other_claims_bridge": {
+      "currency": "USD",
+      "as_of": "2026-09-26",
+      "reported_finance_lease_liabilities": 1456000000,
+      "finance_leases_included_in_net_debt": false,
+      "additional_unidentified_claims": 0,
+      "additional_unidentified_claims_basis": "Explicit house assumption: additional unidentified equity claims are zero. This is not a reported fact or evidence that no additional claims exist; identified finance lease liabilities are deducted once as other equity claims, outside financial net debt.",
+      "other_equity_claims": 1456000000,
+      "source_facts": [
+        {
+          "concept": "us-gaap:FinanceLeaseLiability",
+          "source_id": "S4",
+          "context_ref": "c-19",
+          "instant": "2026-09-26",
+          "start_date": null,
+          "end_date": null,
+          "unit": "iso4217:USD",
+          "entity_identifier": "320193",
+          "value": 1456000000
+        }
+      ],
+      "lease_policy": "Finance leases are excluded from financial debt and deducted once in other equity claims. Operating lease liabilities are not added under the unadjusted operating-EBIT convention; capitalizing them would require a consistent EBIT and reinvestment restatement."
+    },
+    "coverage": {
+      "status": "complete",
+      "complete": true,
+      "fields": {
+        "revenue": "pinned",
+        "net_debt": "pinned",
+        "other_equity_claims": "pinned_with_disclosed_assumption",
+        "shares_outstanding": "pinned"
+      },
+      "recognized_primary_source_ids": [
+        "S4"
+      ],
+      "missing_fields": [],
+      "conflicts": [],
+      "notes": []
+    },
+    "notes": [
+      "Explicit house modeling policy: all reported cash and cash equivalents plus current and noncurrent marketable securities are classified as nonoperating assets. This does not establish that all cash is economically surplus or that required operating cash is zero.",
+      "Explicit house assumption: additional unidentified equity claims are zero. This is not a reported fact or evidence that no additional claims exist; identified finance lease liabilities are deducted once as other equity claims, outside financial net debt.",
+      "Finance leases are excluded from financial debt and deducted once in other equity claims. Operating lease liabilities are not added under the unadjusted operating-EBIT convention; capitalizing them would require a consistent EBIT and reinvestment restatement.",
+      "Reported shares can postdate the balance sheet and predate the quote; the dates remain distinct.",
+      "Missing primary facts are not zero; unsupported or ambiguous inputs remain unpinned."
+    ],
+    "market_price": 344.17
+  },
+  "assumptions_label": "Growth, margins, taxes, discount rates, capital efficiency, terminal returns and scenario weights are house forecasts, not reported facts or company guidance. Historical actuals use the reported-input snapshot. All reported cash and marketable securities are classified as nonoperating under an explicit house policy, not proof that operating cash needs are zero. Identified finance leases are deducted once outside financial net debt; additional unidentified claims are assumed zero, not established absent. GAAP EBIT retains operating rent, SBC and R&D. Annual year-end cash flows are used without an interim balance-sheet roll-forward or stub-period adjustment.",
+  "scenarios": {
+    "bear": {
+      "probability": 0.25,
+      "tax_rate": 0.17,
+      "sales_to_capital": 3.0,
+      "terminal_growth": 0.025,
+      "terminal_roic": 0.3
+    },
+    "base": {
+      "probability": 0.5,
+      "tax_rate": 0.17,
+      "sales_to_capital": 3.0,
+      "terminal_growth": 0.03,
+      "terminal_roic": 0.5
+    },
+    "bull": {
+      "probability": 0.25,
+      "tax_rate": 0.17,
+      "sales_to_capital": 3.0,
+      "terminal_growth": 0.035,
+      "terminal_roic": 0.7
+    }
+  },
+  "operating_model": {
+    "currency": "USD",
+    "amount_unit": "currency_units",
+    "assumptions_label": "All forward category growth, shared product-group gross margins, Services gross margins and GAAP R&D/SG&A amounts are house assumptions. Hardware-category margins are unreported; the shared Products-group forward path is an explicit allocation convention, not an observed category margin.",
+    "earnings_mode": "gross_profit_less_expenses",
+    "counterfactual_policy": "aggregate_override",
+    "components": [
+      {
+        "name": "iPhone",
+        "base_revenue": 254098000000,
+        "source_refs": [
+          "S4"
+        ],
+        "gross_margin_group": "products",
+        "disclosure": "Reported category revenue. Historical individual-category gross margin is not disclosed; the common Products-group forward gross-margin path is a house allocation convention."
+      },
+      {
+        "name": "Mac",
+        "base_revenue": 37929000000,
+        "source_refs": [
+          "S4"
+        ],
+        "gross_margin_group": "products",
+        "disclosure": "Reported category revenue. Historical individual-category gross margin is not disclosed; the common Products-group forward gross-margin path is a house allocation convention."
+      },
+      {
+        "name": "iPad",
+        "base_revenue": 27929000000,
+        "source_refs": [
+          "S4"
+        ],
+        "gross_margin_group": "products",
+        "disclosure": "Reported category revenue. Historical individual-category gross margin is not disclosed; the common Products-group forward gross-margin path is a house allocation convention."
+      },
+      {
+        "name": "wearables_home_accessories",
+        "base_revenue": 35577000000,
+        "source_refs": [
+          "S4"
+        ],
+        "gross_margin_group": "products",
+        "disclosure": "Reported category revenue. Historical individual-category gross margin is not disclosed; the common Products-group forward gross-margin path is a house allocation convention."
+      },
+      {
+        "name": "services",
+        "base_revenue": 123301000000,
+        "source_refs": [
+          "S4"
+        ],
+        "gross_margin_group": "services",
+        "disclosure": "Reported Services revenue; Services forward margin is a house assumption."
+      }
+    ],
+    "scenarios": {
+      "bear": {
+        "components": {
+          "iPhone": {
+            "growth_rates": [
+              0.020000000000000018,
+              -0.001153846153846283,
+              -0.00905660377358486,
+              0.020000000000000018,
+              0.020000000000000018,
+              0.020000000000000018,
+              0.020000000000000018,
+              0.03961538461538461,
+              0.0007547169811321641,
+              0.020000000000000018
+            ],
+            "gross_margins": [
+              0.34,
+              0.33,
+              0.33,
+              0.335,
+              0.34,
+              0.34,
+              0.34,
+              0.34,
+              0.34,
+              0.34
+            ]
+          },
+          "Mac": {
+            "growth_rates": [
+              0.040000000000000036,
+              0.019230769230769162,
+              0.0007547169811321641,
+              0.02499999999999991,
+              0.02499999999999991,
+              0.02499999999999991,
+              0.02499999999999991,
+              0.04471153846153819,
+              0.005660377358490454,
+              0.02499999999999991
+            ],
+            "gross_margins": [
+              0.34,
+              0.33,
+              0.33,
+              0.335,
+              0.34,
+              0.34,
+              0.34,
+              0.34,
+              0.34,
+              0.34
+            ]
+          },
+          "iPad": {
+            "growth_rates": [
+              -0.020000000000000018,
+              0.019230769230769162,
+              -0.00905660377358486,
+              0.020000000000000018,
+              0.020000000000000018,
+              0.020000000000000018,
+              0.020000000000000018,
+              0.03961538461538461,
+              0.0007547169811321641,
+              0.020000000000000018
+            ],
+            "gross_margins": [
+              0.34,
+              0.33,
+              0.33,
+              0.335,
+              0.34,
+              0.34,
+              0.34,
+              0.34,
+              0.34,
+              0.34
+            ]
+          },
+          "wearables_home_accessories": {
+            "growth_rates": [
+              -0.030000000000000027,
+              -0.001153846153846283,
+              -0.018867924528301883,
+              0.010000000000000009,
+              0.010000000000000009,
+              0.014999999999999902,
+              0.014999999999999902,
+              0.03451923076923058,
+              -0.004150943396226459,
+              0.014999999999999902
+            ],
+            "gross_margins": [
+              0.34,
+              0.33,
+              0.33,
+              0.335,
+              0.34,
+              0.34,
+              0.34,
+              0.34,
+              0.34,
+              0.34
+            ]
+          },
+          "services": {
+            "growth_rates": [
+              0.06499999999999995,
+              0.07528846153846147,
+              0.035094339622641524,
+              0.050000000000000044,
+              0.050000000000000044,
+              0.050000000000000044,
+              0.04499999999999993,
+              0.06509615384615364,
+              0.02037735849056599,
+              0.040000000000000036
+            ],
+            "gross_margins": [
+              0.735,
+              0.72,
+              0.715,
+              0.71,
+              0.71,
+              0.71,
+              0.71,
+              0.71,
+              0.71,
+              0.71
+            ]
+          }
+        },
+        "expenses": {
+          "research_and_development": [
+            51714449999.99999,
+            56925675346.15384,
+            58644186299.99999,
+            60989953751.99999,
+            63124602133.319984,
+            65018340197.31959,
+            66643798702.25257,
+            69623545471.15135,
+            70017641011.5541,
+            71768082036.84294
+          ],
+          "selling_general_administrative": [
+            31858180000.0,
+            33769670800.0,
+            34292144951.999996,
+            35320909300.56,
+            36203932033.074,
+            37109030333.90084,
+            37851210940.57886,
+            39350701220.14794,
+            39380399862.57825,
+            40168007859.82981
+          ]
+        }
+      },
+      "base": {
+        "components": {
+          "iPhone": {
+            "growth_rates": [
+              0.10000000000000009,
+              0.09057692307692311,
+              0.040000000000000036,
+              0.050000000000000044,
+              0.04499999999999993,
+              0.040000000000000036,
+              0.03499999999999992,
+              0.04980769230769222,
+              0.010566037735849187,
+              0.030000000000000027
+            ],
+            "gross_margins": [
+              0.36,
+              0.375,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385
+            ]
+          },
+          "Mac": {
+            "growth_rates": [
+              0.1100000000000001,
+              0.10076923076923072,
+              0.040000000000000036,
+              0.050000000000000044,
+              0.04499999999999993,
+              0.040000000000000036,
+              0.03499999999999992,
+              0.04980769230769222,
+              0.010566037735849187,
+              0.030000000000000027
+            ],
+            "gross_margins": [
+              0.36,
+              0.375,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385
+            ]
+          },
+          "iPad": {
+            "growth_rates": [
+              0.040000000000000036,
+              0.06000000000000005,
+              0.015471698113207477,
+              0.030000000000000027,
+              0.030000000000000027,
+              0.030000000000000027,
+              0.02499999999999991,
+              0.04471153846153819,
+              0.005660377358490454,
+              0.02499999999999991
+            ],
+            "gross_margins": [
+              0.36,
+              0.375,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385
+            ]
+          },
+          "wearables_home_accessories": {
+            "growth_rates": [
+              0.030000000000000027,
+              0.06000000000000005,
+              0.02037735849056599,
+              0.040000000000000036,
+              0.03499999999999992,
+              0.03499999999999992,
+              0.030000000000000027,
+              0.04980769230769222,
+              0.010566037735849187,
+              0.030000000000000027
+            ],
+            "gross_margins": [
+              0.36,
+              0.375,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385
+            ]
+          },
+          "services": {
+            "growth_rates": [
+              0.10000000000000009,
+              0.12115384615384617,
+              0.0743396226415094,
+              0.08499999999999996,
+              0.08000000000000007,
+              0.07499999999999996,
+              0.07000000000000006,
+              0.08548076923076908,
+              0.040000000000000036,
+              0.05499999999999994
+            ],
+            "gross_margins": [
+              0.755,
+              0.76,
+              0.765,
+              0.765,
+              0.765,
+              0.765,
+              0.765,
+              0.765,
+              0.765,
+              0.765
+            ]
+          }
+        },
+        "expenses": {
+          "research_and_development": [
+            52172100000.00001,
+            58492950576.92309,
+            61980454800.000015,
+            65699282088.00002,
+            68984246192.40002,
+            72088537271.05801,
+            74972078761.90033,
+            79088334240.07773,
+            79923984564.12384,
+            82321704101.04756
+          ],
+          "selling_general_administrative": [
+            32155920000.000004,
+            34740761261.53846,
+            35789538960.0,
+            37400068213.2,
+            38896070941.728,
+            40257433424.68848,
+            41465156427.42913,
+            43530440180.25684,
+            43990384453.859566,
+            45310095987.47536
+          ]
+        }
+      },
+      "bull": {
+        "components": {
+          "iPhone": {
+            "growth_rates": [
+              0.14000000000000012,
+              0.151730769230769,
+              0.08905660377358493,
+              0.09000000000000008,
+              0.08000000000000007,
+              0.07000000000000006,
+              0.06000000000000005,
+              0.07019230769230766,
+              0.0252830188679245,
+              0.040000000000000036
+            ],
+            "gross_margins": [
+              0.37,
+              0.39,
+              0.4,
+              0.405,
+              0.41,
+              0.41,
+              0.41,
+              0.41,
+              0.41,
+              0.41
+            ]
+          },
+          "Mac": {
+            "growth_rates": [
+              0.1499999999999999,
+              0.151730769230769,
+              0.08905660377358493,
+              0.09000000000000008,
+              0.08000000000000007,
+              0.07000000000000006,
+              0.06000000000000005,
+              0.07019230769230766,
+              0.0252830188679245,
+              0.040000000000000036
+            ],
+            "gross_margins": [
+              0.37,
+              0.39,
+              0.4,
+              0.405,
+              0.41,
+              0.41,
+              0.41,
+              0.41,
+              0.41,
+              0.41
+            ]
+          },
+          "iPad": {
+            "growth_rates": [
+              0.08000000000000007,
+              0.10076923076923072,
+              0.04981132075471706,
+              0.06000000000000005,
+              0.050000000000000044,
+              0.050000000000000044,
+              0.04499999999999993,
+              0.06000000000000005,
+              0.015471698113207477,
+              0.030000000000000027
+            ],
+            "gross_margins": [
+              0.37,
+              0.39,
+              0.4,
+              0.405,
+              0.41,
+              0.41,
+              0.41,
+              0.41,
+              0.41,
+              0.41
+            ]
+          },
+          "wearables_home_accessories": {
+            "growth_rates": [
+              0.08000000000000007,
+              0.10076923076923072,
+              0.05471698113207535,
+              0.07000000000000006,
+              0.06000000000000005,
+              0.05499999999999994,
+              0.050000000000000044,
+              0.06509615384615364,
+              0.02037735849056599,
+              0.03499999999999992
+            ],
+            "gross_margins": [
+              0.37,
+              0.39,
+              0.4,
+              0.405,
+              0.41,
+              0.41,
+              0.41,
+              0.41,
+              0.41,
+              0.41
+            ]
+          },
+          "services": {
+            "growth_rates": [
+              0.1299999999999999,
+              0.17211538461538445,
+              0.118490566037736,
+              0.1299999999999999,
+              0.1200000000000001,
+              0.1100000000000001,
+              0.10000000000000009,
+              0.11096153846153856,
+              0.05962264150943408,
+              0.07000000000000006
+            ],
+            "gross_margins": [
+              0.76,
+              0.77,
+              0.775,
+              0.78,
+              0.78,
+              0.78,
+              0.78,
+              0.78,
+              0.78,
+              0.78
+            ]
+          }
+        },
+        "expenses": {
+          "research_and_development": [
+            53087400000.0,
+            60601308923.07693,
+            65403676800.0,
+            70635970944.0,
+            75580488910.08,
+            80115318244.6848,
+            84121084156.91904,
+            89597043192.90308,
+            91422794261.7396,
+            94622592060.90047
+          ],
+          "selling_general_administrative": [
+            32453660000.000004,
+            35723990353.84615,
+            37152949968.0,
+            39010597466.4,
+            40766074352.388,
+            42396717326.48352,
+            43880602432.91044,
+            46066193977.16501,
+            46552931121.074684,
+            47949519054.706924
+          ]
+        }
+      }
+    }
+  },
+  "discount_rate": {
+    "as_of": "2026-11-06",
+    "currency": "USD",
+    "amount_unit": "currency_units",
+    "basis": "market_wacc",
+    "lease_convention": "gaap_operating",
+    "ebit_convention": "gaap_operating",
+    "risk_free_rate": {
+      "value": 0.0494,
+      "observed_at": "2026-11-01",
+      "source_refs": [
+        "S33"
+      ],
+      "label": "November1 workbook snapshot: matched conventional Treasury input, not a Sunday trading quote",
+      "tenor": "10-year US Treasury proxy",
+      "snapshot_note": "Workbook start-of-month label; matches October30 close; stale homepage Treasury is not substituted."
+    },
+    "equity_risk_premium": {
+      "value": 0.0441,
+      "observed_at": "2026-11-01",
+      "source_refs": [
+        "S33"
+      ],
+      "label": "Matched sustainable/adjusted-payout implied ERP; not the alternative cash-yield ERP",
+      "method": "T12m sustainable-payout implied equity risk premium"
+    },
+    "unlevered_beta": {
+      "calculation": "historical_issuer_cash_corrected",
+      "historical_equity_beta": 1.1427042688476277,
+      "observed_at": "2026-10-30",
+      "source_refs": [
+        "S39",
+        "S4",
+        "S1"
+      ],
+      "label": "Issuer historical equity beta, unlevered and cash-corrected using the disclosed financing snapshot; adopted as a forward operating-risk proxy",
+      "classification": "explicit_forward_proxy_adoption",
+      "sample": "261 completed paired weekly returns,2021-11-05 through2026-10-30",
+      "limitation": "Backward-looking OLS is not a measured forward beta. Cash beta0, debt beta0 and a static dated capital structure are simplifying conventions; interval endpoints are not forward valuation confidence limits."
+    },
+    "market_equity": {
+      "value": 5001541078940.0,
+      "observed_at": "2026-11-05",
+      "source_refs": [
+        "S1",
+        "S4"
+      ],
+      "label": "November5 price times latest reported October23 ordinary shares, not book equity",
+      "measurement": "market_value",
+      "price": 344.17,
+      "shares": 14532182000,
+      "share_measurement_date": "2026-10-23",
+      "construction": "quote_times_reported_shares"
+    },
+    "financial_debt": {
+      "value": 80111000000,
+      "observed_at": "2026-09-26",
+      "source_refs": [
+        "S4"
+      ],
+      "label": "Financial-debt carrying amount, excluding separately supplied finance leases",
+      "measurement": "book_value_proxy"
+    },
+    "finance_lease_debt": {
+      "value": 1456000000,
+      "observed_at": "2026-09-26",
+      "source_refs": [
+        "S4"
+      ],
+      "label": "Finance leases included in rate capital weights; deducted once as other equity claims, not again in net financial debt"
+    },
+    "pretax_cost_of_debt": {
+      "value": 0.0551,
+      "observed_at": "2026-11-05",
+      "source_refs": [
+        "S35"
+      ],
+      "label": "ICE BofA AA USD corporate-index effective yield proxy; not an Apple bond quote",
+      "publication_date": "2026-11-06",
+      "limitation": "Rating, sector and maturity mix differ; common proxy applied to financial and finance-lease debt."
+    },
+    "marginal_tax_rate": {
+      "value": 0.25,
+      "observed_at": "2026-11-06",
+      "source_refs": [
+        "S4"
+      ],
+      "label": "25% house marginal debt-deduction proxy, roughly federal plus state taxation; not issuer effective tax or US federal statutory rate",
+      "classification": "house_assumption",
+      "limitation": "Source supplies issuer tax context only; it does not report this forward normalized shield rate."
+    }
+  },
+  "counterfactuals": {
+    "iphone_growth_persistence": {
+      "operating_overrides": {
+        "components": {
+          "iPhone": {
+            "growth_rates": [
+              0.1299999999999999,
+              0.12115384615384617,
+              0.06452830188679237,
+              0.07000000000000006,
+              0.04499999999999993,
+              0.040000000000000036,
+              0.03499999999999992,
+              0.04980769230769222,
+              0.010566037735849187,
+              0.030000000000000027
+            ]
+          }
+        }
+      }
+    },
+    "services_growth_monetization": {
+      "operating_overrides": {
+        "components": {
+          "services": {
+            "growth_rates": [
+              0.1299999999999999,
+              0.151730769230769,
+              0.09886792452830195,
+              0.1100000000000001,
+              0.10000000000000009,
+              0.09000000000000008,
+              0.08000000000000007,
+              0.09057692307692311,
+              0.040000000000000036,
+              0.05499999999999994
+            ]
+          }
+        }
+      }
+    },
+    "product_margin_temporary_shock": {
+      "operating_overrides": {
+        "components": {
+          "iPhone": {
+            "gross_margins": [
+              0.33999999999999997,
+              0.375,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385
+            ]
+          },
+          "Mac": {
+            "gross_margins": [
+              0.33999999999999997,
+              0.375,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385
+            ]
+          },
+          "iPad": {
+            "gross_margins": [
+              0.33999999999999997,
+              0.375,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385
+            ]
+          },
+          "wearables_home_accessories": {
+            "gross_margins": [
+              0.33999999999999997,
+              0.375,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385,
+              0.385
+            ]
+          }
+        }
+      }
+    },
+    "product_margin_persistent_shock": {
+      "operating_overrides": {
+        "components": {
+          "iPhone": {
+            "gross_margins": [
+              0.33999999999999997,
+              0.355,
+              0.365,
+              0.365,
+              0.365,
+              0.365,
+              0.365,
+              0.365,
+              0.365,
+              0.365
+            ]
+          },
+          "Mac": {
+            "gross_margins": [
+              0.33999999999999997,
+              0.355,
+              0.365,
+              0.365,
+              0.365,
+              0.365,
+              0.365,
+              0.365,
+              0.365,
+              0.365
+            ]
+          },
+          "iPad": {
+            "gross_margins": [
+              0.33999999999999997,
+              0.355,
+              0.365,
+              0.365,
+              0.365,
+              0.365,
+              0.365,
+              0.365,
+              0.365,
+              0.365
+            ]
+          },
+          "wearables_home_accessories": {
+            "gross_margins": [
+              0.33999999999999997,
+              0.355,
+              0.365,
+              0.365,
+              0.365,
+              0.365,
+              0.365,
+              0.365,
+              0.365,
+              0.365
+            ]
+          }
+        }
+      }
+    },
+    "services_profit_exposure": {
+      "operating_overrides": {
+        "components": {
+          "services": {
+            "gross_margins": [
+              0.755,
+              0.73,
+              0.735,
+              0.735,
+              0.735,
+              0.735,
+              0.735,
+              0.735,
+              0.735,
+              0.735
+            ]
+          }
+        }
+      }
+    },
+    "operating_cost_leverage": {
+      "operating_overrides": {
+        "expenses": {
+          "research_and_development": [
+            52172100000.00001,
+            55568303048.076935,
+            58881432060.000015,
+            62414317983.60002,
+            65535033882.78002,
+            68484110407.50511,
+            71223474823.80531,
+            75133917528.07384,
+            75927785335.91765,
+            78205618895.99518
+          ],
+          "selling_general_administrative": [
+            32155920000.000004,
+            33003723198.461536,
+            34000062012.0,
+            35530064802.53999,
+            36951267394.641594,
+            38244561753.45405,
+            39391898606.05767,
+            41353918171.243996,
+            41790865231.16659,
+            43044591188.101585
+          ]
+        }
+      }
+    },
+    "street_revenue_path": {
+      "growth_rates": [
+        0.10046228776569754,
+        0.08183104747057879,
+        0.06400749055928312,
+        0.05783378423597507,
+        0.05337122872374023,
+        0.04921437948304219,
+        0.0444743038758888,
+        0.060294284977615575,
+        0.019398793271254267,
+        0.0376216600249446
+      ]
+    },
+    "phillip_rate_parameters": {
+      "wacc": 0.065,
+      "terminal_growth": 0.035
+    }
+  },
+  "monitoring": [
+    {
+      "name": "iPhone persistence",
+      "observation": "Four-quarter iPhone revenue growth and supply catch-up",
+      "review_by": "2027-11-15",
+      "threshold": "FY2027 category revenue growth at least 12%, with future disclosed pricing/mix commentary or credible shipment evidence supporting persistence; such evidence is not currently a reported units-times-ASP bridge and may be unavailable; a single quarter is insufficient. The conditional path uses 13%, 10%, 8.5%, 7% underlying growth for its first four years, then base.",
+      "counterfactual": "iphone_growth_persistence",
+      "source_refs": [
+        "S4",
+        "S15",
+        "S11",
+        "S29"
+      ],
+      "date_basis": "Analyst-selected review deadline, not an announced company or court event date."
+    },
+    {
+      "name": "Services monetization",
+      "observation": "Services growth after licensing and FX headwinds",
+      "review_by": "2027-11-15",
+      "threshold": "Four-quarter Services revenue growth at least 12%, with evidence of recurring paid usage, pricing or retention benefits after licensing/FX normalization. Does not assume disclosed separate AI revenue or eliminate regulatory risk.",
+      "counterfactual": "services_growth_monetization",
+      "source_refs": [
+        "S4",
+        "S15",
+        "S9",
+        "S10"
+      ],
+      "date_basis": "Analyst-selected review deadline, not an announced company or court event date."
+    },
+    {
+      "name": "Temporary product margin shock",
+      "observation": "Duration of memory-cost and tariff-refund runoff pressure",
+      "review_by": "2027-05-15",
+      "threshold": "Two reported quarters of Products gross margin at or below 34% would motivate the one-year stress: FY2027 Products margin 2 percentage points below base, with the complete base path restored from FY2028. The observation does not establish full-year or future persistence.",
+      "counterfactual": "product_margin_temporary_shock",
+      "source_refs": [
+        "S4",
+        "S15",
+        "S29"
+      ],
+      "date_basis": "Analyst-selected review deadline, not an announced company or court event date."
+    },
+    {
+      "name": "Persistent product margin shock",
+      "observation": "Failure of Products margin to recover",
+      "review_by": "2028-11-15",
+      "threshold": "FY2028 Products gross margin remains at least 2 percentage points below the 37.5% base despite price/mix changes. Test the separate permanent 2-point path rather than adding the temporary and persistent case effects.",
+      "counterfactual": "product_margin_persistent_shock",
+      "source_refs": [
+        "S4",
+        "S15",
+        "S29"
+      ],
+      "date_basis": "Analyst-selected review deadline, not an announced company or court event date."
+    },
+    {
+      "name": "Licensing and App Store profit exposure",
+      "observation": "Implemented regulatory or licensing economics, rather than allegations",
+      "review_by": "2027-06-30",
+      "threshold": "An implemented remedy or disclosed licensing renegotiation with a credible recurring pretax profit effect of at least $4bn warrants reassessment. The bounded stress removes 3 points of Services gross margin from FY2028; this is not an estimate of App Store or Google fee revenue.",
+      "counterfactual": "services_profit_exposure",
+      "source_refs": [
+        "S4",
+        "S16",
+        "S17",
+        "S18"
+      ],
+      "date_basis": "Analyst-selected review deadline, not an announced company or court event date."
+    },
+    {
+      "name": "Operating expense leverage",
+      "observation": "GAAP expense efficiency while product economics remain intact",
+      "review_by": "2028-11-15",
+      "threshold": "Trailing GAAP R&D plus SG&A at or below 15.5% of sales alongside at least 8% headline revenue growth would support reassessing cost leverage. The conditional case lowers both expense lines 5% versus base from FY2028, holding revenue and gross margins fixed; it assumes efficiency without lost benefits.",
+      "counterfactual": "operating_cost_leverage",
+      "source_refs": [
+        "S4",
+        "S15",
+        "S28"
+      ],
+      "date_basis": "Analyst-selected review deadline, not an announced company or court event date."
+    },
+    {
+      "name": "Issuer risk normalization",
+      "observation": "Completed-week issuer beta and operating-risk durability",
+      "review_by": "2027-02-15",
+      "threshold": "Two consecutive month-end refreshes across the five- and three-year samples support lower systematic risk, with current financing/cash and business mix reviewed. Test a forward asset beta 1.0 only if the committee adopts that normalization; one estimate does not set forward risk automatically.",
+      "source_refs": [
+        "S39",
+        "S34",
+        "S4"
+      ],
+      "calibration_comparison": "unit_beta_normalization",
+      "date_basis": "Analyst review deadline, not an issuer event"
+    },
+    {
+      "name": "Higher issuer operating risk",
+      "observation": "Issuer return covariance and operating exposure",
+      "review_by": "2027-02-15",
+      "threshold": "Persistent sample evidence and business exposure support the Computers/Peripherals 1.32 forward proxy after consistent financing and cash adjustments. Revisit the forward choice, not just the latest price; compare the sector-rate case at unchanged operating assumptions.",
+      "source_refs": [
+        "S39",
+        "S34",
+        "S4"
+      ],
+      "calibration_comparison": "computers_sector_proxy",
+      "date_basis": "Analyst review deadline, not an issuer event"
+    }
+  ],
+  "scenario_rationales": {
+    "bear": "Adverse scenario, not an observed demand collapse: constrained FY2027 shipments are followed by weaker hardware demand, persistent component costs, slower Services growth and less profitable mix. Full-year growth undershoots the current Q1 outlook only if later quarters deteriorate. R&D and SG&A remain explicitly funded; no additional scenario WACC premium is charged. Terminal ROIC of 30% retains a residual franchise above WACC; this is not a liquidation case.",
+    "base": "Supply-limited current guidance, pricing and modest shipment catch-up support differentiated FY2027 category growth around 9%. Products gross margin resets to 36% and Services to 75.5%; partial FY2028 recovery is explicit. R&D and SG&A rise before later operating leverage. Category growth fades separately. Net incremental sales-to-capital of 3x and terminal ROIC of 50% are unmeasured house assumptions with a partial productivity fade, not reported Apple returns.",
+    "bull": "Supply catches up, pricing and the Duo/new Mac cycle support persistent growth; Services monetization and retention improve without assuming that all AI spending immediately creates separate revenue. Products margins recover through mix and cost relief while R&D remains funded. Terminal ROIC of 70% assumes durable excess returns. The case requires stronger operating evidence rather than a lower scenario discount rate."
+  },
+  "forecast_periods": [
+    {
+      "year": 1,
+      "fiscal_year": 2027,
+      "period_end": "2027-09-25",
+      "weeks": 52,
+      "relative_week_factor": 1.0,
+      "date_basis": "S20"
+    },
+    {
+      "year": 2,
+      "fiscal_year": 2028,
+      "period_end": "2028-09-30",
+      "weeks": 53,
+      "relative_week_factor": 1.0192307692307692,
+      "date_basis": "analyst calendar derivation from last-Saturday policy"
+    },
+    {
+      "year": 3,
+      "fiscal_year": 2029,
+      "period_end": "2029-09-29",
+      "weeks": 52,
+      "relative_week_factor": 0.9811320754716981,
+      "date_basis": "analyst calendar derivation from last-Saturday policy"
+    },
+    {
+      "year": 4,
+      "fiscal_year": 2030,
+      "period_end": "2030-09-28",
+      "weeks": 52,
+      "relative_week_factor": 1.0,
+      "date_basis": "analyst calendar derivation from last-Saturday policy"
+    },
+    {
+      "year": 5,
+      "fiscal_year": 2031,
+      "period_end": "2031-09-27",
+      "weeks": 52,
+      "relative_week_factor": 1.0,
+      "date_basis": "analyst calendar derivation from last-Saturday policy"
+    },
+    {
+      "year": 6,
+      "fiscal_year": 2032,
+      "period_end": "2032-09-25",
+      "weeks": 52,
+      "relative_week_factor": 1.0,
+      "date_basis": "analyst calendar derivation from last-Saturday policy"
+    },
+    {
+      "year": 7,
+      "fiscal_year": 2033,
+      "period_end": "2033-09-24",
+      "weeks": 52,
+      "relative_week_factor": 1.0,
+      "date_basis": "analyst calendar derivation from last-Saturday policy"
+    },
+    {
+      "year": 8,
+      "fiscal_year": 2034,
+      "period_end": "2034-09-30",
+      "weeks": 53,
+      "relative_week_factor": 1.0192307692307692,
+      "date_basis": "analyst calendar derivation from last-Saturday policy"
+    },
+    {
+      "year": 9,
+      "fiscal_year": 2035,
+      "period_end": "2035-09-29",
+      "weeks": 52,
+      "relative_week_factor": 0.9811320754716981,
+      "date_basis": "analyst calendar derivation from last-Saturday policy"
+    },
+    {
+      "year": 10,
+      "fiscal_year": 2036,
+      "period_end": "2036-09-27",
+      "weeks": 52,
+      "relative_week_factor": 1.0,
+      "date_basis": "analyst calendar derivation from last-Saturday policy"
+    }
+  ],
+  "calendar_assumption": {
+    "source_refs": [
+      "S20",
+      "S4"
+    ],
+    "known_FY2027_period": "2026-09-27 to2027-09-25,52weeks",
+    "later_periods": "Derived mechanically from lastSaturdaySeptember policy, not issued fiscal guidance",
+    "convention": "Underlying category and expense growth is converted to reported-period growth by multiplying (1 + underlying growth) by current weeks / prior weeks. Uniform weekly revenue and cost density is a simplifying house assumption; seasonal contributions are not observed. FY2028 and FY2034 extra-week effects reverse in FY2029 and FY2035. The terminal year is normalized to 52 weeks."
+  },
+  "forecast_underlying_growth_before_week_effects": {
+    "revenue_components": {
+      "bear": {
+        "iPhone": [
+          0.02,
+          -0.02,
+          0.01,
+          0.02,
+          0.02,
+          0.02,
+          0.02,
+          0.02,
+          0.02,
+          0.02
+        ],
+        "Mac": [
+          0.04,
+          0,
+          0.02,
+          0.025,
+          0.025,
+          0.025,
+          0.025,
+          0.025,
+          0.025,
+          0.025
+        ],
+        "iPad": [
+          -0.02,
+          0,
+          0.01,
+          0.02,
+          0.02,
+          0.02,
+          0.02,
+          0.02,
+          0.02,
+          0.02
+        ],
+        "wearables_home_accessories": [
+          -0.03,
+          -0.02,
+          0,
+          0.01,
+          0.01,
+          0.015,
+          0.015,
+          0.015,
+          0.015,
+          0.015
+        ],
+        "services": [
+          0.065,
+          0.055,
+          0.055,
+          0.05,
+          0.05,
+          0.05,
+          0.045,
+          0.045,
+          0.04,
+          0.04
+        ]
+      },
+      "base": {
+        "iPhone": [
+          0.1,
+          0.07,
+          0.06,
+          0.05,
+          0.045,
+          0.04,
+          0.035,
+          0.03,
+          0.03,
+          0.03
+        ],
+        "Mac": [
+          0.11,
+          0.08,
+          0.06,
+          0.05,
+          0.045,
+          0.04,
+          0.035,
+          0.03,
+          0.03,
+          0.03
+        ],
+        "iPad": [
+          0.04,
+          0.04,
+          0.035,
+          0.03,
+          0.03,
+          0.03,
+          0.025,
+          0.025,
+          0.025,
+          0.025
+        ],
+        "wearables_home_accessories": [
+          0.03,
+          0.04,
+          0.04,
+          0.04,
+          0.035,
+          0.035,
+          0.03,
+          0.03,
+          0.03,
+          0.03
+        ],
+        "services": [
+          0.1,
+          0.1,
+          0.095,
+          0.085,
+          0.08,
+          0.075,
+          0.07,
+          0.065,
+          0.06,
+          0.055
+        ]
+      },
+      "bull": {
+        "iPhone": [
+          0.14,
+          0.13,
+          0.11,
+          0.09,
+          0.08,
+          0.07,
+          0.06,
+          0.05,
+          0.045,
+          0.04
+        ],
+        "Mac": [
+          0.15,
+          0.13,
+          0.11,
+          0.09,
+          0.08,
+          0.07,
+          0.06,
+          0.05,
+          0.045,
+          0.04
+        ],
+        "iPad": [
+          0.08,
+          0.08,
+          0.07,
+          0.06,
+          0.05,
+          0.05,
+          0.045,
+          0.04,
+          0.035,
+          0.03
+        ],
+        "wearables_home_accessories": [
+          0.08,
+          0.08,
+          0.075,
+          0.07,
+          0.06,
+          0.055,
+          0.05,
+          0.045,
+          0.04,
+          0.035
+        ],
+        "services": [
+          0.13,
+          0.15,
+          0.14,
+          0.13,
+          0.12,
+          0.11,
+          0.1,
+          0.09,
+          0.08,
+          0.07
+        ]
+      }
+    },
+    "research_and_development": {
+      "bear": [
+        0.13,
+        0.08,
+        0.05,
+        0.04,
+        0.035,
+        0.03,
+        0.025,
+        0.025,
+        0.025,
+        0.025
+      ],
+      "base": [
+        0.14,
+        0.1,
+        0.08,
+        0.06,
+        0.05,
+        0.045,
+        0.04,
+        0.035,
+        0.03,
+        0.03
+      ],
+      "bull": [
+        0.16,
+        0.12,
+        0.1,
+        0.08,
+        0.07,
+        0.06,
+        0.05,
+        0.045,
+        0.04,
+        0.035
+      ]
+    },
+    "selling_general_administrative": {
+      "bear": [
+        0.07,
+        0.04,
+        0.035,
+        0.03,
+        0.025,
+        0.025,
+        0.02,
+        0.02,
+        0.02,
+        0.02
+      ],
+      "base": [
+        0.08,
+        0.06,
+        0.05,
+        0.045,
+        0.04,
+        0.035,
+        0.03,
+        0.03,
+        0.03,
+        0.03
+      ],
+      "bull": [
+        0.09,
+        0.08,
+        0.06,
+        0.05,
+        0.045,
+        0.04,
+        0.035,
+        0.03,
+        0.03,
+        0.03
+      ]
+    }
+  },
+  "model_rationale": {
+    "historical_profit_bridge": "FY2026 gross profit increased $38.401B; R&D increased $11.215B and SG&A $2.173B, leaving EBIT growth of $25.013B. Historical R&D growth did not by itself cause margin compression.",
+    "capital_efficiency": "Sales-to-capital of 3x is an explicit net incremental operating-capital assumption, including working capital, rather than cash capex/revenue. Maintenance investment offsets depreciation. Expensed R&D and SBC remain in EBIT. Lumpy vendor prepayments, acquisitions, asset mix and other cash-flow items prevent treating a simple one-year capital ratio as measured stable ROIIC.",
+    "terminal_economics": "Bear/base/bull terminal ROIC of 30%/50%/70% represents a partial productivity fade from each final forecast constant-margin return identity. Permanent franchise excess returns above the common market WACC remain assumed; these are neither competitive-equilibrium returns nor observed historical ROIC. Disclose the exact growth/ROIC reinvestment timing and FCFF handoff using computed_diagnostics. The base50% is a partial normalization from the87.4% final-year house constant-margin incremental identity, supported qualitatively by expensed R&D/capital-light Services/retention economics, not primary proof of future ROIC. The materially lower new-investment-return stress strengthens rather than invalidates the pass decision.",
+    "compensation": "Outstanding RSUs of 142.405M and unrecognized compensation of $24.1B over 2.6 years are disclosure context. Matching future compensation is retained in R&D/SG&A while current common shares are used, so no second $24.1B claim or automatic 142.405M share addition is imposed. No future buybacks or share-count shrinkage are assumed.",
+    "street_case": "Only three SWS/S&P revenue means replace aggregate growth; the base growth path resumes thereafter. Base EBIT margins and other inputs remain fixed. This does not import Street EBIT, EPS, rates or a complete consensus model. Its component breakdown is intentionally not derived.",
+    "phillip_case": "Only 6.5% WACC and 3.5% terminal growth replace house valuation parameters. The case does not replicate Phillip\u2019s $310 target, which uses different forecasts and a one-year valuation roll-forward.",
+    "monitoring": "Eight analyst review conditions: six operating comparisons and two forward-risk comparisons. Economic bases are disclosed in the memo. Observations trigger investigation, not automatic adoption of a full future path; correlated effects are not additive.",
+    "discount_rate_adjudication": {
+      "preferred": "Issuer five-year historical equity-risk estimate, delevered/cash-corrected with explicit conventions and adopted as a constant forward operating proxy.",
+      "crosschecks": "Three-year return window, historical-fit endpoints, two sector mappings and unit-risk normalization. These do not prove future risk.",
+      "why_not_keep_sector_default": "Issuer-specific return evidence is now available; the broader Computers proxy is retained as a higher-rate test rather than selected by default.",
+      "economic_basis": "Device replacement/upgrade and advertising/licensing exposure remain economically sensitive; ecosystem persistence supports excess profits but does not establish low bad-state covariance. Cash is separately removed from operating beta and credited in equity. No extra scenario risk premium is layered onto operating stresses. Full alternative analyst calibration is unavailable, so its low rate is treated as a consequential competing method, not disproved."
+    },
+    "operating_tax_selection": "17% is a provision-based normalized forward cash-tax proxy informed by latest17% effective rate and next-quarter guide; not actual cashpaid/profit or a forecast that provision/cash gaps reverse. FY24 State Aid Decision line prevents using its unadjusted24.1% as normal. Operating20%/24% stresses remain; cash conversion unknown.",
+    "debt_tax_shield": "25% is a normalized marginal interest-deduction proxy, roughly US federal plus state taxation, not the21% federal statutory rate, a demonstrated upper bound, or a reported Apple rate. Entity/jurisdiction and deduction realization are unknown. The17% sensitivity recomputes typed issuer unlevering/cash correction/relevering consistently and shows low leverage limits its effect."
+  },
+  "calibration_comparisons": [
+    {
+      "name": "computers_sector_proxy",
+      "label": "January Computers/Peripherals operating-beta proxy; same cash flows",
+      "overrides": {
+        "unlevered_beta": {
+          "value": 1.32,
+          "observed_at": "2026-01",
+          "source_refs": [
+            "S34"
+          ],
+          "label": "Cash-corrected US Computers/Peripherals operating-asset beta proxy, not issuer-measured beta",
+          "date_precision": "month",
+          "sector": "Computers/Peripherals",
+          "firms": 36,
+          "limitation": "Sector mapping, update age and peer lease convention limit comparability; no exact measurement day asserted."
+        }
+      }
+    },
+    {
+      "name": "consumer_electronics_proxy",
+      "label": "Alternative sector mapping, not an issuer measurement",
+      "overrides": {
+        "unlevered_beta": {
+          "value": 0.93,
+          "label": "Cash-corrected Consumer and Office Electronics sector proxy,8firms",
+          "source_refs": [
+            "S34"
+          ],
+          "observed_at": "2026-01",
+          "date_precision": "month"
+        }
+      }
+    },
+    {
+      "name": "unit_beta_normalization",
+      "label": "Lower-risk forward normalization from the start; an assumption, not an automatic fade",
+      "overrides": {
+        "unlevered_beta": {
+          "value": 1,
+          "label": "Explicit house unit operating-beta normalization, not an observed issuer estimate",
+          "source_refs": [
+            "S39",
+            "S34"
+          ],
+          "observed_at": "2026-11-06"
+        }
+      }
+    },
+    {
+      "name": "historical_fit_low",
+      "label": "Historical estimation uncertainty translated conditionally; not a valuation confidence interval",
+      "overrides": {
+        "unlevered_beta": {
+          "value": 1.0043701816647232,
+          "label": "Transformed historical OLS interval endpoint used as a hypothetical constant forward input",
+          "source_refs": [
+            "S39",
+            "S4",
+            "S1"
+          ],
+          "observed_at": "2026-10-30",
+          "classification": "historical_fit_endpoint_not_forward_confidence_limit"
+        }
+      }
+    },
+    {
+      "name": "historical_fit_high",
+      "label": "Historical estimation uncertainty translated conditionally; not a valuation confidence interval",
+      "overrides": {
+        "unlevered_beta": {
+          "value": 1.3159297446507925,
+          "label": "Transformed historical OLS interval endpoint used as a hypothetical constant forward input",
+          "source_refs": [
+            "S39",
+            "S4",
+            "S1"
+          ],
+          "observed_at": "2026-10-30",
+          "classification": "historical_fit_endpoint_not_forward_confidence_limit"
+        }
+      }
+    },
+    {
+      "name": "three_year_issuer_window",
+      "label": "Shorter historical return window used as a hypothetical forward proxy; no extra price fetch",
+      "overrides": {
+        "unlevered_beta": {
+          "value": 1.0570908860338908,
+          "observed_at": "2026-10-30",
+          "source_refs": [
+            "S39",
+            "S4",
+            "S1"
+          ],
+          "label": "Three-year issuer-equity estimate transformed using the same cash/debt/tax conventions; not an observed forward asset beta"
+        }
+      }
+    },
+    {
+      "name": "seventeen_percent_debt_shield",
+      "label": "17% debt shield with consistent issuer-beta recalculation",
+      "overrides": {
+        "marginal_tax_rate": {
+          "value": 0.17,
+          "observed_at": "2026-11-06",
+          "source_refs": [
+            "S4"
+          ],
+          "label": "House sensitivity: 17% blended-rate proxy for the marginal debt shield, not an observed issuer marginal rate",
+          "classification": "house_assumption",
+          "limitation": "Source supplies issuer tax context only; it does not report this forward normalized shield rate."
+        }
+      }
+    }
+  ]
+}

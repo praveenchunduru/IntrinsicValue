@@ -1,0 +1,252 @@
+{
+  "format": "live_review_source_adjudication_v1",
+  "iteration_reviewed": 3,
+  "reviewer": "fresh_stats_sources_r2",
+  "completed_at_utc": "2026-11-06T17:11:11.627191+00:00",
+  "scope": "Independent source adjudication of live reviewF3/F5/F6/F7, plus primary tax facts relevant toF2. Proposal only; no frozen/source edits; no network/paid calls.",
+  "current_packet_sha256": {
+    "memo.md": "59055c2859cd2980962682043bfb0a6fb9614afaf94d8c483abaf96cb9867ed3",
+    "memo-body.md": "f01fe4912ee93f90c5ad4e995727ca58dff6b93e3cc6a79d8342879d9d356965",
+    "sources.json": "d5796317589676d300105d6e42950783f1971d7d2e313473a7098c0fc9e1528a",
+    "assumptions.json": "9d96a1f8e89885f7a3b2683fab977460f7f49cd1a0641424547bf4a2da9709a1",
+    "valuation.json": "4836b311e4949a21b48f0ba311b4dc088ad78c1b02d3e523ef881322871e0557",
+    "review-manifest.json": "bb6cdfc9be9c191e3d16acd1ea88a06c1c60c3e052b1d42420cff9e4c4fa84c0"
+  },
+  "live_review_raw_sha256": "994c9156fb183d2e409ba84dac6aeb94d8bbbf960e487c63ed71b95a3860f4c3",
+  "source_sha256": {
+    "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt": "02e8f52a8997c0798a35e61a84709ce55560bd98c3e5f7d98f1ff3d8f4ae1720",
+    "/workspace/scratch/aapl-upgrade-research/consensus-opposition/morningstar_nov4.txt": "142139431720f0ccbea78cffd87bd9e14ed40aa57acbb6f397f5c7e1ef1dc436",
+    "/workspace/scratch/aapl-upgrade-research/raw/q4_management_transcript_fool.txt": "1594a4ffffd39fb22cdf3c5bed340aa6476eebbe9856577498f28139ad6568d5"
+  },
+  "reviewer_excerpt_literal_checks": {
+    "F2": {
+      "literal_in_memo_body": false,
+      "literal_in_assumptions_serialized_json": false,
+      "note": "Formatting/markup or excerpt-location mismatches do not decide substantive adjudication; exact current excerpts are supplied below."
+    },
+    "F3": {
+      "literal_in_memo_body": false,
+      "literal_in_assumptions_serialized_json": false,
+      "note": "Formatting/markup or excerpt-location mismatches do not decide substantive adjudication; exact current excerpts are supplied below."
+    },
+    "F5": {
+      "literal_in_memo_body": true,
+      "literal_in_assumptions_serialized_json": false,
+      "note": "Formatting/markup or excerpt-location mismatches do not decide substantive adjudication; exact current excerpts are supplied below."
+    },
+    "F6": {
+      "literal_in_memo_body": true,
+      "literal_in_assumptions_serialized_json": false,
+      "note": "Formatting/markup or excerpt-location mismatches do not decide substantive adjudication; exact current excerpts are supplied below."
+    },
+    "F7": {
+      "literal_in_memo_body": false,
+      "literal_in_assumptions_serialized_json": true,
+      "note": "Formatting/markup or excerpt-location mismatches do not decide substantive adjudication; exact current excerpts are supplied below."
+    }
+  },
+  "adjudications": [
+    {
+      "finding_id": "F3",
+      "reviewer_severity": "major",
+      "adjudication": "Reject as an established material source defect; retain transcript-only detail as a disclosed residual dependency and strengthen primary corroboration where already available.",
+      "recommended_severity": "nonblocking source limitation",
+      "exact_current_excerpt": "Management\u2019s December-quarter outlook is a 7\u201310% total-revenue increase, 8\u20139% Services growth, 45\u201346% gross margin and $20.4\u201320.8 billion operating expenses. The directly retrieved transcript attributes constrained shipments to supply and Services headwinds to third-party licensing and FX. It also identifies price increases, carry-in inventory and cheaper non-memory components as partial offsets to memory inflation; carry-in benefits diminish while memory prices are expected to rise further. These are management statements in a **third-party transcript**, not an independently transcribed issuer recording. [S15]",
+      "reasoning": [
+        "The complete directly retrieved Motley Fool transcript includes named speakers and the precise cited quarterly guidance, licensing/FX headwinds and memory/inventory offset remarks. No contradiction or misattribution was found in the local original.",
+        "The current memo explicitly identifies third-party transcription and lack of independently transcribed issuer audio; its annual forecast remains a house assumption. A categorical issuer-primary-only rule does not follow merely from the importance of a correctly attributed secondary source. If the governing task separately requires primary-only claims, that external rule would change admissibility, but the reviewer has not identified such a rule or an actual erroneous remark.",
+        "The original issuer 10-K independently supports current component supply constraints and expected intensification of memory/storage cost pressure. It also supports general bundled-service revenue deferral. Exact quarterly guidance, licensing/FX and carry-in-offset detail remain transcript-dependent; primary corroboration should not be overstated.",
+        "The review lists detailed cloud-cost accounting among memo claims, but the current memo body contains no assertion that Siri AI cloud costs are recognized in Services cost of sales. Its AI paragraph instead says inference margins are not established. That part of the allegation is broader than the current text."
+      ],
+      "primary_evidence": [
+        {
+          "path": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "start_char": 129122,
+          "end_char": 129390,
+          "line_start": 418,
+          "exact_text": "The Company is experiencing supply constraints and rising costs driven by industry-wide supply-demand imbalances for key components, including advanced semiconductors, memory and storage. The Company expects these trends to intensify for memory and storage components.",
+          "text_sha256": "c2131de48c6352692e89b417fb76b7b01fb5d6109c264f5b7607e080809ba6a0"
+        },
+        {
+          "path": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "start_char": 162256,
+          "end_char": 162872,
+          "line_start": 778,
+          "exact_text": "The Company allocates revenue and any related discounts to all of its performance obligations based on their relative SSPs. Because the Company lacks observable prices for product-related bundled services, the allocation of revenue is based on the Company\u2019s estimated SSPs. Revenue allocated to the delivered hardware and bundled software is recognized when control has transferred to the customer, which generally occurs when the product is shipped. Revenue allocated to product-related bundled services is deferred and recognized on a straight-line basis over the estimated period they are expected to be provided.",
+          "text_sha256": "5dae5ab93fbbf271a7868c05aed266adf21ed10e134629a90fd4f30bb22e045d"
+        }
+      ],
+      "transcript_evidence": [
+        {
+          "path": "/workspace/scratch/aapl-upgrade-research/raw/q4_management_transcript_fool.txt",
+          "start_char": 32751,
+          "end_char": 32898,
+          "line_start": 306,
+          "exact_text": "We expect our December quarter total company revenue to grow between 7% and 10% year-over-year, which reflects our best view of constrained supply.",
+          "text_sha256": "3872355b7e0af1b757004509d67d059fde9859c13cafeed47de2764396a02d1c"
+        },
+        {
+          "path": "/workspace/scratch/aapl-upgrade-research/raw/q4_management_transcript_fool.txt",
+          "start_char": 32980,
+          "end_char": 33176,
+          "line_start": 306,
+          "exact_text": "We expect services revenue to grow between 8% and 9% year-over-year in the December quarter. This contemplates sequential headwinds, primarily driven by third-party licensing and foreign exchange.",
+          "text_sha256": "e0e17cc7412295d5f33e6cab1aee2e3762435f07d56b82f74a99b048fccebb4f"
+        },
+        {
+          "path": "/workspace/scratch/aapl-upgrade-research/raw/q4_management_transcript_fool.txt",
+          "start_char": 45301,
+          "end_char": 45554,
+          "line_start": 336,
+          "exact_text": "We also expect to see some benefit from carry-in inventory in the December quarter as well, as well as lower costs on certain non-memory components. And looking beyond the December quarter, we see the pricing for memory purchases continuing to increase.",
+          "text_sha256": "64aa1e8db386e86df8a23265de4ed2143e3872c3e50c20da149b16a7311594ea"
+        }
+      ],
+      "proposed_clarification": "The issuer filing independently confirms component constraints and rising memory/storage costs. The precise quarterly guide and licensing/FX and carry-in-inventory commentary below come from management statements in the retrieved third-party transcript; they have not been reconciled to issuer audio. [S4, S15]",
+      "forecast_changes_required": false
+    },
+    {
+      "finding_id": "F5",
+      "reviewer_severity": "minor",
+      "adjudication": "Accept a narrow factual qualifier and evidence-packet correction.",
+      "recommended_severity": "minor",
+      "exact_current_excerpt": "The economic advantage is that customers can keep devices, files, purchases and familiar workflows inside one system. Competing hardware, Android and alternative services remain available; Apple\u2019s own filing describes a minority unit share in major device markets. Integration may protect willingness to pay without making memory supply cheaper or every new service profitable. Supplier constraints can transfer part of the premium to component vendors, and regulation can transfer part to developers and users. [S4, S19]",
+      "reasoning": [
+        "The original filing expressly says minority market share and names global smartphone, personal computer, tablet and wearables markets. It does not specify unit share, so the current unit qualifier is not supported by this cited statement.",
+        "The current S4 selected excerpts do not include the minority-share sentence, although it is present in the archived primary original at line174. The reviewer is right about the supplied excerpt gap; saying the filing contains no market-share statement would be wrong."
+      ],
+      "primary_evidence": [
+        {
+          "path": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "start_char": 16159,
+          "end_char": 16405,
+          "line_start": 174,
+          "exact_text": "The Company has a minority market share in the global smartphone, personal computer, tablet and wearables markets, and some of the markets in which the Company competes have from time to time experienced little to no growth or contracted overall.",
+          "text_sha256": "ada259278a1a82a3459e82bea7f464027780c122bbfd0661d411bdb0f7e15ae5"
+        }
+      ],
+      "proposed_replacement": "Competing hardware, Android and alternative services remain available; Apple\u2019s filing states it has a minority market share in global smartphone, personal computer, tablet and wearables markets. [S4]",
+      "proposed_evidence_packet_addition": {
+        "path": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+        "start_char": 16159,
+        "end_char": 16405,
+        "line_start": 174,
+        "exact_text": "The Company has a minority market share in the global smartphone, personal computer, tablet and wearables markets, and some of the markets in which the Company competes have from time to time experienced little to no growth or contracted overall.",
+        "text_sha256": "ada259278a1a82a3459e82bea7f464027780c122bbfd0661d411bdb0f7e15ae5"
+      },
+      "forecast_changes_required": false
+    },
+    {
+      "finding_id": "F6",
+      "reviewer_severity": "minor",
+      "adjudication": "Accept a clarification of evidence scope; current text already calls the numerical path a house assumption.",
+      "recommended_severity": "minor clarity improvement",
+      "exact_current_excerpt": "The base assumes FY2027 Products gross margin of 36%, Services 75.5%, R&D growth of 14% and SG&A growth of 8%. That produces the consolidated 30.1% EBIT margin; it is not independently selected to force a value. Products recover to 37.5% in FY2028 and 38.5% in FY2029, while Services reaches 76.5%. The later recovery is a house assumption. It is motivated by pricing/mix offsets and the outside recovery case, rather than a claim that management guaranteed normalization. [S15, S29]",
+      "reasoning": [
+        "The original Morningstar public note gives a general two-point compression/rebound view without identifying the margin measure or a numerical Products gross-margin path. It cannot externally validate36%/37.5%/38.5%.",
+        "The memo separately discloses the measure ambiguity in its named Morningstar discussion and calls the later numerical recovery house assumption. Thus this is not evidence of a fabricated external numerical forecast, but the nearby motivation sentence can be more explicit."
+      ],
+      "source_evidence": [
+        {
+          "path": "/workspace/scratch/aapl-upgrade-research/consensus-opposition/morningstar_nov4.txt",
+          "start_char": 3055,
+          "end_char": 3323,
+          "line_start": 92,
+          "exact_text": "We project margins compressing about 2 points in fiscal 2027 from memory inflation. We like Apple\u2019s move to raise prices but share the pain with its customers via margin compression. We project margins to rebound in 2028 and beyond as memory prices come back to earth.",
+          "text_sha256": "90987f4726f4c9d458715162ea6782c8057e0e425cef204f68b9548fe99b64f7"
+        }
+      ],
+      "proposed_replacement": "The numerical Products path is a house assumption. Management\u2019s pricing/mix offsets and Morningstar\u2019s general 2028 margin-recovery view motivate testing recovery, but neither supplies or validates this specific Products gross-margin path. [S15, S29]",
+      "forecast_changes_required": false
+    },
+    {
+      "finding_id": "F7",
+      "reviewer_severity": "minor",
+      "adjudication": "Reject as a substantive historical-data contradiction; accept explicit future-evidence wording.",
+      "recommended_severity": "minor clarity improvement",
+      "exact_current_excerpt": "FY2027 category revenue growth at least 12%, with disclosed pricing/mix or shipment evidence supporting persistence; a single quarter is insufficient. The conditional path uses 13%, 10%, 8.5%, 7% underlying growth for its first four years, then base.",
+      "excerpt_location": "assumptions.json /monitoring/0/threshold (also repeated in valuation.json monitoring)",
+      "reasoning": [
+        "This is a prospective review condition dated2027-11-15, not a claim that the packet already contains a historical units-times-ASP bridge. The memo explicitly says observations trigger investigation and do not establish the entire decade.",
+        "Qualitative disclosed pricing/mix commentary can exist without a full quantitative units-times-ASP bridge: the original10-K attributes FY26iPhone growth to Pro models and management transcript discusses product price increases and constraints. Shipment/unit precision may still be unavailable.",
+        "The strongest clarification is to say that the threshold requires new evidence and to allow qualitative evidence without inventing a shipment series. Unavailable evidence should prevent automatic adoption rather than force a made-up bridge."
+      ],
+      "source_evidence": [
+        {
+          "path": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "start_char": 134361,
+          "end_char": 134455,
+          "line_start": 454,
+          "exact_text": "iPhone net sales increased during 2026 compared to 2025 due to higher net sales of Pro models.",
+          "text_sha256": "0abfe44b98c0f5fb173a73b36dc04ea9f5200cac05163bd3ff5eccff8a8ab135"
+        }
+      ],
+      "proposed_threshold": "FY2027 category revenue growth at least 12%, with new issuer disclosures or other substantiated evidence on demand, supply normalization, pricing or product mix that supports persistence. Such future evidence may remain unavailable; the condition does not assume a disclosed historical units-times-ASP bridge, and a single quarter is insufficient. The conditional path uses 13%, 10%, 8.5%, 7% underlying growth for its first four years, then base.",
+      "forecast_changes_required": false
+    }
+  ],
+  "tax_source_points": {
+    "related_finding_id": "F2",
+    "adjudication": "A stronger preference rationale is warranted, but FY2024 headline24.1% is distorted by an explicitly identified one-time provision charge and does not by itself refute a17% forward expense-rate anchor. Cash-tax normalization remains a house judgment.",
+    "exact_current_excerpt": "The filing reports $34.588 billion of cash income taxes paid, or 21.72% of $159.237 billion consolidated pretax income. That is a cash-paid/profit ratio, not a measured unlevered operating tax rate: settlement timing and nonoperating items differ. The full provision-to-cash reconciliation is not modeled. Cash operating tax is normalized at 17% in all cases, supported as an expense-rate anchor by the latest effective rate and management\u2019s quarterly guidance rather than claimed to equal cash paid. The $34.588 billion cash payment also exceeds the $27.062 billion income-tax provision by $7.526 billion; the packet does not allocate that difference to specific settlements or timing effects. The debt tax shield uses a separate 25% normalized marginal-rate **house assumption**. The former matches the latest effective-rate anchor but is not proven permanent; the latter is not asserted to be Apple\u2019s reported tax rate. Uniform 20%/24% operating-tax stresses reduce weighted value to $160.33/$152.25, holding other inputs fixed. [S4; computed diagnostics]",
+    "source_evidence": [
+      {
+        "path": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+        "start_char": 178669,
+        "end_char": 179001,
+        "line_start": 969,
+        "exact_text": "As a result, during the fourth quarter of 2024 the Company recorded a one-time income tax charge of $10.2 billion, net, which represented $15.8 billion payable to Ireland via release of amounts held in escrow, partially offset by a U.S. foreign tax credit of $4.8 billion and a decrease in unrecognized tax benefits of $823 million.",
+        "text_sha256": "8fd0bbdeed188e4b9eda46d775cc1629e57293736117598d20e32a1d4e512b5d"
+      },
+      {
+        "path": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+        "start_char": 180992,
+        "end_char": 181129,
+        "line_start": 1020,
+        "exact_text": "Impact of the State Aid Decision\n(486) 10,246\nOther 410 279\nProvision for income taxes $ 20,719 $ 29,749\nEffective tax rate 15.6 % 24.1 %",
+        "text_sha256": "20d14df67135700632ff2e27827b53f78f2363ee9df2f9d4785a86efe640b1a4"
+      },
+      {
+        "path": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+        "start_char": 180513,
+        "end_char": 180555,
+        "line_start": 1012,
+        "exact_text": "Provision for income taxes $ 27,062 17.0 %",
+        "text_sha256": "f77ae0ba12318aa0620d5d5809ac863a422c2abfbc46de82f44ba69b1327e372"
+      },
+      {
+        "path": "/workspace/scratch/aapl-upgrade-research/raw/q4_management_transcript_fool.txt",
+        "start_char": 33540,
+        "end_char": 33570,
+        "line_start": 307,
+        "exact_text": "our tax rate to be around 17%.",
+        "text_sha256": "21aae3a66dc8ddc7d8ffc1241972c35c22002e303199645e8752208e03c21305"
+      }
+    ],
+    "arithmetic": {
+      "fy2024_reported_provision_USD_millions": 29749,
+      "fy2024_state_aid_provision_line_USD_millions": 10246,
+      "fy2024_provision_excluding_only_that_line_USD_millions": 19503,
+      "fy2024_illustrative_provision_rate_excluding_only_that_line": 0.15793821111875936,
+      "fy2025_reported_effective_rate": 0.156,
+      "fy2026_reported_effective_rate": 0.17,
+      "fy2026_current_tax_provision_USD_millions": 26341,
+      "fy2026_deferred_tax_provision_USD_millions": 721,
+      "fy2026_current_provision_over_pretax": 0.16542009708798835,
+      "fy2026_cash_paid_over_pretax": 0.2172108241175104,
+      "fy2026_cash_paid_less_total_provision_USD_millions": 7526
+    },
+    "interpretation": [
+      "Removing only the exact10.246bn StateAid provision line gives an illustrativeFY24 expense-rate15.79%, not a measured normalized operating cash-tax rate. Avoid substituting rounded10.2bn when using an exact derived rate.",
+      "FY25reported15.6%, FY26reported17.0% and transcript quarterly17% guide provide a reasonable explicit expense-rate anchor for a house forward17% selection, while the cash/provision gap and long-run tax uncertainty remain unresolved.",
+      "Do not assign the FY26cash/provision7.526bn gap to the FY24one-off or escrow release; the supplied primary note does not provide that causal cash reconciliation.",
+      "The memo already shows20%/24% cash-tax stresses. The improvement is to explain why17% is selected, label the future expense-to-cash convergence assumption, and retain those downside alternatives."
+    ],
+    "proposed_addition": "The 17% choice uses the latest provision rate and next-quarter expense-rate guide as a forward anchor, assuming expense and cash taxation converge over time rather than reproducing settlement-heavy annual cash payments. FY2024\u2019s 24.1% expense rate included a $10.246 billion State Aid charge; removing only that line gives an illustrative 15.79%, not a validated operating cash-tax rate. The FY2026 cash/provision gap remains unreconciled, so 17% is a house choice and the 20%/24% cash-tax stresses remain relevant. [S4, S15]",
+    "forecast_changes_required_for_source_accuracy": false
+  },
+  "conclusion": "Make the narrow minority-share qualifier/evidence correction and clarify general recovery, future trigger evidence and tax choice. The credible, accurately attributed transcript remains usable with disclosed limitations; original primary corroboration can strengthen high-level mechanisms without pretending exact audio reconciliation. None of these source points requires changing numerical forecasts.",
+  "frozen_artifacts_modified": false,
+  "source_artifacts_modified": false,
+  "network_or_paid_api_calls": false
+}

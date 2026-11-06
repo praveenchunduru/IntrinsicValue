@@ -1,0 +1,103 @@
+```json
+{
+  "verdict": "revise",
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "blocker",
+      "issue": "The memo's 'pass on initiating' decision is structurally inconsistent with its own numbers. The weighted value is $166.40 versus a $344.17 quote—a 52% discount. The memo labels this a 'pass' but the computed diagnostics show 'upside_percent': -52.91% (base), -71.27% (bear), -29.52% (bull). No disclosed assumption or argument bridges that gap to a neutral/pass conclusion; the decision framing is unsupported by the valuation output.",
+      "source_refs": ["S1"],
+      "current_excerpt": "House decision at the snapshot quote: pass on initiating under the adopted approximately 10% required-return framework. Near-term results close to the Street would not resolve the valuation gap. Reconsideration requires a defensible lower risk/terminal framework, materially stronger durable cash generation, or a lower entry price.",
+      "fix": "Reconcile the decision label with the computed output. A weighted value 52% below the quote under the preferred framework is a negative-conviction finding, not a neutral pass. Either re-label the decision (e.g., 'do not initiate / avoid at current price under this framework') or provide an explicit, evidence-backed argument for why the gap does not constitute a negative signal."
+    },
+    {
+      "id": "F2",
+      "severity": "major",
+      "issue": "The memo states 'CFO / net income, rounded to 2 decimals: 1.26x / 1.00x / 1.10x' for FY2024/FY2025/FY2026. From S2/S4: FY2025 OCF $111.482B / NI $112.010B = 0.995x, not 1.00x. More importantly, the derived_metrics in S2 explicitly flag FY2025 as 'ocf_exceeds_net_income: false' with cash_flow_minus_net_income of -$528M. The memo rounds this to 1.00x without disclosing the exception, obscuring a material cash-conversion anomaly that the memo itself elsewhere calls out.",
+      "source_refs": ["S2", "S4"],
+      "current_excerpt": "CFO / net income, rounded to 2 decimals | 1.26x | 1.00x | 1.10x",
+      "fix": "Report FY2025 as 0.995x (OCF below net income) and explicitly note the exception per the derived_metrics flag. The memo already discusses the $25B working-capital drag; the table should reflect the actual sub-1.0x ratio rather than rounding it to parity."
+    },
+    {
+      "id": "F3",
+      "severity": "major",
+      "issue": "The memo claims 'House FY2027/FY2028 revenue is 522.93/572.86 billion, versus the dated S&P panel's $526.94/$570.06 billion' and presents this as near-consensus. However, the house base operating forecast uses the operating_cost_leverage counterfactual's revenue path (iPhone base growth 10%, not 13%), not the iphone_growth_persistence path. The FY2027 house revenue of $522.93B corresponds to the base scenario with 10% iPhone growth, while the Street mean of $526.94B is closer to the iphone_growth_persistence case ($530.55B). The memo conflates two different forecast paths when claiming near-consensus alignment.",
+      "source_refs": ["S24", "S25", "S26"],
+      "current_excerpt": "House FY2027/FY2028 revenue is 522.93/572.86 billion, versus the dated S&P panel's $526.94/$570.06 billion.",
+      "fix": "Clarify that the $522.93B figure is the base scenario (10% iPhone growth) and that the Street mean of $526.94B sits between the base and the iphone_growth_persistence counterfactual ($530.55B). The 'near-consensus' characterization overstates alignment; the base is ~0.8% below Street mean, which is directionally accurate but should not be presented as validation."
+    },
+    {
+      "id": "F4",
+      "severity": "major",
+      "issue": "The memo states the marginal tax rate of 25% is used for the debt tax shield, while 17% is used as the operating cash tax. The 25% marginal rate is described as a 'house assumption' but no evidence or reasoning is supplied for why 25% (the US statutory rate) is appropriate for Apple's predominantly foreign-earnings structure. S4/E14 shows Apple's effective rate is 17% with significant Ireland/Singapore benefits. Using 25% for the shield while using 17% for operations is internally inconsistent and materially affects WACC through the after-tax cost of debt and the Hamada unlevering formula.",
+      "source_refs": ["S4"],
+      "current_excerpt": "The debt tax shield uses a separate 25% normalized marginal-rate house assumption. The former matches the latest effective-rate anchor but is not proven permanent; the latter is not asserted to be Apple's reported tax rate.",
+      "fix": "Disclose that the 25% marginal shield rate is the US statutory rate applied as a conservative upper bound for the debt shield, while Apple's blended effective rate is materially lower. Quantify the WACC sensitivity: using 17% for the shield instead of 25% changes the after-tax cost of debt and the Hamada unlevering, affecting the adopted beta and WACC. This is a load-bearing assumption that should be stress-tested."
+    },
+    {
+      "id": "F5",
+      "severity": "major",
+      "issue": "The memo states 'FY2026 cash repurchases of $86.390 billion plus dividends of $15.721 billion used 70.4% of operating cash flow' and notes a $0.59B unreconciled difference between Note 11 ($85.8B) and the cash-flow statement ($86.390B). However, S4/E11 states 'the Company repurchased $85.8 billion of its common stock' while E9 shows 'Repurchases of common stock (86,390)'. The memo correctly flags this but then uses $86.390B for the 70.4% calculation. The correct cash-flow figure is $86.390B; the $85.8B is the Note 11 accounting disclosure. The memo should not present these as requiring reconciliation—S4's own extraction metadata states they are 'distinct reported measures'—yet the memo implies an error.",
+      "source_refs": ["S4"],
+      "current_excerpt": "FY2026 cash repurchases of $86.390 billion plus dividends of $15.721 billion used 70.4% of operating cash flow. Note 11/program disclosure separately reports $85.8 billion of repurchases; its $0.59 billion difference from the cash-flow figure remains unreconciled rather than assigned an invented cause.",
+      "fix": "Clarify that the $86.390B (cash-flow statement) and $85.8B (Note 11 share-repurchase accounting) are different reported measures per S4's own metadata—the former includes settlement timing differences. Remove the implication of an unresolved error; instead note these are distinct measures with different accounting bases, consistent with S4's extraction_metadata disclosure."
+    },
+    {
+      "id": "F6",
+      "severity": "major",
+      "issue": "The memo presents Morningstar's $290 fair value as a 'named institution' challenge without disclosing that $290 is also below the $344.17 quote by 15.7%. The memo states 'Its $290 is higher than the $162.07 house base but still below the $344.17 quote: cautious near-term units and cost pressure can coexist with a higher house-value challenge, without endorsing current price.' This framing is correct but incomplete: Morningstar's $290 implies the stock is also overvalued at $344.17, which strengthens rather than challenges the house's negative-conviction finding. The memo uses Morningstar as a 'house-value challenge' when it actually corroborates the directional conclusion.",
+      "source_refs": ["S29"],
+      "current_excerpt": "Morningstar's recovery case: William Kerwin's November 4 note assigns $290 fair value despite expecting flat FY2027 iPhone units, pricing-led revenue growth and approximately two points of margin compression before a FY2028 recovery... Its $290 is higher than the $162.07 house base but still below the $344.17 quote.",
+      "fix": "Reframe Morningstar's $290 as partial corroboration of the overvaluation finding (both house and Morningstar are below quote), while noting the $128 gap between them reflects different operating assumptions and/or required returns. The memo should not present a below-quote third-party estimate as a 'challenge' to the house without explaining what specific assumption difference drives the $128 gap."
+    },
+    {
+      "id": "F7",
+      "severity": "major",
+      "issue": "The memo states the reverse-DCF requires '16.52% constant annual revenue growth for ten years' to justify $344.17 at the preferred rate, with FY2036 revenue of $2.21 trillion. However, the reverse-DCF holds the base EBIT-margin path fixed. The base EBIT margin path rises from 30.1% to 35.1% over the decade. At 16.52% revenue growth with those margins, FY2036 EBIT would be ~$776B. The memo does not disclose that this reverse-DCF implicitly assumes the same margin expansion path applies to a revenue base 2.7x larger than base—a compounding assumption that makes the growth requirement appear even less plausible than stated. This omission understates the implausibility of the market-implied scenario.",
+      "source_refs": ["S4"],
+      "current_excerpt": "Holding the base aggregate EBIT-margin path, 17% operating tax, 3x sales-to-capital, 3% terminal growth, 50% terminal ROIC and equity bridge fixed, the aggregate revenue-only reverse DCF needs 16.52% constant annual revenue growth for ten years to reach $344.17.",
+      "fix": "Add disclosure that the reverse-DCF applies the base margin expansion path to a 2.7x larger revenue base, implying FY2036 EBIT of approximately $776B. This makes the implicit operating assumption explicit and strengthens the argument that the market-implied scenario requires compounding favorable assumptions, not just revenue growth alone."
+    },
+    {
+      "id": "F8",
+      "severity": "minor",
+      "issue": "The memo states 'Greater China's FY2026 revenue grew 28% to $82.378 billion, with favorable currency and iPhone/Mac strength.' S4/E6 reports Greater China growth as 28% (rounded), consistent with the computed 27.96%. However, the memo does not note that FY2025 Greater China revenue declined 4% from FY2024 ($66.952B to $64.377B). Presenting only the FY2026 rebound without the prior-year decline overstates the trend's durability and omits a material contrary data point for geographic concentration risk.",
+      "source_refs": ["S4"],
+      "current_excerpt": "Greater China's FY2026 revenue grew 28% to $82.378 billion, with favorable currency and iPhone/Mac strength. That raises the burden of proof for a sudden collapse, while leaving geographic concentration and local competition meaningful risks.",
+      "fix": "Add that FY2025 Greater China revenue declined 4% YoY before the FY2026 rebound, making the two-year CAGR approximately 11%. This contextualizes the 28% as a recovery from a trough rather than a sustained acceleration, which is more relevant to the geographic concentration risk discussion."
+    },
+    {
+      "id": "F9",
+      "severity": "minor",
+      "issue": "The memo states 'The January proxy's FY2025 sales/operating-income incentives predate the transition and should not be represented as the new CEO's current package.' This is correct. However, the memo also cites S7 (January 2026 proxy) for 'historical FY25 incentives and ownership' without noting that the proxy's beneficial ownership table is dated January 2, 2026—before the September 1, 2026 CEO transition. Tim Cook's listed ownership of 3,280,295 shares at that date is not his current holding as Executive Chair, and the memo does not flag this staleness when discussing the ownership table.",
+      "source_refs": ["S7"],
+      "current_excerpt": "The January proxy's FY2025 sales/operating-income incentives predate the transition and should not be represented as the new CEO's current package.",
+      "fix": "Add explicit disclosure that the S7 beneficial ownership table is dated January 2, 2026 (pre-transition), and that Cook's listed 3,280,295 shares reflects his pre-transition CEO position. Current holdings as Executive Chair are not established by this source."
+    },
+    {
+      "id": "F10",
+      "severity": "minor",
+      "issue": "The memo states 'the operating-asset/liability row sums six cash-flow-statement movements, including noncurrent balances, and is not pure operating working capital.' The S4/E9 cash-flow statement shows seven line items under 'Changes in operating assets and liabilities' (accounts receivable, vendor non-trade receivables, inventories, other current and non-current assets, accounts payable, other current and non-current liabilities), not six. The memo's count is incorrect.",
+      "source_refs": ["S4"],
+      "current_excerpt": "The operating-asset/liability row sums six cash-flow-statement movements, including noncurrent balances, and is not pure operating working capital.",
+      "fix": "Correct 'six' to 'seven' cash-flow-statement line items under operating asset/liability changes, per S4/E9: accounts receivable, vendor non-trade receivables, inventories, other current and non-current assets, accounts payable, and other current and non-current liabilities."
+    },
+    {
+      "id": "F11",
+      "severity": "minor",
+      "issue": "The memo states 'Its [Phillip's] full PDF was login-only; the directly retrieved public note supports the stated parameters.' S30 metadata states 'access: direct_partial_original_public_note' and 'coverage: Public original note was retrieved; full PDF requires login and was not reviewed.' The memo correctly discloses this limitation in the source discussion but then uses Phillip's WACC (6.5%) and terminal growth (3.5%) as a 'phillip_rate_parameters' counterfactual producing $369.81. The memo does not disclose that the $369.81 uses house cash flows, not Phillip's forecasts, and that Phillip's own $310 target uses different operating assumptions. This distinction appears in the model rationale but not in the main body where $369.81 is first introduced.",
+      "source_refs": ["S30"],
+      "current_excerpt": "Applying only Phillip Securities' stated 6.5% WACC and 3.5% terminal growth to house base cash flows produces $369.81. That does not replicate Phillip's $310 target: its forecasts and one-year valuation roll-forward differ.",
+      "fix": "The disclosure is present but buried. Move the clarification that '$369.81 uses house cash flows, not Phillip's forecasts' to the first mention of $369.81 in the executive view, so readers do not initially interpret it as Phillip's implied value for Apple."
+    },
+    {
+      "id": "F12",
+      "severity": "minor",
+      "issue": "The memo's sensitivity table shows 'WACC one point below/above the preferred rate gives $189.85/$141.27.' From computed_diagnostics/base_wacc: WACC -1pp (9.02%) gives $189.85 and WACC +1pp (11.02%) gives $141.27. These match. However, the memo also states in the rate-comparison table 'Consumer/Office Electronics asset beta 0.93 → 9.01% → $190.20' and the WACC sensitivity shows 9.02% → $189.85. The $0.35 difference between $190.20 and $189.85 at nearly identical WACCs (9.01% vs 9.02%) is unexplained and could confuse readers comparing the two tables.",
+      "source_refs": ["S34"],
+      "current_excerpt": "WACC one point below/above the preferred rate gives $189.85/$141.27... consumer electronics proxy | 9.01% | 190.20 | +28.13",
+      "fix": "Add a footnote clarifying that the $0.35 difference between the WACC sensitivity ($189.85 at 9.02%) and the consumer electronics proxy ($190.20 at 9.01%) reflects the different beta/relevering path used in each calculation—the sensitivity holds beta fixed while the proxy uses a different unlevered beta that produces a slightly different relevered beta and cost of equity at the same WACC level."
+    }
+  ]
+}
+```

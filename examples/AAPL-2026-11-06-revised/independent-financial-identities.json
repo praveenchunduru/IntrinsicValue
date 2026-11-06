@@ -1,0 +1,9 @@
+{
+  "scope": "Independent arithmetic reconstruction without importing runner implementation; does not validate forecast plausibility or source truth.",
+  "passed_checks": 429,
+  "findings": [],
+  "reviewed_file_sha256": {
+    "assumptions.json": "0940d655bb2df9e3cfe9f324d026c38008fb1a548f1b5f0922cdace1f3aa1a4f",
+    "valuation.json": "86956faead94bdfd40efc4c1f2d011e42de09ae201b0838d620fb76fa72fa6bf"
+  }
+}

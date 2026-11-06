@@ -36,3 +36,10 @@ remain disclosed. Key/account metadata and private repository history are exclud
 CI uses mocked transports and synthetic evidence only. No API key is needed to
 run `python -m unittest discover -s tests/public_runner -v` or to recompute the
 example offline. Do not add paid model calls or secrets to push/PR CI.
+
+The [revised AAPL example](../examples/AAPL-2026-11-06-revised/memo.md) adds sourced
+operating drivers, issuer-risk calibration and independent editorial adjudication.
+Its [quality record](../examples/AAPL-2026-11-06-revised/quality-review.md) preserves
+the automated nonapprovals and formatting failures, independent findings and
+responses, exact reviewed-file scopes, and $1.665431 of additional request costs.
+Editorial acceptance does not change a saved automated verdict or completion flag.

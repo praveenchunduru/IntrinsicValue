@@ -1,0 +1,19 @@
+{
+  "format": "intrinsicvalue_review_manifest_v2",
+  "iteration": 4,
+  "hash_scheme": "sha256 of exact UTF-8 file bytes; JSON files are not canonicalized for this manifest",
+  "file_sha256": {
+    "memo-body.md": "1f35e3ee6374c7df847d2ac6d231038e9b7700cc39571a264920c4e5e2c5e033",
+    "memo.md": "fbad39d44d0f31cf86acbd81f2306c402e1edd23b1b0c2fcc5a7bc41c4977c20",
+    "assumptions.json": "31bbca2c519bfa231d7a9102cd040becb5e0ea7af23511cd904d40cf61fd71e1",
+    "valuation.json": "d03dcdabe1ba926be7c2009e9049f818b91e8e0e0167560f73a073b756f72ae5",
+    "sources.json": "f4b578770f3357aae4eaa43cf991d6fc5ceb1596af2861e6799c7599da56b7f8",
+    "cashflows.csv": "296cdace9737fb30b88f17a8f982fc860e70fdb2fc4c142f9f77c33a56fe48f6",
+    "sensitivity.csv": "81ecd7bb8ed0f76e62f11ba27acbfed14307ee7d7d9af9119f91dab9178309d6"
+  },
+  "word_counts": {
+    "memo_body": 5922,
+    "memo_rendered": 7748
+  },
+  "scope": "Clarifications following independent adjudication of live reviewer claims. No numerical forecast or house valuation change."
+}

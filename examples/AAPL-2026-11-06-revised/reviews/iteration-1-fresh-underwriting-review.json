@@ -1,0 +1,180 @@
+{
+  "review_type": "fresh_independent_investment_committee_underwriting_adversary",
+  "artifact_scope": [
+    "/workspace/scratch/aapl-a-plus-iteration1/memo.md",
+    "/workspace/scratch/aapl-a-plus-iteration1/assumptions.json",
+    "/workspace/scratch/aapl-a-plus-iteration1/valuation.json",
+    "/workspace/scratch/aapl-a-plus-iteration1/sources.json",
+    "/workspace/scratch/aapl-a-plus-iteration1/review-manifest.json"
+  ],
+  "benchmarks": [
+    "/workspace/scratch/memo-comparison/FIG-live.md",
+    "/workspace/scratch/memo-comparison/MU-live.md"
+  ],
+  "frozen_artifact_hashes": {
+    "memo.md": "e218eeb66da34e0720a0de6143790e02c7bed6e3d872e4b166780b37b5fb41ea",
+    "assumptions.json": "e94d87748ba3a49cdc2fb65b316a7e647eda909842a63540617673d8a744464c",
+    "valuation.json": "15b4a22f868f65b0080f8f64ba57413fd5441f72c87076894e1ed95eb2b28e9d",
+    "sources.json": "9785132cddd08f881b7f217e49a161aa75a9982b3249aa3587ab751b4d45ee66",
+    "review-manifest.json": "4a052cc6b174ebfb1a88e996d79629bf1de133e64820375520287bc985709ee7"
+  },
+  "assessment": {
+    "a_plus": false,
+    "research_argument_parity": "Not yet at the investment-judgment quality of the current FIG and MU live memos. This is a credible, unusually candid and technically transparent valuation draft; it is not merely a superficial model template. Its decisive required-return judgment remains underwritten chiefly by an industry classification, and its shareholder-return implication is not presented.",
+    "what_already_meets_the_standard": [
+      "Correctly identifies near-term agreement with dated Street revenue, EBIT and gross-margin evidence; does not invent a memory-cost variant thesis or an unmatched GAAP EPS comparison.",
+      "Business economics are coherent: distinguishes reported Products-group margins from undisclosed category margins, funds R&D/SG&A, and recognizes FY2026 growth was primarily iPhone rather than a realized Services mix shift.",
+      "Engages actual named opposing views and accurately limits their access, periods and valuation comparability. The Phillip parameter counterfactual is economically consequential and appropriately is not called replication of its target.",
+      "Discloses capital, tax, terminal excess returns, cash classification, SBC and share-count conventions; stress effects are recomputed rather than rhetorical.",
+      "Dated monitoring cases separate observation from a decade-long forecast inference and avoid mechanically adding correlated effects."
+    ],
+    "benchmark_basis": [
+      {
+        "file": "/workspace/scratch/memo-comparison/FIG-live.md",
+        "lines": [
+          24,
+          26,
+          191,
+          201,
+          203,
+          211,
+          227,
+          232
+        ],
+        "comparison": "The live FIG memo identifies its actual forecast edge, uses contemporaneous operating evidence to challenge that edge, quantifies causal changes, and distinguishes a fixed-exit owner IRR from the discount-rate solve."
+      },
+      {
+        "file": "/workspace/scratch/memo-comparison/MU-live.md",
+        "lines": [
+          13,
+          238,
+          244,
+          263,
+          267,
+          272,
+          584,
+          599
+        ],
+        "comparison": "The live MU memo connects unit price/capacity/investment dynamics to a falsifiable duration thesis, labels the unallocated rate/future-cash residual honestly, and reconciles a declining rate path with fixed-exit shareholder returns."
+      }
+    ],
+    "strongest_reason_author_could_be_wrong": "Apple may deserve a persistently lower capitalization rate than a broad Computers/Peripherals operating beta implies, particularly if ecosystem integration preserves pricing, retention and cash conversion as hardware matures. The memo itself shows that 6.5% WACC with 3.5% terminal growth values its own operating case at $369.81. The operating forecast need not surprise the Street for the large headline valuation gap to disappear. This is not proof that 6.5% is appropriate: with a 4.94% Treasury and 4.41% ERP it is a demanding low-risk claim that also needs evidence.",
+    "number_of_prioritized_findings": 2,
+    "no_finding_quota": "I did not promote every unmeasured assumption, absent dataset, missing benchmark section, or different forecast preference to a finding."
+  },
+  "findings": [
+    {
+      "id": "UW-01",
+      "priority": 1,
+      "severity": "high",
+      "category": "decisive_thesis_underwriting",
+      "title": "The economically decisive capitalization-rate judgment is reproduced but not adjudicated.",
+      "file": "/workspace/scratch/aapl-a-plus-iteration1/memo.md",
+      "line": 123,
+      "current_excerpt": "This is a reproducible calibration, not a uniquely correct required return. Apple\u2019s hardware/Services mix, ecosystem persistence, cash holdings and the sector\u2019s lease conventions limit proxy comparability. Book financial debt substitutes for market debt value, and the AA index mixes issuers/maturities. Debt\u2019s 1.60% weight makes the equity-risk judgment much more important than a small bond-yield difference. [S4, S34, S35]",
+      "additional_locations": [
+        {
+          "line": 13,
+          "current_excerpt": "**The decision turns on the durability/rate judgment, not a near-term earnings surprise.** The Computers/Peripherals beta is a transparent sector proxy, not an observed Apple-specific risk parameter. A lower required return, stronger cash conversion or longer-lived pricing power could narrow the gap. The reader should challenge those premises before drawing an investment conclusion from the headline distance to price."
+        },
+        {
+          "line": 114,
+          "current_excerpt": "| Unlevered operating beta | 1.32 | January 2026, 36 Computers/Peripherals firms; sector proxy |"
+        },
+        {
+          "line": 119,
+          "current_excerpt": "| Applied market WACC | 10.72% | Same across all operating scenarios |"
+        },
+        {
+          "line": 164,
+          "current_excerpt": "Replacing the near-term aggregate revenue path with the dated Street levels gives $148.32, only +1.42 from base with margins and other inputs fixed. That reinforces where the argument resides: near-term sales agreement does not resolve required returns or durable economics. The next research priority is a better issuer-specific risk and cash-conversion case, not further repetition of already-known memory pressure."
+        }
+      ],
+      "finding": "The title and executive view make required returns the central disagreement, yet the selected 1.32 operating beta rests on the closest broad sector label and is held constant into perpetuity. The memo acknowledges the classification and forward-risk problem, but acknowledgment does not establish why Apple should be priced at this point rather than a lower, durable risk level. Nor do the six monitoring cases test this decisive premise: their conditional values remain approximately $141-$160 against $344.17. Because the draft itself demonstrates a sign-changing outside rate/growth combination, calling issuer-specific risk the next research priority leaves the center of the investment argument unfinished. This is not a claim that 10.72% is mathematically wrong or that 6.5% is economically right.",
+      "economic_importance": "The difference between the $146.90 base and the $369.81 Phillip-rate/growth counterfactual is $222.91 per share, exceeding all the named operating observation effects. A buyer/holder cannot use the high-precision base point as an underwritten judgment until the plausible required-return range is explained.",
+      "evidence": [
+        "S34 itself archives alternative cash-corrected beta proxies of 0.93 for Consumer & Office Electronics and 0.94 for General Electronics, as well as the chosen 1.32; the memo does not show their valuation consequence or adjudicate the mix.",
+        "All three operating cases use the same constant 10.7248896% WACC and the terminal calculation carries that rate indefinitely.",
+        "The draft already honestly says near-term sales/EBIT have little independent edge, so operating consensus disagreement cannot support this remaining valuation call."
+      ],
+      "independent_diagnostics": {
+        "basis": "Changed only the unlevered beta using the frozen rate/financing inputs, then discounted the frozen base FCFF and terminal growth/ROIC; no preferred beta is asserted.",
+        "beta_1_00": {
+          "wacc": 0.0931935084448716,
+          "value_per_share": 180.6866653334118
+        },
+        "beta_0_94": {
+          "wacc": 0.09055812332255314,
+          "value_per_share": 188.78309144126064
+        },
+        "beta_0_93": {
+          "wacc": 0.0901188924688334,
+          "value_per_share": 190.20201246291015
+        },
+        "interpretation": "These available alternatives still support a sizeable discount to the quote. That robustness is useful evidence the current memo could present; it does not establish the appropriate forward risk or validate a permanent 1.32 beta."
+      },
+      "actionable_fix": "Triangulate the current industry mapping against issuer-specific and business-mix risk evidence; explain the plausible range and whether risk should persist or fade as the explicit forecast matures. An issuer return regression can be a dated cross-check, not an automatic forward-beta assignment. Show valuations for the defensible range, including the already archived lower-beta alternatives, and explain why the unusually low quote-equating rate is or is not supportable with the matched risk-free/ERP inputs. Tie a dated reassessment of that central risk/capitalization premise to the monitoring framework. If evidence cannot adjudicate it, lead with a conditional valuation range and clearly bound the investment conclusion instead of treating input provenance as enough.",
+      "acceptance_test": "A reader can identify why the selected risk range applies to Apple and to the future cash-flow horizon; can see whether the conclusion survives credible alternatives; and can identify what evidence would change that required-return judgment."
+    },
+    {
+      "id": "UW-02",
+      "priority": 2,
+      "severity": "medium",
+      "category": "investment_decision_economics",
+      "title": "The 6.37% reverse-WACC solve does not tell the reader what return the modeled owner actually earns.",
+      "file": "/workspace/scratch/aapl-a-plus-iteration1/memo.md",
+      "line": 125,
+      "current_excerpt": "Holding every base input fixed, WACC one point lower/higher gives $169.48/$129.55. At 6.5% WACC plus 3.5% terminal growth, value rises to $369.81. The much larger second change shows why a narrow \u00b11-point grid alone cannot settle the debate. The quote-equating 6.37% constant rate has an algebraically equivalent equity beta of about 0.33 under the same rate/financing inputs. That is a conditional implication, not an observed Apple beta or evidence that investors actually use this model.",
+      "additional_locations": [
+        {
+          "line": 11,
+          "current_excerpt": "**The strongest contrary case is financially consequential.** Applying only Phillip Securities\u2019 stated 6.5% WACC and 3.5% terminal growth to house base cash flows produces **$369.81**. That does not replicate Phillip\u2019s $310 target: its forecasts and one-year valuation roll-forward differ. Holding the original base terminal growth and every operating input fixed, a constant rate of **6.37%** equates value to the frozen quote. These are separate conditional calculations, not a unique set of market beliefs. [S30; computed counterfactuals and reverse DCF]"
+        },
+        {
+          "line": 139,
+          "current_excerpt": "The 25%/50%/25% weights are judgment, not empirical probabilities. They do not exhaust possible combinations, and the weighted value is not an expected stock return. Reverse-DCF aggregate growth solutions likewise do not establish a unique market forecast or a coherent category-level adoption path."
+        }
+      ],
+      "finding": "The text correctly calls 6.37% a conditional discount-rate solution and does not explicitly label it an investor IRR. However, the only price-return-like output changes both discounting of explicit cash and the terminal capitalization rate. There is no fixed-exit owner-cash return or comparable terminal exit check. This is a material omission for a memo whose stated issue is the return investors should require: a 6.37% recapitalization solve and the return from paying $344.17 for the existing house cash/exit forecast answer very different questions. Both concrete live benchmarks make that distinction numerically.",
+      "economic_importance": "Under the frozen base terminal sale value, the nominal ten-year FCFF total is about $1,776.92bn and terminal enterprise value is $2,997.18bn. Even adding immediate distribution of the $55.368bn opening net financial bridge leaves total nominal proceeds below the $5,001.54bn entry equity outlay. This implication is far sharper than a roughly 6.4% number and depends explicitly on the exit capitalization assumption.",
+      "independent_diagnostics": {
+        "basis": "Illustrative annual full-payout convention: at time zero pay quote times current shares and immediately distribute selected cash less all opening financial debt/finance leases; then distribute each frozen FCFF and receive the frozen terminal enterprise sale value in year ten. Taxes, reinvestment, SBC cash-equivalent treatment and shares stay fixed. This is model-conditioned owner economics, not an expected actual stock return.",
+        "base_fixed_exit_irr": -0.004131947660356683,
+        "bear_fixed_exit_irr": -0.06568186674478488,
+        "bull_fixed_exit_irr": 0.04703082284687154,
+        "base_terminal_ev_to_fy2036_ebit": 10.402815367821816,
+        "important_distinction": "The reverse-WACC solve increases terminal exit value when it lowers WACC. Holding the original exit value fixed gives a different return; neither calculation identifies a unique market belief."
+      },
+      "actionable_fix": "Add a reproducible fixed-exit owner-cash return at the quote and at modeled value, with the initial net-cash/debt settlement, payout convention and terminal sale value stated. Show the implied terminal EV/EBIT (or other economically comparable exit check) and distinguish the result from the reverse-WACC solve in the executive view. If a different ownership/payout convention is preferred, calculate and label it consistently rather than adopting these illustrative numbers mechanically.",
+      "acceptance_test": "The reader can distinguish the investment return generated by the forecast under a stated exit convention from a lower discount rate that also raises the exit capitalization. The return diagnostic reconciles to the actual editable cash-flow output."
+    }
+  ],
+  "additional_underwriting_checks_not_promoted_to_findings": [
+    {
+      "topic": "Capital efficiency",
+      "conclusion": "The 3x incremental sales-to-capital assumption is not empirically proven, but a different unmeasured assumption is not automatically an error. Independent fixed-input values are $137.13 at 1x, $144.46 at 2x, $146.90 at 3x, $148.86 at 5x and $151.79 with zero explicit-period net growth investment. This uncertainty cannot account for the quote gap."
+    },
+    {
+      "topic": "Terminal excess returns",
+      "conclusion": "Perpetual 50% base ROIC is economically substantive, and historical UK switching alone does not prove it. The memo expressly labels it a permanent excess-return assumption and shows the FCFF handoff. Setting only return on new terminal investment to the 10.72% WACC lowers base value to $129.50, approximately $17.41. This is a useful robustness disclosure, not evidence the base must use competitive-equilibrium returns."
+    },
+    {
+      "topic": "Near-term guidance and memory costs",
+      "conclusion": "FY2027 gross-margin reset and partial FY2028 recovery are plausibly grounded in the retrieved management and Morningstar material. The model does not claim the annual path is company guidance. R&D is still funded; margin improvement is not created by assigning a desired EBIT margin independently."
+    },
+    {
+      "topic": "Outside alternative",
+      "conclusion": "Phillip, Morningstar and Wedgewood are actual, distinct contrary arguments, with appropriate limitations. No invented short thesis or target averaging is needed. The missing step is adjudicating the premise whose counterfactual changes the decision, as described in UW-01."
+    },
+    {
+      "topic": "Other bridge conventions",
+      "conclusion": "The source archive includes term-debt fair value, so use of book debt could be improved, but the approximately $14.1bn difference is under $1 per current share and does not drive the decision. I did not elevate it to a decisive underwriting finding."
+    }
+  ],
+  "review_limitations": [
+    "Repository-only review of the specified frozen artifacts and two actual live benchmark memos. No new web research, paid calls, infrastructure changes or publishing performed.",
+    "No edits to the frozen memo, assumptions, valuation, sources or manifest. This JSON is the only review artifact written.",
+    "Diagnostic computations are independent review calculations and are not revised author forecasts."
+  ],
+  "overall_verdict": "Substantial progress and credible research integrity, but not A+ or full live-benchmark parity yet. Finish the economically decisive required-return underwriting and make the owner-return consequence concrete; do not add generic sections merely to resemble a longer memo."
+}

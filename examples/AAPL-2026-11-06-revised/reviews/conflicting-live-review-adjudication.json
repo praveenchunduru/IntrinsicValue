@@ -1,0 +1,378 @@
+{
+  "scope": "Bounded independent adjudication of the paid review against the full iteration4 memo body, selected source packet and valuation. Primary arithmetic checked against the archived annual filing. No assumption that either the paid review or prior reviewer is correct.",
+  "inputs": {
+    "memo_body": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+    "sources": "/workspace/scratch/aapl-a-plus-iteration4/sources.json",
+    "valuation": "/workspace/scratch/aapl-a-plus-iteration4/valuation.json",
+    "assumptions": "/workspace/scratch/aapl-a-plus-iteration4/assumptions.json",
+    "paid_review": "/workspace/scratch/aapl-revised-live-r4/files/AAPL/full-5aa56bcfacdf2692/reviews/review-0.json",
+    "primary_10k": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt"
+  },
+  "reviewed_text_identity": {
+    "review_manifest_memo_sha256": "96e9a3fec144732e7627b894276d30dabcaa546967b78f3901b4c894871573f8",
+    "archived_reviewed_memo_sha256": "96e9a3fec144732e7627b894276d30dabcaa546967b78f3901b4c894871573f8",
+    "review_manifest_matches_archived_memo": true,
+    "current_body_is_exact_prefix_of_reviewed_memo": true,
+    "meaning": "The cited omissions can be tested against the exact body seen by the paid reviewer; they are not explained by a later corrective draft."
+  },
+  "overall_judgment": {
+    "paid_major_findings_upheld": 0,
+    "blocking_revision_warranted_from_this_review": false,
+    "disposition": "Do not use this paid review as a blocking quality gate. F1 and F2 are demonstrably wrong. Several other major findings overlook express adjacent disclosures. F3 and F7 suggest useful minor precision, and the missing diligence heading is at most organizational. F6 identifies a real economic uncertainty that is already explicitly disclosed, quantified and adverse to the pass decision when stressed.",
+    "recommended_action": "Retain the primary FY2025 net financial cash and correctly rounded CFO ratios. Optional one-clause clarifications for relative valuation and gross-margin comparability are sufficient; a new paid-review cycle is not justified by these findings. Continue to characterize the decision as conditional on the adopted required-return framework, as the memo already does."
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "paid_severity": "major",
+      "adjudicated_severity": "none",
+      "disposition": "REJECT: reviewer omits commercial paper from financial debt.",
+      "memo_evidence": {
+        "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+        "line": 116,
+        "excerpt": "| Net financial cash, before finance leases | Not covered here | 33.763 | 56.824 |"
+      },
+      "primary_evidence": [
+        {
+          "file": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "line": 632,
+          "excerpt": "Cash and cash equivalents $ 36,305 $ 35,934"
+        },
+        {
+          "file": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "line": 633,
+          "excerpt": "Marketable securities 20,417 18,763"
+        },
+        {
+          "file": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "line": 640,
+          "excerpt": "Marketable securities 80,213 77,723"
+        },
+        {
+          "file": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "line": 651,
+          "excerpt": "Commercial paper 1,997 7,979"
+        },
+        {
+          "file": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "line": 652,
+          "excerpt": "Term debt 9,906 12,350"
+        },
+        {
+          "file": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "line": 655,
+          "excerpt": "Term debt 68,208 78,328"
+        }
+      ],
+      "independent_calculation": {
+        "units": "USD billions",
+        "FY2025_cash_and_securities": 132.42000000000002,
+        "FY2025_commercial_paper": 7.979,
+        "FY2025_current_and_noncurrent_term_debt": 90.678,
+        "FY2025_all_financial_debt": 98.65700000000001,
+        "FY2025_net_financial_cash": 33.763,
+        "reviewer_number_if_commercial_paper_omitted": 41.742
+      },
+      "reasoning": "$33.763bn is supported by primary figures and the memo\u2019s stated financial-debt definition. $41.742bn subtracts term debt alone and overstates net financial cash by exactly $7.979bn of commercial paper. No alternate secondary-source definition is needed to explain the memo.",
+      "action": "No memo correction. Do not substitute $41.742bn."
+    },
+    {
+      "id": "F2",
+      "paid_severity": "major",
+      "adjudicated_severity": "none",
+      "disposition": "REJECT: ordinary rounding is correct.",
+      "memo_evidence": {
+        "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+        "lines": [
+          105,
+          106,
+          109
+        ],
+        "excerpt": "| CFO / net income | 1.26x | 1.00x | 1.10x |"
+      },
+      "primary_evidence": [
+        {
+          "file": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "line": 709,
+          "excerpt": "Net income 132,175 112,010 93,736"
+        },
+        {
+          "file": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "line": 721,
+          "excerpt": "Cash generated by operating activities 145,097 111,482 118,254"
+        }
+      ],
+      "independent_calculation": {
+        "FY2024": {
+          "exact": 1.2615643936161134,
+          "two_decimal_display": "1.26x"
+        },
+        "FY2025": {
+          "exact": 0.995286135166503,
+          "two_decimal_display": "1.00x"
+        },
+        "FY2026": {
+          "exact": 1.09776432759599,
+          "two_decimal_display": "1.10x"
+        }
+      },
+      "reasoning": "145.097/132.175=1.0977643276, which correctly rounds to 1.10 at two decimals. All three ratios use the same precision. The table does not assert that the unrounded ratio equals exactly1.1000; no sensitivity-style accuracy rule makes standard rounding an overstatement.",
+      "action": "No correction or extra decimals required."
+    },
+    {
+      "id": "F3",
+      "paid_severity": "major",
+      "adjudicated_severity": "minor editorial at most",
+      "disposition": "PARTIALLY ACCEPT clarity suggestion; reject major substantive defect.",
+      "memo_evidence": [
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 7,
+          "excerpt": "The house base produces **$162.07 per current share**"
+        },
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 83,
+          "excerpt": "William Kerwin\u2019s November 4 note assigns $290 fair value ... The important challenge is that cautious near-term units and cost pressure can coexist with a much higher valuation."
+        },
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 81,
+          "excerpt": "## Real outside arguments challenge the valuation"
+        }
+      ],
+      "independent_calculation": {
+        "Morningstar_above_house_percent": 78.93186392946667,
+        "Morningstar_below_quote_percent": 15.739314873463695
+      },
+      "reasoning": "The paragraph challenges the house valuation, and $290 is78.93% above house $162.07. It does not say Morningstar endorses $344.17. The $290 figure and frozen quote are both disclosed. However, an explicit \"above house but below the quote\" clause would make the comparator unmistakable and correctly distinguish a challenge to valuation magnitude from disagreement with the decision to pass.",
+      "action": "Optional bounded edit: \"a valuation well above house, although its $290 fair value remains below the $344.17 quote.\" No recalculation or additional research."
+    },
+    {
+      "id": "F4",
+      "paid_severity": "major",
+      "adjudicated_severity": "none",
+      "disposition": "REJECT claimed omission; the published $310 target and different-model caveat are explicit.",
+      "memo_evidence": [
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 11,
+          "excerpt": "That does not replicate Phillip\u2019s $310 target: its forecasts and one-year valuation roll-forward differ."
+        },
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 85,
+          "excerpt": "Helena Wang\u2019s November 6 public note gives a $310 DCF target ... House cash flows at those two rate parameters yield $369.81, not $310. The difference cannot be attributed wholly to operating forecasts without the complete comparable model."
+        },
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 199,
+          "excerpt": "Phillip discloses an actual 6.5%/3.5% framework."
+        }
+      ],
+      "independent_calculation": {
+        "Phillip_target_below_quote_percent": 9.92823314059913
+      },
+      "reasoning": "The paid finding says the memo omits Phillip\u2019s below-quote target; the exact body reviewed names $310 in both executive and detailed discussions. House cash flows at Phillip\u2019s disclosed parameters are expressly a separate $369.81 calculation. A reader can see that $310 is below $344.17. The strongest contrary framework is not represented as Phillip having published the house counterfactual target.",
+      "action": "No substantive correction. An optional \"still below the frozen quote\" clause is harmless but does not repair an actual omission."
+    },
+    {
+      "id": "F5",
+      "paid_severity": "major",
+      "adjudicated_severity": "none",
+      "disposition": "REJECT claimed missing load-bearing limitation; it is explicit in the headline sentence and immediately following paragraph.",
+      "memo_evidence": [
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 197,
+          "excerpt": "Holding the base **aggregate EBIT-margin path**, 17% operating tax, 3x sales-to-capital, 3% terminal growth, 50% terminal ROIC and equity bridge fixed, the executable reverse DCF needs **16.52% constant annual revenue growth for ten years** to reach $344.17."
+        },
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 199,
+          "excerpt": "This is an **aggregate requirement check**, not a category-level adoption forecast. It holds the materialized margin path rather than rebuilding Products/Services mix and expense amounts; it cannot simultaneously be read as the original operating build."
+        },
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 199,
+          "excerpt": "Higher margins, lower required returns, greater durability or combinations can instead support price. ... neither inverse identifies the market\u2019s unique expectations."
+        }
+      ],
+      "reasoning": "The memo does not call the revenue-only solve a full operating forecast. It specifies all held-fixed assumptions in the same sentence and immediately explains that the Products/Services build and expense amounts are not rebuilt. Demanding the same qualification again is a presentation preference, not a demonstrated major ambiguity.",
+      "action": "No additional disclosure or model change required."
+    },
+    {
+      "id": "F6",
+      "paid_severity": "major",
+      "adjudicated_severity": "real economic uncertainty already disclosed; not a major unaddressed defect",
+      "disposition": "REJECT as blocking revision or recommendation invalidation; retain the tax assumption as a debatable input.",
+      "memo_evidence": [
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 128,
+          "excerpt": "The filing reports $34.588 billion of cash income taxes paid, or 21.72% of $159.237 billion consolidated pretax income. That is a cash-paid/profit ratio, not a measured unlevered operating tax rate: settlement timing and nonoperating items differ. The full provision-to-cash reconciliation is not modeled."
+        },
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 128,
+          "excerpt": "The $34.588 billion cash payment also exceeds the $27.062 billion income-tax provision by $7.526 billion; the packet does not allocate that difference to specific settlements or timing effects."
+        },
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 128,
+          "excerpt": "The 17% preference uses the latest expense-rate structure and quarterly guide as a forward anchor, not an assumption that the $7.526 billion cash gap reverses."
+        },
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 128,
+          "excerpt": "Tax-law, earnings-mix and settlement changes can still raise cash burdens: the 20%/24% operating-tax tests give base values of $156.17/$148.30, as well as the weighted values below."
+        },
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 17,
+          "excerpt": "House decision at the snapshot quote: pass on initiating under the adopted approximately 10% required-return framework."
+        }
+      ],
+      "primary_evidence": [
+        {
+          "file": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "line": 590,
+          "excerpt": "Income before provision for income taxes 159,237 132,729 123,485"
+        },
+        {
+          "file": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "line": 591,
+          "excerpt": "Provision for income taxes 27,062 20,719 29,749"
+        },
+        {
+          "file": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "line": 1069,
+          "excerpt": "Total $ 34,588"
+        }
+      ],
+      "independent_calculation": {
+        "cash_paid_divided_by_consolidated_pretax": 0.2172108241175104,
+        "cash_less_provision_USD_bn": 7.526,
+        "baseline_17_percent": {
+          "base": 162.07286596774927,
+          "weighted": 166.3998496468722
+        },
+        "tax_20_percent": {
+          "base": 156.17107170200288,
+          "weighted": 160.3349377971822
+        },
+        "tax_24_percent": {
+          "base": 148.3020126810077,
+          "weighted": 152.24838866426222
+        },
+        "tax_cash_ratio_diagnostic_21_721_percent": {
+          "base": 152.7852469324865,
+          "weighted": 156.85553342607494
+        },
+        "tax_0_percent_upper_diagnostic": {
+          "base": 195.51636680697877,
+          "weighted": 200.76768346178216
+        },
+        "weighted_24_percent_delta": -14.151460982609962,
+        "weighted_24_percent_relative_delta_percent": -8.504491447944025,
+        "formula": "Independently recomputed from EBIT_t*(1-tax)-net_reinvestment_t and terminal EBIT_10*(1-tax)*(1+g)*(1-g/ROIC), with all other financing, WACC, terminal and scenario-weight inputs fixed."
+      },
+      "reasoning": "The cash/provision gap is unreconciled and future17% cash tax is not proven. The memo says exactly that, provides the actual cash amount and gap, identifies the expense-rate/quarter-guide basis and quantifies20%/24% tests. Calling for the unresolved limitation and quantitative effect to be added overlooks their presence. The24% stress changes weighted value by8.50%, which is meaningful to valuation precision, but takes value from$166.40 to$152.25 versus$344.17 and thus strengthens the conditional decision to pass. It cannot invalidate that decision through the cited higher-tax mechanism. Even an isolated zero-tax diagnostic leaves base$195.52 and weighted$200.77 below the quote; this is a bound, not a proposed forecast. Cash-paid/consolidated-pretax21.72% is not automatically the correct unlevered operating tax input.",
+      "action": "No blocking revision. Keep17% explicitly normalized and the cash/provision gap unresolved; update if new tax evidence arrives. Do not relabel it as observed cash tax or silently replace it with21.72%."
+    },
+    {
+      "id": "F7",
+      "paid_severity": "major",
+      "adjudicated_severity": "minor qualification at most",
+      "disposition": "PARTIALLY ACCEPT limited basis caveat; reject inference that non-GAAP EPS makes the gross-margin comparison invalid.",
+      "memo_evidence": [
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 9,
+          "excerpt": "House FY2027 gross margin is 46.2%; the public consensus table already anticipates 46.34%."
+        },
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 79,
+          "excerpt": "StockAnalysis explicitly defines its EPS as adjusted non-GAAP; the other retrieved EPS panels do not establish a matching diluted-GAAP basis. No artificial house-versus-Street EPS edge is calculated."
+        },
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "lines": [
+            72,
+            73,
+            74,
+            75
+          ],
+          "excerpt": "House revenue522.93/572.86 versus S&P revenue526.94/570.06; house EBIT157.50/180.13 versus separate-panel EBIT163.10/180.82."
+        }
+      ],
+      "source_evidence": {
+        "source_id": "S24",
+        "json_pointer": "/data/excerpts",
+        "excerpts": [
+          "EPS and Forward PE are based on non-GAAP adjusted numbers.",
+          "Gross Margin\\n43.31% 44.13% 46.21% 46.91% 48.79% 46.34% Upgrade Upgrade"
+        ]
+      },
+      "reasoning": "The source\u2019s explicit adjustment statement applies to EPS and forward PE; it does not establish that gross margin is adjusted. The retrieved gross-margin row exists and historical entries correspond to reported gross margins. Still, the forecast row\u2019s GAAP reconciliation is not established, so treating46.34% as directional is more precise. That local uncertainty does not overturn the separate revenue comparisons or the broader conclusion that the house has little near-term sales edge.",
+      "action": "Optional bounded clause: \"The secondary-vendor gross-margin row is a directional comparison; a like-for-like GAAP reconciliation is not available.\" Do not discard the retrieved row or treat EPS basis as evidence about every metric."
+    },
+    {
+      "id": "F8",
+      "paid_severity": "major",
+      "adjudicated_severity": "none",
+      "disposition": "REJECT: separation is already adjacent and repeated in the full text.",
+      "memo_evidence": [
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 11,
+          "excerpt": "Applying only Phillip Securities\u2019 stated 6.5% WACC and 3.5% terminal growth to house base cash flows produces **$369.81**. That does not replicate Phillip\u2019s $310 target: its forecasts and one-year valuation roll-forward differ. Holding the original base terminal growth and every operating input fixed, a constant rate of **6.37%** equates value to the frozen quote. These are separate conditional calculations, not a unique set of market beliefs."
+        },
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 85,
+          "excerpt": "The difference cannot be attributed wholly to operating forecasts without the complete comparable model."
+        },
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 199,
+          "excerpt": "The complementary 6.37% rate solve holds base operations fixed; neither inverse identifies the market\u2019s unique expectations."
+        }
+      ],
+      "reasoning": "The exact executive paragraph states the house-cash-flow basis, different terminal-growth premises, nonreplication of Phillip\u2019s target and separate conditional status. The numbers are not used as interchangeable complete models. Comparing a disclosed rate parameter with a conditional rate solve is legitimate when these limits are supplied; the requested limits are already supplied.",
+      "action": "No further caveat required."
+    },
+    {
+      "id": "section-diligence-questions",
+      "paid_severity": "minor",
+      "adjudicated_severity": "minor organizational at most",
+      "disposition": "A named diligence-questions heading is absent; substantive diligence gaps and next tests are present.",
+      "memo_evidence": [
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 31,
+          "excerpt": "It does not disclose a historical category units-times-ASP bridge, separate App Store fees, or separate Google search-distribution revenue."
+        },
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 128,
+          "excerpt": "The full provision-to-cash reconciliation is not modeled."
+        },
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 173,
+          "excerpt": "A shift toward contract-like recurring cash, materially less macro-sensitive device economics, or sustained covariance evidence could justify a lower risk input."
+        },
+        {
+          "file": "/workspace/scratch/aapl-a-plus-iteration4/memo-body.md",
+          "line": 244,
+          "excerpt": "The next research priority is to test forward covariance and recurring cash conversion against these explicit decision conditions."
+        }
+      ],
+      "reasoning": "The detection result is accurate only as a heading observation. The record contains explicit unresolved evidence gaps and dated monitoring tests. No new substantive missing diligence item is demonstrated.",
+      "action": "If a house template requires the heading, group existing questions under it. This is not a research or valuation blocker."
+    }
+  ],
+  "limits": "This adjudication resolves the listed review conflicts. It does not establish forecast truth, validate every other memo claim or turn the conditional pass decision into an unconditional recommendation."
+}

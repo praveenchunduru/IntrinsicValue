@@ -1,0 +1,414 @@
+{
+  "format": "fresh_stats_sources_review_v1",
+  "iteration": 6,
+  "reviewer": "fresh_stats_sources_r2",
+  "completed_at_utc": "2026-11-06T17:28:36.020258+00:00",
+  "scope": "Final bounded manual assessment of source/math additions since iteration4, current provenance hashes and main-model invariance. No additional automated or paid review.",
+  "disposition": "pass",
+  "summary": "All checked final source/math additions verify. No unresolved source/statistics finding. Main forecasts and valuations are unchanged; the added 17% debt-shield comparison is internally consistent.",
+  "checks": [
+    {
+      "id": "R6RATE01",
+      "subject": "17% debt-shield comparison consistently recomputes issuer beta",
+      "status": "pass",
+      "result": "Independent algebra reproduces the 25% and 17% cases. At 17%, Hamada beta is 1.1274432533353125, cash-corrected asset beta is 1.1586565650070821, and relevered equity beta remains 1.1743400823457237. Unlevering and relevering use the same tax assumption, so the tax factor cancels after the same cash correction. Cost of equity is unchanged. After-tax debt cost rises from 4.1325% to 4.5733%; WACC rises from 10.0227788949% to 10.0298522707%, or 0.707337578537 basis point. Discounting the unchanged base cash flows and terminal formula independently gives $161.904765106757, which rounds to $161.90.",
+      "current_excerpt": "Replacing only the shield assumption with 17%, while consistently recomputing issuer unlevering, cash correction and relevering, leaves the relevered beta unchanged and moves WACC from 10.0228% to 10.0299%\u2014only 0.71 basis point."
+    },
+    {
+      "id": "R6RATE02",
+      "subject": "Marginal-rate provenance and limits",
+      "status": "pass",
+      "result": "The primary tax bridge reports US federal statutory tax of 21%; the additional state burden, debt jurisdiction and deductibility are not established. Current wording identifies 25% as a house proxy, says it is not a demonstrated upper bound, and labels the 17% comparison as a sensitivity rather than an observed marginal issuer rate. No source-backed marginal rate is falsely asserted.",
+      "current_excerpt": "US federal statutory tax is 21%; the debt\u2019s actual jurisdiction, state burden and ability to realize deductions are not established.",
+      "evidence": {
+        "path": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+        "exact_original_text": "Computed statutory federal income tax $ 33,440 21.0 %"
+      }
+    },
+    {
+      "id": "R6FACT01",
+      "subject": "China prior-year decline and two-year CAGR",
+      "status": "pass",
+      "result": "The original geographic table reports Greater China revenue of $66.952 billion in FY2024, $64.377 billion in FY2025 and $82.378 billion in FY2026. Independent calculations give FY2025 change -3.846038953280% and two-year CAGR 10.923571499942%; these round to -3.8% and 10.9%. Original filing also supports favorable renminbi and iPhone/Mac growth drivers.",
+      "current_excerpt": "FY2025 had declined 3.8% from $66.952 billion to $64.377 billion; the two-year revenue CAGR is approximately 10.9%.",
+      "evidence": {
+        "path": "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+        "exact_original_text": "Greater China 82,378 28 % 64,377 (4) % 66,952"
+      }
+    },
+    {
+      "id": "R6FACT02",
+      "subject": "Four-decimal cash-conversion ratios and net financial cash",
+      "status": "pass",
+      "result": "Original filing CFO and net income reproduce ratios 1.261564393616, 0.995286135167, 1.097764327596. Displayed 1.2616x / 0.9953x / 1.0978x are correct. The expanded FY2025 net-financial-cash bridge includes $7.979 billion commercial paper and sums to $33.763 billion. The $86.390 billion cash repurchase measure and $85.8 billion program measure remain distinct, without an invented cause for their difference.",
+      "current_excerpt": "| CFO / net income, derived | 1.2616x | 0.9953x | 1.0978x |"
+    },
+    {
+      "id": "R6MATH01",
+      "subject": "Final reverse-DCF EBIT",
+      "status": "pass",
+      "result": "The unchanged aggregate reverse-growth solution has final revenue $2,209.372406368 billion and retains the exact base EBIT margin of 35.0925003146%. Their product is $775.324018656 billion, correctly displayed as $775.32 billion. Base final EBIT remains $288.112004370 billion. Current wording explicitly keeps the margin path and treats this as a requirement check, not the original category build.",
+      "current_excerpt": "The same final 35.1% margin on that larger sales base implies $775.32 billion FY2036 EBIT, versus $288.11 billion in base; both revenue scale and the retained margin path matter."
+    },
+    {
+      "id": "R6SOURCE01",
+      "subject": "Outside-source comparison limits",
+      "status": "pass",
+      "result": "Current Morningstar wording correctly says its $290 is below the quote, above house value, and cannot be decomposed into forecasts/WACC/terminal assumptions from the public note. No Morningstar WACC is invented or used to explain the entire valuation gap. Phillip\u2019s own $310 target is distinguished from the $369.81 isolated parameter substitution into house cash flows. The consensus gross-margin comparison is now explicitly directional because comparable accounting basis is not established. These are appropriate source-boundary clarifications.",
+      "current_excerpt": "The public note does not permit decomposition of that gap into forecasts, required returns or terminal assumptions."
+    },
+    {
+      "id": "R6STATUS01",
+      "subject": "Review-status representation",
+      "status": "pass",
+      "result": "Rendered memo explicitly distinguishes independent editorial assessment from automated workflow attempts that did not yield approval. This report\u2019s pass is limited to this bounded manual source/statistics assessment. It is not an automated workflow approval, an investment-truth certification or an endorsement of the editorial letter grade.",
+      "current_excerpt": "Automated workflow attempts did not yield approval; their raw verdicts and formatting failures remain archived. This editorial assessment does not convert those workflow results into passes."
+    },
+    {
+      "id": "R6INV01",
+      "subject": "Current packet hashes and unchanged main model",
+      "status": "pass",
+      "result": "All seven current manifest byte hashes and all 39 source evidence digests match. S4 is unchanged from iteration4, retaining the verified exact tax and minority-share excerpts. Main scenario values, weighted value, operating forecasts, reverse DCF, sensitivity and counterfactuals are unchanged. Preferred discount-rate calculation changes only its house-tax label; the new 17% shield case is a separate calibration comparison. Cashflows and sensitivity CSV hashes remain unchanged."
+    }
+  ],
+  "frozen_artifact_sha256": {
+    "memo.md": "630c2abddd532df17918316cbb176c56b787832d220d43da97003616d1070808",
+    "memo-body.md": "6ebbf38e8aae3d3d6a19f2a62a4640ebe092e0d7d01b7d49a16400ffb292c0af",
+    "sources.json": "f4b578770f3357aae4eaa43cf991d6fc5ceb1596af2861e6799c7599da56b7f8",
+    "assumptions.json": "0940d655bb2df9e3cfe9f324d026c38008fb1a548f1b5f0922cdace1f3aa1a4f",
+    "valuation.json": "86956faead94bdfd40efc4c1f2d011e42de09ae201b0838d620fb76fa72fa6bf",
+    "review-manifest.json": "fb662f35c71ca82132a45a7b9ee1629dea09384ddf372b2b065e1e1446946f35"
+  },
+  "manifest_hash_checks": {
+    "memo-body.md": {
+      "expected": "6ebbf38e8aae3d3d6a19f2a62a4640ebe092e0d7d01b7d49a16400ffb292c0af",
+      "actual": "6ebbf38e8aae3d3d6a19f2a62a4640ebe092e0d7d01b7d49a16400ffb292c0af",
+      "matches": true
+    },
+    "memo.md": {
+      "expected": "630c2abddd532df17918316cbb176c56b787832d220d43da97003616d1070808",
+      "actual": "630c2abddd532df17918316cbb176c56b787832d220d43da97003616d1070808",
+      "matches": true
+    },
+    "assumptions.json": {
+      "expected": "0940d655bb2df9e3cfe9f324d026c38008fb1a548f1b5f0922cdace1f3aa1a4f",
+      "actual": "0940d655bb2df9e3cfe9f324d026c38008fb1a548f1b5f0922cdace1f3aa1a4f",
+      "matches": true
+    },
+    "valuation.json": {
+      "expected": "86956faead94bdfd40efc4c1f2d011e42de09ae201b0838d620fb76fa72fa6bf",
+      "actual": "86956faead94bdfd40efc4c1f2d011e42de09ae201b0838d620fb76fa72fa6bf",
+      "matches": true
+    },
+    "sources.json": {
+      "expected": "f4b578770f3357aae4eaa43cf991d6fc5ceb1596af2861e6799c7599da56b7f8",
+      "actual": "f4b578770f3357aae4eaa43cf991d6fc5ceb1596af2861e6799c7599da56b7f8",
+      "matches": true
+    },
+    "cashflows.csv": {
+      "expected": "296cdace9737fb30b88f17a8f982fc860e70fdb2fc4c142f9f77c33a56fe48f6",
+      "actual": "296cdace9737fb30b88f17a8f982fc860e70fdb2fc4c142f9f77c33a56fe48f6",
+      "matches": true
+    },
+    "sensitivity.csv": {
+      "expected": "81ecd7bb8ed0f76e62f11ba27acbfed14307ee7d7d9af9119f91dab9178309d6",
+      "actual": "81ecd7bb8ed0f76e62f11ba27acbfed14307ee7d7d9af9119f91dab9178309d6",
+      "matches": true
+    }
+  },
+  "source_evidence_digest_checks": [
+    {
+      "source_id": "S1",
+      "stored": "376fdf10a8a78e6ddb5069c75fa12797a2d7f950a7b69461d240d838ea683801",
+      "recomputed": "376fdf10a8a78e6ddb5069c75fa12797a2d7f950a7b69461d240d838ea683801",
+      "matches": true
+    },
+    {
+      "source_id": "S2",
+      "stored": "2a0a9cb9f7b3b4db205142a180e50a7fb6604c9c4792334a1a9d2ece1b71161f",
+      "recomputed": "2a0a9cb9f7b3b4db205142a180e50a7fb6604c9c4792334a1a9d2ece1b71161f",
+      "matches": true
+    },
+    {
+      "source_id": "S3",
+      "stored": "3230da947c96aacae5afdadc41d61bfb57a65d131500b862930cda17d3cdb244",
+      "recomputed": "3230da947c96aacae5afdadc41d61bfb57a65d131500b862930cda17d3cdb244",
+      "matches": true
+    },
+    {
+      "source_id": "S4",
+      "stored": "1652efec3ae065ce266478f7e6264435a22c1a0412edf7c2407ccf50bcde85e3",
+      "recomputed": "1652efec3ae065ce266478f7e6264435a22c1a0412edf7c2407ccf50bcde85e3",
+      "matches": true
+    },
+    {
+      "source_id": "S5",
+      "stored": "265b9c5a7cd8506ec927642f0db09dcc821b0ed5b2c1e72caf1e664f6228e35a",
+      "recomputed": "265b9c5a7cd8506ec927642f0db09dcc821b0ed5b2c1e72caf1e664f6228e35a",
+      "matches": true
+    },
+    {
+      "source_id": "S6",
+      "stored": "48ba2d900d97e0a562af38434d07491fe9de42d5825351b3974f8b44dac95bc5",
+      "recomputed": "48ba2d900d97e0a562af38434d07491fe9de42d5825351b3974f8b44dac95bc5",
+      "matches": true
+    },
+    {
+      "source_id": "S7",
+      "stored": "651be524f1f3b7e16f4643dc2a0261ef43e38ca0efee4b8259dbb6eb139e9ce1",
+      "recomputed": "651be524f1f3b7e16f4643dc2a0261ef43e38ca0efee4b8259dbb6eb139e9ce1",
+      "matches": true
+    },
+    {
+      "source_id": "S8",
+      "stored": "54a68a1ac372916ebed1dc8974dd1e33938e7402e636e31155547da15ff62f4f",
+      "recomputed": "54a68a1ac372916ebed1dc8974dd1e33938e7402e636e31155547da15ff62f4f",
+      "matches": true
+    },
+    {
+      "source_id": "S9",
+      "stored": "8abc6d80fba49efb69899d756464fe96bd1c2d7e2fc4fe9deb0eabdceecc4d0a",
+      "recomputed": "8abc6d80fba49efb69899d756464fe96bd1c2d7e2fc4fe9deb0eabdceecc4d0a",
+      "matches": true
+    },
+    {
+      "source_id": "S10",
+      "stored": "fa69f868ff6cbab9febf80a163d94f3875c40c27336e486986cdb79bfedb8112",
+      "recomputed": "fa69f868ff6cbab9febf80a163d94f3875c40c27336e486986cdb79bfedb8112",
+      "matches": true
+    },
+    {
+      "source_id": "S11",
+      "stored": "b36a22f9b979efd5c5fa93922655cf267ba48f7fd3d16bdc12a1f6ec3522b3ad",
+      "recomputed": "b36a22f9b979efd5c5fa93922655cf267ba48f7fd3d16bdc12a1f6ec3522b3ad",
+      "matches": true
+    },
+    {
+      "source_id": "S12",
+      "stored": "d8fde73fe5c97a75a883d4d027edffe4e09961f6189b4bf157d8a9284681297c",
+      "recomputed": "d8fde73fe5c97a75a883d4d027edffe4e09961f6189b4bf157d8a9284681297c",
+      "matches": true
+    },
+    {
+      "source_id": "S13",
+      "stored": "b4e42d84bfc4899cd9458e1254963664bd2c056b13612db8a6046d4096050ba8",
+      "recomputed": "b4e42d84bfc4899cd9458e1254963664bd2c056b13612db8a6046d4096050ba8",
+      "matches": true
+    },
+    {
+      "source_id": "S14",
+      "stored": "e2153ed3c2677ae0b1accad2d1fedd60ee9dfef346bc62d1d9cc009bc5dd1ac6",
+      "recomputed": "e2153ed3c2677ae0b1accad2d1fedd60ee9dfef346bc62d1d9cc009bc5dd1ac6",
+      "matches": true
+    },
+    {
+      "source_id": "S15",
+      "stored": "107fe53d5bc4b01b73b6d48fa6b246942c787988ebe99aa02ddca0c27d2ed8f1",
+      "recomputed": "107fe53d5bc4b01b73b6d48fa6b246942c787988ebe99aa02ddca0c27d2ed8f1",
+      "matches": true
+    },
+    {
+      "source_id": "S16",
+      "stored": "6172373b54176200862c407131bc05afad4ff462626f3391f133ef5a57cd2480",
+      "recomputed": "6172373b54176200862c407131bc05afad4ff462626f3391f133ef5a57cd2480",
+      "matches": true
+    },
+    {
+      "source_id": "S17",
+      "stored": "6702c9b4409f963584902d1e82aff6f5c4acdb610968479cb0d2774a6ab804bb",
+      "recomputed": "6702c9b4409f963584902d1e82aff6f5c4acdb610968479cb0d2774a6ab804bb",
+      "matches": true
+    },
+    {
+      "source_id": "S18",
+      "stored": "391de21c052e34066d366d83a50ec4d013b90e5495097edd544131328b1e9c64",
+      "recomputed": "391de21c052e34066d366d83a50ec4d013b90e5495097edd544131328b1e9c64",
+      "matches": true
+    },
+    {
+      "source_id": "S19",
+      "stored": "8def1c88f854c97e63959961a65f1dc01334dd8f30dd66ee44f0f1cf81f47f69",
+      "recomputed": "8def1c88f854c97e63959961a65f1dc01334dd8f30dd66ee44f0f1cf81f47f69",
+      "matches": true
+    },
+    {
+      "source_id": "S20",
+      "stored": "d9d8bb9a9ab77cc8839ecc4edb2000fb6f94833b606af3d127e72f3c6b5d783e",
+      "recomputed": "d9d8bb9a9ab77cc8839ecc4edb2000fb6f94833b606af3d127e72f3c6b5d783e",
+      "matches": true
+    },
+    {
+      "source_id": "S21",
+      "stored": "3e55d157b19bbd9f8a7601164d0cbfacf2763162f1fe4e2080f8751af14314fc",
+      "recomputed": "3e55d157b19bbd9f8a7601164d0cbfacf2763162f1fe4e2080f8751af14314fc",
+      "matches": true
+    },
+    {
+      "source_id": "S22",
+      "stored": "70872c5176c067e9c223dabdebd4a778986a0516f996500de355e6cbb2a1d701",
+      "recomputed": "70872c5176c067e9c223dabdebd4a778986a0516f996500de355e6cbb2a1d701",
+      "matches": true
+    },
+    {
+      "source_id": "S23",
+      "stored": "bd74efd4596e56779e409ffac611852fdc5ecf603553890beac9fc882a7605f3",
+      "recomputed": "bd74efd4596e56779e409ffac611852fdc5ecf603553890beac9fc882a7605f3",
+      "matches": true
+    },
+    {
+      "source_id": "S24",
+      "stored": "19cd03620593e4e79c0f343ee937112e3469c093143caa3206f40f61bb2a2e88",
+      "recomputed": "19cd03620593e4e79c0f343ee937112e3469c093143caa3206f40f61bb2a2e88",
+      "matches": true
+    },
+    {
+      "source_id": "S25",
+      "stored": "f43e78adca2de4bf6931ac640fdbbf03599c19a5cb342f2b49ab39eeac735ea3",
+      "recomputed": "f43e78adca2de4bf6931ac640fdbbf03599c19a5cb342f2b49ab39eeac735ea3",
+      "matches": true
+    },
+    {
+      "source_id": "S26",
+      "stored": "fdc62498d0fa1534c462cd2866db2f1c2aa626c71a246bbd5be06dde98f67c19",
+      "recomputed": "fdc62498d0fa1534c462cd2866db2f1c2aa626c71a246bbd5be06dde98f67c19",
+      "matches": true
+    },
+    {
+      "source_id": "S27",
+      "stored": "1af44cb14ddba9783c343f6d9db62c1e4cbe085c828f0af3690b8c6b03b3fc3a",
+      "recomputed": "1af44cb14ddba9783c343f6d9db62c1e4cbe085c828f0af3690b8c6b03b3fc3a",
+      "matches": true
+    },
+    {
+      "source_id": "S28",
+      "stored": "6eaea5bd6e9eb9d8d2a352d043aead49d54d9a881c47fa65db4ad748b4dcdc77",
+      "recomputed": "6eaea5bd6e9eb9d8d2a352d043aead49d54d9a881c47fa65db4ad748b4dcdc77",
+      "matches": true
+    },
+    {
+      "source_id": "S29",
+      "stored": "a532e7d2a2a6faf208b577efcfa0049365a5991642fc1817e91a72e0613a1caf",
+      "recomputed": "a532e7d2a2a6faf208b577efcfa0049365a5991642fc1817e91a72e0613a1caf",
+      "matches": true
+    },
+    {
+      "source_id": "S30",
+      "stored": "b32875cc6e259dcc2fe8526b3e8ee6e39af2523471bcd725979dc6739c255c4a",
+      "recomputed": "b32875cc6e259dcc2fe8526b3e8ee6e39af2523471bcd725979dc6739c255c4a",
+      "matches": true
+    },
+    {
+      "source_id": "S31",
+      "stored": "9b1a8fabdc9f1383cd2cb934b68537593f09b609fb7ee6353efe7d208091d423",
+      "recomputed": "9b1a8fabdc9f1383cd2cb934b68537593f09b609fb7ee6353efe7d208091d423",
+      "matches": true
+    },
+    {
+      "source_id": "S32",
+      "stored": "a6e66ad9c4cb63f4a4119f056c50695f6f20d644b55e50ef45eb28b202dd0eca",
+      "recomputed": "a6e66ad9c4cb63f4a4119f056c50695f6f20d644b55e50ef45eb28b202dd0eca",
+      "matches": true
+    },
+    {
+      "source_id": "S33",
+      "stored": "d17ca9ae7d2c5b11f8d8739612720a8bbc85e3cca7352cb1b7463b9198d42481",
+      "recomputed": "d17ca9ae7d2c5b11f8d8739612720a8bbc85e3cca7352cb1b7463b9198d42481",
+      "matches": true
+    },
+    {
+      "source_id": "S34",
+      "stored": "bff4d4a919c010291ad7f379b0389d6b76f27fa8ec009d92fc2f53b7d57b371c",
+      "recomputed": "bff4d4a919c010291ad7f379b0389d6b76f27fa8ec009d92fc2f53b7d57b371c",
+      "matches": true
+    },
+    {
+      "source_id": "S35",
+      "stored": "d32e66b75b3ccc6617894caddcba5831f43e1fb2d5253f1c827881319ea86096",
+      "recomputed": "d32e66b75b3ccc6617894caddcba5831f43e1fb2d5253f1c827881319ea86096",
+      "matches": true
+    },
+    {
+      "source_id": "S36",
+      "stored": "27ddbd517b224464ca89c7e0a4939fd549ec6378f8c1385f7031fee92ca901d2",
+      "recomputed": "27ddbd517b224464ca89c7e0a4939fd549ec6378f8c1385f7031fee92ca901d2",
+      "matches": true
+    },
+    {
+      "source_id": "S37",
+      "stored": "2992ed07a53879c14a87f64eed036b8470119d7439bb484b4b22bc95c5d30eff",
+      "recomputed": "2992ed07a53879c14a87f64eed036b8470119d7439bb484b4b22bc95c5d30eff",
+      "matches": true
+    },
+    {
+      "source_id": "S38",
+      "stored": "2c7356a459afc45a2abdeeed8c0a33c276d25f6c77d8f63898ed1e6a8676eec4",
+      "recomputed": "2c7356a459afc45a2abdeeed8c0a33c276d25f6c77d8f63898ed1e6a8676eec4",
+      "matches": true
+    },
+    {
+      "source_id": "S39",
+      "stored": "1291e92c84d0befe4ec00c82875d5555a47c8d827ec93ff960482cfda80d5068",
+      "recomputed": "1291e92c84d0befe4ec00c82875d5555a47c8d827ec93ff960482cfda80d5068",
+      "matches": true
+    }
+  ],
+  "independent_17_percent_shield_calculation": {
+    "cases": [
+      {
+        "marginal_debt_shield": 0.25,
+        "hamada_unlevered_beta": 1.1288964204949121,
+        "cash_corrected_asset_beta": 1.1601499631577579,
+        "relevered_equity_beta": 1.1743400823457237,
+        "cost_of_equity": 0.10118839763144641,
+        "after_tax_debt_cost": 0.041325,
+        "wacc": 0.10022778894896833
+      },
+      {
+        "marginal_debt_shield": 0.17,
+        "hamada_unlevered_beta": 1.1274432533353125,
+        "cash_corrected_asset_beta": 1.1586565650070821,
+        "relevered_equity_beta": 1.1743400823457237,
+        "cost_of_equity": 0.10118839763144641,
+        "after_tax_debt_cost": 0.045733,
+        "wacc": 0.10029852270682205
+      }
+    ],
+    "wacc_delta_basis_points": 0.7073375785371372,
+    "independent_base_value": 161.90476510675686,
+    "published_comparison_value": 161.90476510675686
+  },
+  "independent_other_math": {
+    "china_fy2025_growth": -0.03846038953279962,
+    "china_two_year_CAGR": 0.10923571499942186,
+    "cfo_to_net_income": [
+      1.2615643936161134,
+      0.995286135166503,
+      1.09776432759599
+    ],
+    "reverse_final_EBIT": 775324018656.0945
+  },
+  "main_model_unchanged_from_iteration4": {
+    "scenarios": true,
+    "weighted_per_share_value": true,
+    "operating_forecasts": true,
+    "reverse_dcf": true,
+    "sensitivity": true,
+    "counterfactuals": true
+  },
+  "S4_unchanged_from_iteration4": true,
+  "material_findings": [],
+  "nonmaterial_findings": [],
+  "source_original_sha256": {
+    "/workspace/scratch/aapl-upgrade-research/raw/annual_10k_2026.txt": "02e8f52a8997c0798a35e61a84709ce55560bd98c3e5f7d98f1ff3d8f4ae1720",
+    "/workspace/scratch/aapl-upgrade-research/consensus-opposition/morningstar_nov4.txt": "142139431720f0ccbea78cffd87bd9e14ed40aa57acbb6f397f5c7e1ef1dc436"
+  },
+  "residual_limits": [
+    "This is a bounded manual source/statistics assessment, not an automated workflow approval or certification of investment merit.",
+    "Issuer history, static financing/cash adjustment and the marginal shield remain forward-risk modeling conventions. Both tax-shield proxies are house assumptions, not measured issuer marginal deduction rates.",
+    "The transcript dependency, unavailable full analyst calibration, future cash-tax normalization and long-run operating/terminal assumptions retain the explicit limitations documented in the current memo.",
+    "No further paid calls or broad rereview of unchanged material were needed."
+  ],
+  "frozen_artifacts_modified": false,
+  "source_artifacts_modified": false,
+  "network_or_paid_api_calls": false
+}

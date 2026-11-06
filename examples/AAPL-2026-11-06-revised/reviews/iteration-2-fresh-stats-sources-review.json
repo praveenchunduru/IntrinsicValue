@@ -1,0 +1,577 @@
+{
+  "format": "fresh_stats_sources_review_v1",
+  "iteration": 2,
+  "reviewer": "fresh_stats_sources_r2",
+  "completed_at_utc": "2026-11-06T17:01:45.963989+00:00",
+  "scope": "Fresh adversarial statistics/source review of frozen iteration2; original local sources only; no network or paid APIs; no prior review reports read.",
+  "disposition": "pass_with_nonmaterial_metadata_note",
+  "summary": "No material statistical calculation error, lookahead inclusion, unsupported named-source attribution, or incorrect current compensation/regulatory/operating fact found in the reviewed scope. One low-priority stale machine-description field remains.",
+  "frozen_artifact_sha256": {
+    "memo.md": "23fcf8f3514db962366f6171ff1bdbd9cdb579e9bc2ae04cfc17674e8f378f25",
+    "memo-body.md": "1e0a15149fd0dd009449d3a889f8e45811c2ac6834c7356449f66c0e0d380d2f",
+    "assumptions.json": "770f0ebedeed79de6f738a4855449db6064a11571e06c335159599a0bb6f16d1",
+    "valuation.json": "f34eb1a0f0b05d89352bd252faf8102c945228fdab5b9a6ad683d8a4393d4d51",
+    "sources.json": "5655ab97eabf72f309d3e9395a596d4e2b512f493545800f0e71e6c61fbb2efb",
+    "review-manifest.json": "f4c102583373a2255db2d076fdeeab542aa8bad6fa7c48e356175e86163ee748"
+  },
+  "manifest_hash_checks": {
+    "memo-body.md": {
+      "expected": "1e0a15149fd0dd009449d3a889f8e45811c2ac6834c7356449f66c0e0d380d2f",
+      "actual": "1e0a15149fd0dd009449d3a889f8e45811c2ac6834c7356449f66c0e0d380d2f",
+      "matches": true
+    },
+    "memo.md": {
+      "expected": "23fcf8f3514db962366f6171ff1bdbd9cdb579e9bc2ae04cfc17674e8f378f25",
+      "actual": "23fcf8f3514db962366f6171ff1bdbd9cdb579e9bc2ae04cfc17674e8f378f25",
+      "matches": true
+    },
+    "assumptions.json": {
+      "expected": "770f0ebedeed79de6f738a4855449db6064a11571e06c335159599a0bb6f16d1",
+      "actual": "770f0ebedeed79de6f738a4855449db6064a11571e06c335159599a0bb6f16d1",
+      "matches": true
+    },
+    "valuation.json": {
+      "expected": "f34eb1a0f0b05d89352bd252faf8102c945228fdab5b9a6ad683d8a4393d4d51",
+      "actual": "f34eb1a0f0b05d89352bd252faf8102c945228fdab5b9a6ad683d8a4393d4d51",
+      "matches": true
+    },
+    "sources.json": {
+      "expected": "5655ab97eabf72f309d3e9395a596d4e2b512f493545800f0e71e6c61fbb2efb",
+      "actual": "5655ab97eabf72f309d3e9395a596d4e2b512f493545800f0e71e6c61fbb2efb",
+      "matches": true
+    },
+    "cashflows.csv": {
+      "expected": "296cdace9737fb30b88f17a8f982fc860e70fdb2fc4c142f9f77c33a56fe48f6",
+      "actual": "296cdace9737fb30b88f17a8f982fc860e70fdb2fc4c142f9f77c33a56fe48f6",
+      "matches": true
+    },
+    "sensitivity.csv": {
+      "expected": "81ecd7bb8ed0f76e62f11ba27acbfed14307ee7d7d9af9119f91dab9178309d6",
+      "actual": "81ecd7bb8ed0f76e62f11ba27acbfed14307ee7d7d9af9119f91dab9178309d6",
+      "matches": true
+    }
+  },
+  "original_source_sha256": {
+    "scratch/aapl-upgrade-beta/AAPL-weekly-chart.json": "7b48e692dc097ef0a2667a44a808276b0a74b9fb7e8fd7703fdbca0554031c2c",
+    "scratch/aapl-upgrade-beta/SPY-weekly-chart.json": "09ad29fd21b1d34761a99784bea2b4d6cde90dd03d8c93569fbd351aa3ba4df8",
+    "scratch/aapl-upgrade-beta/AAPL-SPY-weekly-beta-archived-inputs.json": "93af9ff1c7f67c4a8d78fc89b1c03b3f748cf85c226d27d6f48e4c52da538aa0",
+    "scratch/aapl-upgrade-rates/damodaran_ERPbymonth.xlsx": "dbada71c8bcd309c8199c49540d17c9d943cf238e29a7effb7aef508829b6288",
+    "scratch/aapl-upgrade-rates/damodaran_ERPNov26.xlsx": "919b7cc8e99dfb3ca7cbac17407fa1cb39070691b634c9a3e5699bfb2e953d9f",
+    "scratch/aapl-upgrade-rates/damodaran_betas.html": "10993bab71504e2449ccdd9e3d67fa4da983bed380b2f4486e5200a7b258616b",
+    "scratch/aapl-upgrade-rates/damodaran_home_frame.html": "9e39dfdebe1d02540b6fa7f6c5733c57b533eb4bf58ab3ffed9d014c6772a972",
+    "scratch/aapl-upgrade-rates/fred_aa_effective_yield.csv": "4592acdc28dce5feec306687ab3a73d487abe24062113a1894c628f7d4358881",
+    "scratch/aapl-upgrade-rates/fred_dgs10.csv": "c5b72012d8398e51ef8171c0879ed09f28addb6df106505dca2a39082700d01d",
+    "scratch/aapl-upgrade-research/raw/annual_10k_2026.txt": "02e8f52a8997c0798a35e61a84709ce55560bd98c3e5f7d98f1ff3d8f4ae1720",
+    "scratch/aapl-upgrade-research/raw/leadership_comp_20260901.txt": "4122fdcfacbe10a95d1ee0f50904e6d90faf13b2b921c3b96152913f9ca50ecc",
+    "scratch/aapl-upgrade-research/raw/proxy_2026.txt": "47fe74547f64e236e7bb54953aafffcb61d0aa4b005b743ab52fcf419232284c",
+    "scratch/aapl-upgrade-research/raw/apple_q1_20260129.txt": "2d9f3be0b4bd1b0c53577dde358c1ba6453a24c90695938252175b4d91832a31",
+    "scratch/aapl-upgrade-research/raw/apple_q4_20261102.txt": "4427593764d0a728ff2df2b315640437ad09f845fcf50eb6ff4679a72c204b81",
+    "scratch/aapl-upgrade-research/raw/q4_management_transcript_fool.txt": "1594a4ffffd39fb22cdf3c5bed340aa6476eebbe9856577498f28139ad6568d5",
+    "scratch/aapl-upgrade-research/raw/cma_sms_final_20251022.txt": "c1d83ba96288e5723d741e47ce1385974e504e3e38cfc485f72b690d0e52b707",
+    "scratch/aapl-upgrade-research/raw/cma_steering_20260630.txt": "9f14e1512a71cb15867bb1bc615662fb80ca0e8f5a59d0215c5c3fc272a32384",
+    "scratch/aapl-upgrade-research/raw/cma_commitments_20260210.txt": "0e2552bae9edd22dd239820e073fb25bad93eb08754a7cdfdce643fd9027652a",
+    "scratch/aapl-upgrade-research/raw/apple_cma_response.txt": "5ac9e75926d54a4eb437113e531171a2dcc756c79cee09e760eaea017875b5c9",
+    "scratch/aapl-upgrade-research/raw/epic_cma_response.txt": "bd529beda2e926225293363b9e3d046f78b77b9b5a73fd53da3c404a78223600",
+    "scratch/aapl-upgrade-research/raw/ai_usage_limits.txt": "38de03600c5808c679919e7d85aef5a1c735ad01bc9b3c4f59b7f57ccf62c16b",
+    "scratch/aapl-upgrade-research/raw/siri_ai_20260914.txt": "43b5dd0ba8ee2b2ee5b198b42107622af279a0f17f0a9a60f6e79acc4d77c3fc",
+    "scratch/aapl-upgrade-research/raw/iphone_duo_20260909.txt": "0e6492784d79de02116c287414f8b69b97a67e4e09f4006c4bbcc61cad5183e5",
+    "scratch/aapl-upgrade-research/raw/icloud_plans.txt": "7ee4f2f341c3fce3265c7a11ee043f774ad87d1bd89b04dab85c4d78e33f1fc9",
+    "scratch/aapl-upgrade-research/raw/issuer_faq.txt": "9cc6eb7a628ee9df801113266df4afc54b507723a6faa191e8ecc97a551b36e7",
+    "scratch/aapl-upgrade-research/raw/form4_2026-10-22.xml": "dc6c562d2414f8e5218fd73fb87ae1390f3037ecc45699ef44fe09ba3cc7c8fc",
+    "scratch/aapl-upgrade-research/raw/form4_2026-10-29.xml": "8ca76e1ff5a44abd8ac4a5d996cb88ac89108c89e4bc0f7795d30e6a222e65af",
+    "scratch/aapl-upgrade-research/raw/form4_2026-11-05.xml": "e31208135a08373b8c1ca35d9efb095131fd3c2fd74568cbfa9d1be95e11f58d",
+    "scratch/aapl-upgrade-research/consensus-opposition/stockanalysis_forecast.txt": "141a521febf824e22ce1ca41c61424289d91fec042ecd0204122631461777f77",
+    "scratch/aapl-upgrade-research/consensus-opposition/simplywallst_forecast.txt": "ed410afb3f233c89e83ea6d012627d3c596fef79f267f63176508604a54ce9c3",
+    "scratch/aapl-upgrade-research/consensus-opposition/simplywallst_forecast.html": "ea038a4890ed93ff740a6e05dc58c4c20130fa50f5714f6e7d0d5d7bc15bdbd1",
+    "scratch/aapl-upgrade-research/consensus-opposition/marketscreener_forecast.txt": "1be8790f9e653e992391f89b46b8fa293b067799b971406b0aab4d0bfb1126a7",
+    "scratch/aapl-upgrade-research/consensus-opposition/marketscreener_forecast.html": "fc9f82549458a2319ecf40244c15489f3b4665708371059658cc32f00709cedb",
+    "scratch/aapl-upgrade-research/consensus-opposition/phillip_nov6.txt": "5558c38a70ed19669493413db54266c075158e20248ce83448c76d4532915fbf",
+    "scratch/aapl-upgrade-research/consensus-opposition/phillip_nov6.html": "3a1e0d2f798dee29d5d84fa7feed46370ea1aa25a1874de28860b5a22cae6e29",
+    "scratch/aapl-upgrade-research/consensus-opposition/morningstar_nov4.txt": "142139431720f0ccbea78cffd87bd9e14ed40aa57acbb6f397f5c7e1ef1dc436",
+    "scratch/aapl-upgrade-research/consensus-opposition/wedgewood_q3_2026.txt": "467da1820b8cbbdfdef102e7545ec9320aaa288ebc8b7511e8af4eba880f232c",
+    "scratch/aapl-upgrade-research/consensus-opposition/berkshire_2025letter.txt": "7324ce05a3c2c3c63cdb30f1fe782418118bc158a504a199905b9bf9175f543e",
+    "scratch/aapl-upgrade-research/consensus-opposition/henry2025.txt": "bd96554687c78f382b4bb5171e6ba3ce68f4a077272b9d931cf5f06e3ef19d08"
+  },
+  "checks": [
+    {
+      "id": "STAT01",
+      "subject": "Completed-week beta window and no inclusion of partial later data",
+      "status": "pass",
+      "frozen_excerpt": "Two independently downloaded adjusted-price series produce 261 consecutive paired weekly returns versus SPY, November 5 2021 through October 30 2026. The November 2 partial week is excluded at the frozen cutoff.",
+      "evidence": [
+        {
+          "path": "scratch/aapl-upgrade-beta/AAPL-weekly-chart.json",
+          "field": "chart.result[0].timestamp and indicators.adjclose[0].adjclose"
+        },
+        {
+          "path": "scratch/aapl-upgrade-beta/SPY-weekly-chart.json",
+          "field": "chart.result[0].timestamp and indicators.adjclose[0].adjclose"
+        }
+      ],
+      "result": "Independently reconstructed exchange-local Monday keys and Friday period-end labels from the ORIGINAL charts. Both contain 264 weekly points and no null adjusted closes. First used return needs the October 29, 2021 anchor, last used return ends October 30, 2026. November 2, 2026 anchor is present in both raw downloads but excluded. All paired endpoints are seven calendar days apart. Five-year anniversary cutoff is November 5, 2021; three-year anniversary cutoff November 5, 2023 gives first completed return November 10, 2023. No price from a post-cutoff partial week enters either regression. Raw meta values for November 6 are not regression observations."
+    },
+    {
+      "id": "STAT02",
+      "subject": "OLS point estimates and descriptive confidence intervals",
+      "status": "pass",
+      "frozen_excerpt": "Unweighted OLS gives historical **levered equity beta 1.1427**, R\u00b2 0.454, and standard error 0.0779. Its nominal 95% fit interval is 0.989\u20131.296; independent constant-variance errors are assumed. It is not a forward-risk or valuation confidence interval.",
+      "evidence": [
+        {
+          "path": "scratch/aapl-upgrade-beta/AAPL-weekly-chart.json",
+          "field": "adjusted-close prices"
+        },
+        {
+          "path": "scratch/aapl-upgrade-beta/SPY-weekly-chart.json",
+          "field": "adjusted-close prices"
+        }
+      ],
+      "result": "Independent numpy/scipy OLS with intercept reproduces five-year beta 1.1427042688476277, intercept .001256015202712089, R2 .45366187620477094, SE .07791993452234525, n 261, residual df 259. Student-t .975 critical value 1.969165556358402 produces [0.9892670176325234,1.296141520062732], numerically equivalent to reported approximation. Three-year beta 1.0411949371984692, n156, SE .13062623797040612 and nominal interval [.7831443639958549,1.2992455104010836] match. The memo labels IID/constant-variance assumptions and does not claim future-beta or valuation coverage."
+    },
+    {
+      "id": "STAT03",
+      "subject": "Input transformations and deterministic provenance",
+      "status": "pass",
+      "frozen_excerpt": "To make the risk definitions comparable, Python unleverages the equity estimate with the disclosed gross debt/equity ratio and 25% tax-shield assumption, then removes the explicitly nonoperating cash fraction.",
+      "evidence": [
+        {
+          "path": "scratch/aapl-a-plus-iteration2/valuation.json",
+          "json_pointer": "/discount_rate_calculation/provenance/unlevered_beta/derived_calculation"
+        },
+        {
+          "path": "scratch/aapl-upgrade-beta/AAPL-weekly-chart.json",
+          "field": "decoded compact sorted JSON hash"
+        },
+        {
+          "path": "scratch/aapl-upgrade-beta/SPY-weekly-chart.json",
+          "field": "decoded compact sorted JSON hash"
+        }
+      ],
+      "result": "Computed raw decoded-JSON hashes exactly match S39: AAPL 7b48e692dc097ef0a2667a44a808276b0a74b9fb7e8fd7703fdbca0554031c2c; SPY 09ad29fd21b1d34761a99784bea2b4d6cde90dd03d8c93569fbd351aa3ba4df8. Archived-inputs equity/benchmark documents equal the individual charts; archive SHA256 equals source raw_document_sha256 93af9ff1c7f67c4a8d78fc89b1c03b3f748cf85c226d27d6f48e4c52da538aa0. Simple adjusted-close returns are used; no interpolation, raw-close replacement, shrinkage, risk-free subtraction or beta fade is hidden in the reported observed beta."
+    },
+    {
+      "id": "STAT04",
+      "subject": "Static financing and cash correction",
+      "status": "pass",
+      "frozen_excerpt": "The resulting **1.1601 operating-asset proxy** is adopted as a forward input. Cash beta 0, debt beta 0, book debt and a static dated financing snapshot are conventions; this is not a historical capital-structure regression or a measured future beta.",
+      "evidence": [
+        {
+          "path": "scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "excerpt": "Cash and cash equivalents $ 36,305 $ 35,934\nMarketable securities 20,417 18,763"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "excerpt": "Finance leases Other current liabilities 700 538\nOther non-current liabilities 756 692"
+        },
+        {
+          "path": "scratch/aapl-a-plus-iteration2/assumptions.json",
+          "json_pointer": "/discount_rate"
+        }
+      ],
+      "result": "Recalculated E=$5,001,541,078,940, D=$81,567,000,000 including finance leases once, cash=$136,935,000,000. Hamada beta=1.1288964204949121; cash/(E+D)=.026939226527041615; cash-corrected beta=1.1601499631577579; relevered beta=1.1743400823457237; equity cost=.10118839763144641; WACC=.10022778894896833. Fully reproduces output. This is an explicit static proxy convention, not a historical series of debt/cash adjustments. Forward adoption is identified as judgment. The cash classification is explicitly not proof of surplus cash."
+    },
+    {
+      "id": "RATE01",
+      "subject": "Matched risk-free/ERP pair and spreadsheet date system",
+      "status": "pass",
+      "frozen_excerpt": "The paired workbook\u2014not conflicting homepage prose\u2014governs the Treasury/ERP pair. Its November 1 date is a monthly snapshot, not a Sunday Treasury trade. The XLSX 1904 epoch and the sector table\u2019s January month precision are recorded.",
+      "evidence": [
+        {
+          "path": "scratch/aapl-upgrade-rates/damodaran_ERPbymonth.xlsx",
+          "cells": "Historical ERP!A220=2026-11-01; C220=.0494; I220=.0441; J220=.0379; K220=.0401; date system 1904"
+        },
+        {
+          "path": "scratch/aapl-upgrade-rates/damodaran_ERPNov26.xlsx",
+          "cells": "Impl premium calculator!B10=.0494,H44=.0472,H45=.0494; workbook epoch 1904"
+        },
+        {
+          "path": "scratch/aapl-upgrade-rates/damodaran_home_frame.html",
+          "excerpt": "Implied ERP on November 1, 2026 = 4.41 % (Trailing 12 month, with adjusted payout)",
+          "excerpt_basis": "Rendered HTML text, tags removed and whitespace collapsed"
+        },
+        {
+          "path": "scratch/aapl-upgrade-rates/fred_dgs10.csv",
+          "excerpt": "2026-10-30,4.94"
+        }
+      ],
+      "result": "Original workbook cells and 1904 epoch verified with openpyxl. Matching .0494/.0441 sustainable-payout pair is used, rather than mixing the homepage 5.29% Treasury prose or alternative .0379 ERP. October 30 FRED Treasury matches .0494. November 1 was Sunday; memo correctly calls it monthly label. The latest separate daily series ends November 4 at 4.90% and is context, not a silently substituted rate."
+    },
+    {
+      "id": "RATE02",
+      "subject": "Sector and debt-cost comparisons remain distinct proxies",
+      "status": "pass",
+      "frozen_excerpt": "Pretax debt cost | 5.51% | November 5 AA corporate-index effective yield; not an Apple bond quote",
+      "evidence": [
+        {
+          "path": "scratch/aapl-upgrade-rates/fred_aa_effective_yield.csv",
+          "excerpt": "2026-11-05,5.51"
+        },
+        {
+          "path": "scratch/aapl-upgrade-rates/damodaran_betas.html",
+          "excerpt": "Computers/Peripherals 36 1.35 4.62% 5.91% 1.31 1.47% 1.32",
+          "excerpt_basis": "Rendered table row, tags removed and whitespace collapsed"
+        },
+        {
+          "path": "scratch/aapl-upgrade-rates/damodaran_betas.html",
+          "excerpt": "Electronics (Consumer & Office) 8 0.87 5.80% 0.00% 0.83 10.52% 0.93",
+          "excerpt_basis": "Rendered table row, tags removed and whitespace collapsed"
+        }
+      ],
+      "result": "Original HTML industry table supports asset-beta alternatives 1.32 and .93 and says data as of January 2026. Original FRED CSV supports 5.51% AA yield. Memo explicitly states sector, issuer, maturity and zero-debt-beta limits. It does not relabel corporate-index yield as an executable Apple borrowing quote."
+    },
+    {
+      "id": "STREET01",
+      "subject": "Street panels and contributor counts",
+      "status": "pass",
+      "frozen_excerpt": "S&P revenue mean via Simply Wall St, $bn | 526.94 | 570.06 | 31 / 26 revenue contributors",
+      "evidence": [
+        {
+          "path": "scratch/aapl-upgrade-research/consensus-opposition/simplywallst_forecast.html",
+          "excerpt": "futureRevenueAnalysts\":[[1727654400000,44],[1759190400000,43],[1790726400000,36],[1822262400000,31],[1853884800000,26],[1885420800000,8]],"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/consensus-opposition/simplywallst_forecast.txt",
+          "excerpt": "9/30/2028 570,059 150,625 165,186 179,127 26\n9/30/2027 526,939 135,284 149,158 159,629 31"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/consensus-opposition/marketscreener_forecast.html",
+          "observed_fields": {
+            "EBIT FY2027": {
+              "value_USD_millions": 163102,
+              "cell_title": "Number of financial analysts who provided an estimate: 30"
+            },
+            "EBIT FY2028": {
+              "value_USD_millions": 180823,
+              "cell_title": "Number of financial analysts who provided an estimate: 23"
+            }
+          }
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/consensus-opposition/stockanalysis_forecast.txt",
+          "excerpt": "Gross Margin\n43.31% 44.13% 46.21% 46.91% 48.79% 46.34% Upgrade Upgrade"
+        }
+      ],
+      "result": "Original rendered tables and embedded HTML revenue-analyst fields support stated FY27/FY28 revenue, contributor counts and EBIT means/counts. StockAnalysis FY27 46.34% margin is public in retrieved table. Revenue rounding, EPS exclusion, provider-normalized September 30 dates and shared S&P provenance are disclosed. StockAnalysis explicitly says EPS/forward PE use non-GAAP adjusted numbers; memo does not turn unmatched EPS panels into GAAP evidence or count S&P mirrors as independent votes."
+    },
+    {
+      "id": "OPPOSITION01",
+      "subject": "Morningstar attribution and basis limits",
+      "status": "pass",
+      "frozen_excerpt": "William Kerwin\u2019s November 4 note assigns $290 fair value despite expecting flat FY2027 iPhone units, pricing-led revenue growth and approximately two points of margin compression before a FY2028 recovery.",
+      "evidence": [
+        {
+          "path": "scratch/aapl-upgrade-research/consensus-opposition/morningstar_nov4.txt",
+          "excerpt": "William Kerwin, CFA\n04 November 2026"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/consensus-opposition/morningstar_nov4.txt",
+          "excerpt": "We expect unit sales to be flat in 2027, with an evolutionary iPhone 18 family and higher prices."
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/consensus-opposition/morningstar_nov4.txt",
+          "excerpt": "We maintain our $290 fair value estimate for wide-moat Apple"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/consensus-opposition/morningstar_nov4.txt",
+          "excerpt": "We project margins compressing about 2 points in fiscal 2027 from memory inflation."
+        }
+      ],
+      "result": "Named author/date, fair value, pricing-led units case and recovery are supported. The retrieved original does not specify which margin the two-point statement means or disclose WACC; memo preserves both limits instead of inventing them."
+    },
+    {
+      "id": "OPPOSITION02",
+      "subject": "Phillip published parameters and incomplete-model limitation",
+      "status": "pass",
+      "frozen_excerpt": "Helena Wang\u2019s November 6 public note gives a $310 DCF target using unchanged 6.5% WACC and 3.5% terminal growth, rolled forward one year.",
+      "evidence": [
+        {
+          "path": "scratch/aapl-upgrade-research/consensus-opposition/phillip_nov6.html",
+          "excerpt": "Helena Wang"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/consensus-opposition/phillip_nov6.txt",
+          "excerpt": "We roll over another year of valuations and maintain our recommendation of REDUCE, with a raised DCF target price of US$310 (prev. US$300). Our assumptions remain unchanged, with a WACC of 6.5% and a terminal growth rate of 3.5%."
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/consensus-opposition/phillip_nov6.txt",
+          "excerpt": "To download full PDF, please log in here."
+        }
+      ],
+      "result": "Original public HTML byline and text support all named parameters. Public conflict language is general and potential; no issuer-specific actual conflict is asserted. Memo correctly separates the house counterfactual $369.81 from Phillip target $310 and says full-model forecast/roll-forward comparability is unavailable."
+    },
+    {
+      "id": "OPPOSITION03",
+      "subject": "Owner letters and dated bearish accountability",
+      "status": "pass",
+      "frozen_excerpt": "Apple was a 7.60% **average Q3 weight**, not a verified current-quarter-end position; its June-quarter operating references are not Q4 data.",
+      "evidence": [
+        {
+          "path": "scratch/aapl-upgrade-research/consensus-opposition/wedgewood_q3_2026.txt",
+          "excerpt": "Avg.      Contribution\n            Q3 Top Contributors                                              Wgt.       to Return"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/consensus-opposition/wedgewood_q3_2026.txt",
+          "excerpt": "Apple                                                        7.60           1.12"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/consensus-opposition/wedgewood_q3_2026.txt",
+          "excerpt": "We think the market\nunderestimates Apple's long-term ability to differentiate its AI ecosystem through deep\nsoftware and hardware integration."
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/consensus-opposition/berkshire_2025letter.txt",
+          "excerpt": "December 31, 2025"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/consensus-opposition/henry2025.txt",
+          "excerpt": "iPhone revenue is expected to grow at a 2.4% CAGR through 2030"
+        }
+      ],
+      "result": "Original Wedgewood letter supports integration thesis and average weight; no price target/full Apple forecast was found. Berkshire holding is December 2025 and not an endorsement at current price. Henry source is older and predicts low long-run iPhone growth and rising capex; current actuals show 21% iPhone growth and FY26 cash capex $9.041bn versus $12.715bn FY25. Memo treats it as outdated accountability evidence, not contemporary consensus."
+    },
+    {
+      "id": "FACT01",
+      "subject": "Operating facts and current guide",
+      "status": "pass",
+      "frozen_excerpt": "FY2026 revenue rose $62.673 billion. iPhone supplied **71.0%** of that increment, Services **22.6%**",
+      "evidence": [
+        {
+          "path": "scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "excerpt": "iPhone $ 254,098 21 % $ 209,586 4 % $ 201,183"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "excerpt": "Services (1)\n123,301 13 % 109,158 14 % 96,169"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "excerpt": "Total net sales $ 478,834 15 % $ 416,161 6 % $ 391,035"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/raw/q4_management_transcript_fool.txt",
+          "excerpt": "We expect our December quarter total company revenue to grow between 7% and 10% year-over-year, which reflects our best view of constrained supply."
+        }
+      ],
+      "result": "Recalculated growth bridge $62.673bn; iPhone $44.512bn/71.02%; Services $14.143bn/22.57%; Services mix falls 26.23% to25.75%. Original 10-K group margins, expense bridge and China $82.378bn/+28% agree with memo. Original retrieved transcript supports Services8-9%, gross margin45-46%, opex20.4-20.8bn, licensing/FX headwinds and diminishing inventory offsets. Memo labels it third-party transcription of management, not issuer audio verification, and does not promote quarterly guide to annual promise."
+    },
+    {
+      "id": "FACT02",
+      "subject": "Fiscal calendar, product timing, installed base and paid-AI limits",
+      "status": "pass",
+      "frozen_excerpt": "The **Duo first became available October 23**, after FY2026 closed; it cannot explain FY2026\u2019s iPhone growth.",
+      "evidence": [
+        {
+          "path": "scratch/aapl-upgrade-research/raw/iphone_duo_20260909.txt",
+          "excerpt": "iPhone Duo is available in star white and night sky, and starts at $1,999 (U.S.), or $83.29 (U.S.) per month for 24 months"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/raw/iphone_duo_20260909.txt",
+          "excerpt": "with availability beginning Friday, October 23."
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/raw/apple_q1_20260129.txt",
+          "excerpt": "our installed base now has more than 2.5 billion active devices"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/raw/ai_usage_limits.txt",
+          "excerpt": "Increased access to such features will be available for a fee."
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/raw/issuer_faq.txt",
+          "excerpt": "Apple\u2019s fiscal year 2027 runs from September 27, 2026 through September 25, 2027."
+        }
+      ],
+      "result": "Originals support availability and premium retail positioning, January dated device count, current fee intent without prices/conversion/margins, and iCloud+ gating. Memo does not turn devices into customers, price into realized ASP, or bundle pricing into standalone AI monetization. Last-Saturday calendar and official FY27 endpoint imply 53-week FY28 and FY34; uniform weekly density is explicitly house judgment."
+    },
+    {
+      "id": "FACT03",
+      "subject": "Current compensation and insider sample",
+      "status": "pass",
+      "frozen_excerpt": "The subsequent filing sets FY2027 target equity at $55 million, 75% relative-TSR performance awards and 25% time-based awards.",
+      "evidence": [
+        {
+          "path": "scratch/aapl-upgrade-research/raw/leadership_comp_20260901.txt",
+          "excerpt": "effective as of September 1, 2026 (the \u201cTransition Date\u201d)"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/raw/leadership_comp_20260901.txt",
+          "excerpt": "with a target value of $55 million to be granted in fiscal 2027. 75% of the equity award will be granted in performance-based RSUs"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/raw/leadership_comp_20260901.txt",
+          "excerpt": "with a target value of $45 million to be granted in fiscal 2027. 50% of the equity award will be granted in performance-based RSUs"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/raw/proxy_2026.txt",
+          "excerpt": "as the financial performance measures for the 2025 Cash Incentive Plan awards."
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/raw/form4_2026-11-05.xml",
+          "excerpt": "This transaction was made pursuant to a Rule 10b5-1 trading plan adopted by the reporting person on May 5, 2026."
+        }
+      ],
+      "result": "Original current 8-K/A supports Ternus transition, target/mix and distinct Cook target/mix. January proxy cash-incentive statement concerns FY25, not new CEO current package. Three original XML Form4s each report Newstead sale2399 shares, on Oct20/Oct27/Nov3, under May5 plan. Memo calls the sample incomplete and does not infer an executive cluster or sentiment."
+    },
+    {
+      "id": "FACT04",
+      "subject": "CMA switching evidence and distinct regulatory states",
+      "status": "pass",
+      "frozen_excerpt": "In its random-probability sample of 2,851 smartphone users, 4% of prior iPhone users moved to Android at their last replacement; 11% considered switching but stayed.",
+      "evidence": [
+        {
+          "path": "scratch/aapl-upgrade-research/raw/cma_sms_final_20251022.txt",
+          "excerpt": "moved, or considered moving, between mobile ecosystems when they last\n           replaced their smartphone."
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/raw/cma_sms_final_20251022.txt",
+          "excerpt": "(i)     4% switched from iOS to Android.\n\n                   (ii)    11% considered switching but ultimately did not do so."
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/raw/cma_sms_final_20251022.txt",
+          "excerpt": "The consumer survey undertaken by Accent Research used a random probability methodology and surveyed 2,851"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/raw/cma_steering_20260630.txt",
+          "excerpt": "Closed consultation"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/raw/cma_steering_20260630.txt",
+          "excerpt": "We are analysing your feedback"
+        }
+      ],
+      "result": "Original final CMA report supports retrospective UK last-replacement measurement, not annual/global96% retention. Current consultation page is closed with feedback analysis. Original Apple/Epic submissions respectively advocate platform/IP compensation and strict cost/friction limits; memo labels them interested parties. Process-commitment proposals and steering rule economics are kept separate. 10-K supports EU/Google/DOJ exposure and modified/remanded Epic terms; no statutory fine maximum is asserted as expected loss."
+    },
+    {
+      "id": "FACT05",
+      "subject": "Tax, cash return, equity awards and financing facts",
+      "status": "pass",
+      "frozen_excerpt": "The filing reports $34.588 billion of cash income taxes paid, or 21.72% of $159.237 billion consolidated pretax income.",
+      "evidence": [
+        {
+          "path": "scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "excerpt": "Income before provision for income taxes 159,237 132,729 123,485"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "excerpt": "Total $ 34,588"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "excerpt": "Balance as of September 26, 2026 142,405 $ 227.67"
+        },
+        {
+          "path": "scratch/aapl-upgrade-research/raw/annual_10k_2026.txt",
+          "excerpt": "the total unrecognized compensation cost related to outstanding RSUs was $24.1 billion, which the Company expects to recognize over a weighted-average period of 2.6 years."
+        }
+      ],
+      "result": "Original10-K supports tax numerator/denominator, current ordinary shares14.532182bn as ofOct23, financial debt80.111bn, selected cash136.935bn and finance leases1.456bn. Cash tax ratio21.721% is correctly not treated as operating cash tax; 17% cash-operating and25% shield rates are labeled judgments. CFO145.097bn less capex9.041bn less SBC13.789bn gives122.267bn. Repurchase cash86.390bn plus dividends15.721bn is70.374% ofCFO; filing program85.8bn difference is disclosed unresolved. RSU table units imply142.405m awards and unrecognized expense is not mislabeled fair-value debt."
+    }
+  ],
+  "independent_statistics": {
+    "AAPL": {
+      "raw_decoded_compact_sorted_sha256": "7b48e692dc097ef0a2667a44a808276b0a74b9fb7e8fd7703fdbca0554031c2c",
+      "points": 264,
+      "nulls": 0,
+      "last_week": "2026-11-02",
+      "last_completed_anchor_week": "2026-10-26"
+    },
+    "SPY": {
+      "raw_decoded_compact_sorted_sha256": "09ad29fd21b1d34761a99784bea2b4d6cde90dd03d8c93569fbd351aa3ba4df8",
+      "points": 264,
+      "nulls": 0,
+      "last_week": "2026-11-02",
+      "last_completed_anchor_week": "2026-10-26"
+    },
+    "5y": {
+      "n": 261,
+      "first": [
+        "2021-11-05",
+        0.011353973922202831,
+        0.020206978457257163
+      ],
+      "last": [
+        "2026-10-30",
+        -0.008914980029254727,
+        -0.005592326228453293
+      ],
+      "beta": 1.1427042688476277,
+      "intercept": 0.001256015202712089,
+      "r_squared": 0.45366187620477094,
+      "sxx": 0.13171660859974452,
+      "syy": 0.37911935352499304,
+      "sse": 0.20712735629930487,
+      "df": 259,
+      "se": 0.07791993452234525,
+      "tcritical": 1.969165556358402,
+      "ci": [
+        0.9892670176325234,
+        1.296141520062732
+      ]
+    },
+    "3y": {
+      "n": 156,
+      "first": [
+        "2023-11-10",
+        0.056584115171128824,
+        0.013618823911038191
+      ],
+      "last": [
+        "2026-10-30",
+        -0.008914980029254727,
+        -0.005592326228453293
+      ],
+      "beta": 1.0411949371984692,
+      "intercept": 0.0009309621642137637,
+      "r_squared": 0.2920632880634241,
+      "sxx": 0.05721981542829338,
+      "syy": 0.21238976175353974,
+      "sse": 0.15035850958479366,
+      "df": 154,
+      "se": 0.13062623797040612,
+      "tcritical": 1.9754880582343404,
+      "ci": [
+        0.7831443639958549,
+        1.2992455104010836
+      ]
+    },
+    "transformation": {
+      "market_equity": 5001541078940.0,
+      "included_debt": 81567000000,
+      "unlevered": 1.1288964204949121,
+      "cash_fraction": 0.026939226527041615,
+      "asset_beta": 1.1601499631577579,
+      "relevered_beta": 1.1743400823457237,
+      "equity_cost": 0.10118839763144641,
+      "wacc": 0.10022778894896833
+    }
+  },
+  "material_findings": [],
+  "nonmaterial_findings": [
+    {
+      "id": "META01",
+      "severity": "low",
+      "classification": "stale_generated_metadata",
+      "location": "valuation.json /discount_rate_calculation/conventions/beta",
+      "exact_current_excerpt": "Hamada relevering of sector unlevered beta using marginal tax and included gross debt; zero debt beta assumption",
+      "issue": "The preferred input is now an issuer-history-derived operating-asset proxy; the word sector is stale. The neighboring provenance and all numerical calculations correctly use the issuer series, so this does not affect rates or memo conclusion.",
+      "recommended_correction": "Replace sector unlevered beta with selected unlevered operating-asset beta or equivalent method-neutral wording.",
+      "blocking": false
+    }
+  ],
+  "residual_limits": [
+    "This review verifies archived snapshots against frozen claims; it does not independently authenticate remote servers, assess whether later corrections exist, or establish exhaustive public-data completeness.",
+    "Beta is vendor-adjusted historical covariance versus SPY with a conventional intercept. Corporate-action adjustments and provider history revisions were not reconstructed from independent corporate-action data. The post-cutoff raw partial week was explicitly excluded.",
+    "Reported Student-t intervals are nominal historical-fit diagnostics under IID constant-variance errors. No HAC/bootstrap interval, serial-correlation test or forward-beta statistical guarantee is supplied or required by the memo claim.",
+    "Static unlevering/cash correction is mathematically reproducible under stated zero debt/cash beta, book-debt, cash-classification and marginal-tax assumptions. It does not prove historical average financing exposure or forward operating risk.",
+    "Original third-party earnings transcript, not issuer audio, was checked. Its identified management attribution is preserved; transcription accuracy was not independently certified.",
+    "Full Phillip PDF was inaccessible in original retrieval. Public summary parameters support the cited rate comparison, but full forecast/model reconciliation and one-year roll-forward matching cannot be established.",
+    "Several consensus sources share S&P data; independence of other panels remains unproven. Matching GAAP diluted EPS definitions are unavailable. The memo correctly declines those inferences.",
+    "Undisclosed App Store/Google licensing detail, future AI prices/conversion, prospective margin normalization, operating cash-tax normalization and reinvestment efficiency remain house judgments or unavailable data, rather than facts this review can validate.",
+    "No full independent DCF, counterfactual or IRR recalculation was performed in this source/statistics scope; independent rate arithmetic was recomputed. Those broader valuation calculations require the separate numerical review."
+  ],
+  "artifacts_created": [
+    "fresh-stats-sources-review.json",
+    "fresh-stats-recompute.json"
+  ],
+  "frozen_artifacts_modified": false,
+  "prior_review_reports_read": false,
+  "network_or_paid_api_calls": false
+}

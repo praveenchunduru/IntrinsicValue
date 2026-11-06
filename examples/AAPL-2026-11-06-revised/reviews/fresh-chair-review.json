@@ -1,0 +1,116 @@
+{
+  "format": "fresh_investment_committee_final_editorial_review_v1",
+  "reviewer": "fresh_chair_r2",
+  "iteration": 6,
+  "scope": {
+    "reviewed_file_sha256": {
+      "/workspace/scratch/aapl-a-plus-iteration6/memo.md": "630c2abddd532df17918316cbb176c56b787832d220d43da97003616d1070808",
+      "/workspace/scratch/aapl-a-plus-iteration6/memo-body.md": "6ebbf38e8aae3d3d6a19f2a62a4640ebe092e0d7d01b7d49a16400ffb292c0af",
+      "/workspace/scratch/aapl-a-plus-iteration6/assumptions.json": "0940d655bb2df9e3cfe9f324d026c38008fb1a548f1b5f0922cdace1f3aa1a4f",
+      "/workspace/scratch/aapl-a-plus-iteration6/valuation.json": "86956faead94bdfd40efc4c1f2d011e42de09ae201b0838d620fb76fa72fa6bf",
+      "/workspace/scratch/aapl-a-plus-iteration6/sources.json": "f4b578770f3357aae4eaa43cf991d6fc5ceb1596af2861e6799c7599da56b7f8",
+      "/workspace/scratch/aapl-a-plus-iteration6/review-manifest.json": "fb662f35c71ca82132a45a7b9ee1629dea09384ddf372b2b065e1e1446946f35",
+      "/workspace/scratch/memo-comparison/FIG-live.md": "443c0f507071127b21971d9826e15a5ac2eed07311764b7850b3bb9026965482",
+      "/workspace/scratch/memo-comparison/MU-live.md": "fbc618052168a4d56e67001166782e5fdcc5bf5bdf0504931d22fc0ca7cb29a9"
+    },
+    "method": "Final bounded editorial and numerical-delta review against previously reviewed iteration4, retaining the independent actual FIG/MU benchmark assessment. Inspected complete body changes, current review-status wording, relevant assumption/rate-calibration changes and source-byte continuity.",
+    "not_done": "No network, paid call, code edits, repository test rerun, raw-source reauthentication or fresh exhaustive adjudication of every automated response. Parent reports retention and independent accounting adjudication of all raw claims; this chair verifies how the final memo characterizes those outcomes.",
+    "only_written_file": "fresh-chair-review.json"
+  },
+  "verdict": {
+    "remaining_material_underwriting_findings": 0,
+    "material_regression_found": false,
+    "prior_IC1_IC4_findings_remain_closed": true,
+    "previously_adjudicated_F1_F2_F4_F5_F6_F7_F8_remain_closed": true,
+    "publication_bar_on_reviewed_scope": "Met, subject to final package including the referenced quality-review record.",
+    "benchmark_assessment": "Core actual FIG/MU research-craftsmanship parity remains reached. The memo gives a clear conditional investment decision, authentic outside disagreement, causal cash context, explicit operating/rate requirements and properly bounded observation tests. It is particularly strong on historical-beta uncertainty and the distinction between a fixed-exit holding return and a reverse-discount-rate solve.",
+    "grade": "A / near-A-plus",
+    "unqualified_exceptional_A_plus": false,
+    "qualification": "The principal residual distinction from unqualified exceptional work remains editorial compression and differentiated long-run economic insight. Neither justifies another modeling cycle or paid-review attempt. A profitable investment edge is not established or certified; this is separate from research quality.",
+    "required_substantive_changes": "None identified. No additional review cycle or paid call recommended."
+  },
+  "current_exact_excerpts": {
+    "decision": "**House decision at the snapshot quote: do not initiate under the adopted approximately 10% required-return framework.**",
+    "morningstar_gap": "The public note does not permit decomposition of that gap into forecasts, required returns or terminal assumptions.",
+    "phillip_comparison": "Phillip’s own $310 target remains below $344.17; only the isolated rate/growth substitution into house cash flows produces $369.81.",
+    "shield_consistency": "Replacing only the shield assumption with 17%, while consistently recomputing issuer unlevering, cash correction and relevering, leaves the relevered beta unchanged and moves WACC from 10.0228% to 10.0299%—only 0.71 basis point.",
+    "automated_nonapproval": "Automated workflow attempts did not yield approval; their raw verdicts and formatting failures remain archived. This editorial assessment does not convert those workflow results into passes."
+  },
+  "final_delta_assessment": [
+    {
+      "change": "Clear allocation decision",
+      "assessment": "Do not initiate removes the possible ambiguity of pass, while preserving conditionality and avoiding a short-catalyst claim."
+    },
+    {
+      "change": "Outside-view attribution",
+      "assessment": "Morningstar’s undisclosed WACC is no longer used to explain an unallocated valuation gap. Phillip’s own target is distinguished from the house rate/growth substitution, so the memo does not imply that the analyst endorses the quote."
+    },
+    {
+      "change": "Historical and cash comparisons",
+      "assessment": "The extra China history and FY2025 ratio precision are arithmetically sound. FY2025 net cash includes commercial paper. Cash-flow and Note11 repurchase measures are distinguished without inventing settlement timing or alleging a reporting error."
+    },
+    {
+      "change": "Tax-shield dependent calculation",
+      "assessment": "The 17% sensitivity consistently transforms historical equity beta through unlevering, cash correction and relevering. Relevered beta is unchanged under this closed transformation; WACC changes through the debt shield alone. The stated 0.71bp and $161.90 value match independent recomputation."
+    },
+    {
+      "change": "Operating reverse requirement",
+      "assessment": "The $775.32bn FY2036 EBIT statement makes explicit that both the large revenue scale and retained aggregate margin path contribute. It remains a conditional solve, not a category forecast or unique market belief."
+    },
+    {
+      "change": "Residual diligence",
+      "assessment": "The final questions about Services persistence, the tax cash gap and forward risk identify real remaining uncertainties without pretending they have been resolved by clean arithmetic."
+    }
+  ],
+  "numerical_validation": {
+    "main_assumption_scenarios_unchanged_since_iteration4": true,
+    "main_operating_model_unchanged_since_iteration4": true,
+    "main_valuation_scenario_objects_unchanged_since_iteration4": true,
+    "main_valuation_recomputations": {
+      "bear": {
+        "value": 98.87725306776093,
+        "error": 2.842170943040401e-14
+      },
+      "base": {
+        "value": 162.07286596774927,
+        "error": 0.0
+      },
+      "bull": {
+        "value": 242.57641358422933,
+        "error": 0.0
+      }
+    },
+    "weighted_value_unchanged_since_iteration4": true,
+    "seventeen_percent_shield": {
+      "recomputed_operating_asset_beta": 1.1586565650070821,
+      "recomputed_relevered_beta": 1.1743400823457237,
+      "recomputed_WACC": 0.10029852270682205,
+      "recorded_WACC": 0.10029852270682205,
+      "WACC_change_basis_points": 0.7073375785371372,
+      "recomputed_base_value": 161.90476510675683,
+      "recorded_base_value": 161.90476510675686
+    },
+    "greater_China_FY2025_growth": -0.03846038953279962,
+    "greater_China_two_year_CAGR": 0.10923571499942186,
+    "CFO_net_income_ratios": {
+      "FY2024": 1.2615643936161134,
+      "FY2025": 0.995286135166503,
+      "FY2026": 1.09776432759599
+    },
+    "reverse_FY2036_EBIT": 775324018656.0945,
+    "all_reviewed_manifest_hashes_match": true,
+    "body_word_count_matches_manifest": true,
+    "sources_unchanged_since_iteration4": true
+  },
+  "automated_disagreement_disclosure": {
+    "not_buried_in_memo": true,
+    "basis": "The final review-status section explicitly distinguishes independent editorial assessment from automated nonapproval and says both raw verdicts and formatting failures remain archived. It does not relabel them as passes. This is the right presentation when reviews disagree.",
+    "limit": "This bounded chair review does not independently authenticate the complete archive or assert that every automated allegation is invalid. Real historical corrections and the derived-beta sensitivity correction are incorporated; genuine underwriting uncertainties remain visible."
+  },
+  "remaining_material_findings": [],
+  "package_completion_note": {
+    "severity": "delivery completeness; not underwriting",
+    "item": "memo.md refers to quality-review.md, which is not yet present in the iteration6 directory. Include that record and its retained raw/adjudication references in the final package or point to their actual delivered location.",
+    "new_research_or_review_needed": false
+  }
+}

@@ -1,0 +1,193 @@
+{
+  "currency": "USD",
+  "totals": {
+    "request_count": 5,
+    "requests_with_known_usage_cost": 5,
+    "requests_with_retained_estimates": 0,
+    "requests_without_charge": 0,
+    "total_charged_or_reserved_usd": 1.6654309999999999,
+    "known_usage_cost_usd": 1.6654309999999999,
+    "retained_estimates_usd": 0.0,
+    "prompt_tokens": 708912,
+    "prompt_tokens_reported_requests": 5,
+    "completion_tokens": 11986,
+    "completion_tokens_reported_requests": 5,
+    "cached_prompt_tokens": 172544,
+    "cached_prompt_tokens_reported_requests": 5,
+    "request_statuses": {
+      "complete": 5
+    }
+  },
+  "by_stage": [
+    {
+      "stage": "review_0",
+      "request_count": 3,
+      "requests_with_known_usage_cost": 3,
+      "requests_with_retained_estimates": 0,
+      "requests_without_charge": 0,
+      "total_charged_or_reserved_usd": 1.489608,
+      "known_usage_cost_usd": 1.489608,
+      "retained_estimates_usd": 0.0,
+      "prompt_tokens": 522545,
+      "prompt_tokens_reported_requests": 3,
+      "completion_tokens": 6908,
+      "completion_tokens_reported_requests": 3,
+      "cached_prompt_tokens": 5888,
+      "cached_prompt_tokens_reported_requests": 3,
+      "request_statuses": {
+        "complete": 3
+      }
+    },
+    {
+      "stage": "review_format_0",
+      "request_count": 2,
+      "requests_with_known_usage_cost": 2,
+      "requests_with_retained_estimates": 0,
+      "requests_without_charge": 0,
+      "total_charged_or_reserved_usd": 0.175823,
+      "known_usage_cost_usd": 0.175823,
+      "retained_estimates_usd": 0.0,
+      "prompt_tokens": 186367,
+      "prompt_tokens_reported_requests": 2,
+      "completion_tokens": 5078,
+      "completion_tokens_reported_requests": 2,
+      "cached_prompt_tokens": 166656,
+      "cached_prompt_tokens_reported_requests": 2,
+      "request_statuses": {
+        "complete": 2
+      }
+    }
+  ],
+  "by_model": [
+    {
+      "model": "anthropic/claude-sonnet-4.6",
+      "request_count": 2,
+      "requests_with_known_usage_cost": 2,
+      "requests_with_retained_estimates": 0,
+      "requests_without_charge": 0,
+      "total_charged_or_reserved_usd": 0.71925,
+      "known_usage_cost_usd": 0.71925,
+      "retained_estimates_usd": 0.0,
+      "prompt_tokens": 203170,
+      "prompt_tokens_reported_requests": 2,
+      "completion_tokens": 7316,
+      "completion_tokens_reported_requests": 2,
+      "cached_prompt_tokens": 0,
+      "cached_prompt_tokens_reported_requests": 2,
+      "request_statuses": {
+        "complete": 2
+      }
+    },
+    {
+      "model": "openai/gpt-5.4",
+      "request_count": 3,
+      "requests_with_known_usage_cost": 3,
+      "requests_with_retained_estimates": 0,
+      "requests_without_charge": 0,
+      "total_charged_or_reserved_usd": 0.9461809999999999,
+      "known_usage_cost_usd": 0.9461809999999999,
+      "retained_estimates_usd": 0.0,
+      "prompt_tokens": 505742,
+      "prompt_tokens_reported_requests": 3,
+      "completion_tokens": 4670,
+      "completion_tokens_reported_requests": 3,
+      "cached_prompt_tokens": 172544,
+      "cached_prompt_tokens_reported_requests": 3,
+      "request_statuses": {
+        "complete": 3
+      }
+    }
+  ],
+  "by_stage_model": [
+    {
+      "stage": "review_0",
+      "model": "anthropic/claude-sonnet-4.6",
+      "actual_model": "anthropic/claude-sonnet-4.6",
+      "request_count": 1,
+      "requests_with_known_usage_cost": 1,
+      "requests_with_retained_estimates": 0,
+      "requests_without_charge": 0,
+      "total_charged_or_reserved_usd": 0.620421,
+      "known_usage_cost_usd": 0.620421,
+      "retained_estimates_usd": 0.0,
+      "prompt_tokens": 185747,
+      "prompt_tokens_reported_requests": 1,
+      "completion_tokens": 4212,
+      "completion_tokens_reported_requests": 1,
+      "cached_prompt_tokens": 0,
+      "cached_prompt_tokens_reported_requests": 1,
+      "request_statuses": {
+        "complete": 1
+      }
+    },
+    {
+      "stage": "review_0",
+      "model": "openai/gpt-5.4",
+      "actual_model": "openai/gpt-5.4",
+      "request_count": 2,
+      "requests_with_known_usage_cost": 2,
+      "requests_with_retained_estimates": 0,
+      "requests_without_charge": 0,
+      "total_charged_or_reserved_usd": 0.8691869999999999,
+      "known_usage_cost_usd": 0.8691869999999999,
+      "retained_estimates_usd": 0.0,
+      "prompt_tokens": 336798,
+      "prompt_tokens_reported_requests": 2,
+      "completion_tokens": 2696,
+      "completion_tokens_reported_requests": 2,
+      "cached_prompt_tokens": 5888,
+      "cached_prompt_tokens_reported_requests": 2,
+      "request_statuses": {
+        "complete": 2
+      }
+    },
+    {
+      "stage": "review_format_0",
+      "model": "anthropic/claude-sonnet-4.6",
+      "actual_model": "anthropic/claude-sonnet-4.6",
+      "request_count": 1,
+      "requests_with_known_usage_cost": 1,
+      "requests_with_retained_estimates": 0,
+      "requests_without_charge": 0,
+      "total_charged_or_reserved_usd": 0.098829,
+      "known_usage_cost_usd": 0.098829,
+      "retained_estimates_usd": 0.0,
+      "prompt_tokens": 17423,
+      "prompt_tokens_reported_requests": 1,
+      "completion_tokens": 3104,
+      "completion_tokens_reported_requests": 1,
+      "cached_prompt_tokens": 0,
+      "cached_prompt_tokens_reported_requests": 1,
+      "request_statuses": {
+        "complete": 1
+      }
+    },
+    {
+      "stage": "review_format_0",
+      "model": "openai/gpt-5.4",
+      "actual_model": "openai/gpt-5.4",
+      "request_count": 1,
+      "requests_with_known_usage_cost": 1,
+      "requests_with_retained_estimates": 0,
+      "requests_without_charge": 0,
+      "total_charged_or_reserved_usd": 0.076994,
+      "known_usage_cost_usd": 0.076994,
+      "retained_estimates_usd": 0.0,
+      "prompt_tokens": 168944,
+      "prompt_tokens_reported_requests": 1,
+      "completion_tokens": 1974,
+      "completion_tokens_reported_requests": 1,
+      "cached_prompt_tokens": 166656,
+      "cached_prompt_tokens_reported_requests": 1,
+      "request_statuses": {
+        "complete": 1
+      }
+    }
+  ],
+  "scope": {
+    "costs": "Provider-reported usage costs and retained ledger estimates; not an invoice reconciliation or a price-performance ranking.",
+    "model_grouping": "by_model uses the requested model; by_stage_model also preserves actual_model when reported.",
+    "tokens": "Only reported counts are summed; None means no count was reported. Cached prompt tokens are part of provider usage, not extra prompt tokens.",
+    "stage_cache": "Stage response reuse makes no API ledger row. Stage cache hits are not observable or counted here."
+  }
+}

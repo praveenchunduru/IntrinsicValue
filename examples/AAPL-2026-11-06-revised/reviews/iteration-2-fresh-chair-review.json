@@ -1,0 +1,220 @@
+{
+  "format": "fresh_investment_committee_review_v1",
+  "reviewer": "fresh_chair_r2",
+  "iteration": 2,
+  "independence": {
+    "prior_reviews_read": false,
+    "root_narrative_read": false,
+    "network_calls": 0,
+    "paid_calls": 0,
+    "artifact_mutations": false,
+    "delegation": "Attempted a bounded calculation delegation; unavailable concurrency slot. All substantive review and arithmetic were performed independently."
+  },
+  "scope": {
+    "allowed_files": [
+      "/workspace/scratch/aapl-a-plus-iteration2/memo.md",
+      "/workspace/scratch/aapl-a-plus-iteration2/memo-body.md",
+      "/workspace/scratch/aapl-a-plus-iteration2/assumptions.json",
+      "/workspace/scratch/aapl-a-plus-iteration2/valuation.json",
+      "/workspace/scratch/aapl-a-plus-iteration2/sources.json",
+      "/workspace/scratch/aapl-a-plus-iteration2/review-manifest.json",
+      "/workspace/scratch/memo-comparison/FIG-live.md",
+      "/workspace/scratch/memo-comparison/MU-live.md"
+    ],
+    "reviewed_file_sha256": {
+      "/workspace/scratch/aapl-a-plus-iteration2/memo.md": "23fcf8f3514db962366f6171ff1bdbd9cdb579e9bc2ae04cfc17674e8f378f25",
+      "/workspace/scratch/aapl-a-plus-iteration2/memo-body.md": "1e0a15149fd0dd009449d3a889f8e45811c2ac6834c7356449f66c0e0d380d2f",
+      "/workspace/scratch/aapl-a-plus-iteration2/assumptions.json": "770f0ebedeed79de6f738a4855449db6064a11571e06c335159599a0bb6f16d1",
+      "/workspace/scratch/aapl-a-plus-iteration2/valuation.json": "f34eb1a0f0b05d89352bd252faf8102c945228fdab5b9a6ad683d8a4393d4d51",
+      "/workspace/scratch/aapl-a-plus-iteration2/sources.json": "5655ab97eabf72f309d3e9395a596d4e2b512f493545800f0e71e6c61fbb2efb",
+      "/workspace/scratch/aapl-a-plus-iteration2/review-manifest.json": "f4c102583373a2255db2d076fdeeab542aa8bad6fa7c48e356175e86163ee748",
+      "/workspace/scratch/memo-comparison/FIG-live.md": "443c0f507071127b21971d9826e15a5ac2eed07311764b7850b3bb9026965482",
+      "/workspace/scratch/memo-comparison/MU-live.md": "fbc618052168a4d56e67001166782e5fdcc5bf5bdf0504931d22fc0ca7cb29a9"
+    },
+    "source_review": "Memo body and rendered appendix, assumptions, valuation diagnostics and selected source records, particularly S4, S29, S30 and S39. This is an investment-committee review, not a full reauthentication of every archived passage. No raw price series or original web archives were opened.",
+    "benchmark_review": "Actual frozen live FIG and MU prose and selected business, contrary-case, cash-quality, forecast, rate and decision sections. They are compared as work product, not presumed correct."
+  },
+  "verdict": {
+    "exceptional_or_A_plus": false,
+    "research_craftsmanship": "Strong A-minus: transparent, reproducible and substantially careful. Source discipline and current counterarguments reach benchmark parity in important respects.",
+    "investment_underwriting": "B-plus to A-minus: a defensible conditional valuation, but economic adjudication, historical cash/return context and the investment decision remain less developed than the actual FIG/MU pages.",
+    "investment_edge": "Not established, and the memo candidly says so. A memo can earn an A for craftsmanship without possessing a profitable variant perception; certification of an edge is not required. Conversely, clean code and candid caveats alone do not establish exceptional investment judgment.",
+    "benchmark_parity": "Partial parity. The AAPL memo matches or beats the benchmarks on the explicit distinction between historical beta, forward adoption, nominal fit uncertainty and fixed-exit IRR. It trails their historical cash/capital discussion, quote-implied operating requirements and executive decision compression.",
+    "material_numerical_error_found": false,
+    "publication_blocker": "No demonstrated fatal numerical or source contradiction in the reviewed scope. The findings below are substantive A-plus/decision-quality gaps, not an invented error quota."
+  },
+  "verified_strengths": [
+    {
+      "topic": "Authentic contrary case",
+      "current_excerpt": "Applying only Phillip Securities’ stated 6.5% WACC and 3.5% terminal growth to house base cash flows produces **$369.81**. That does not replicate Phillip’s $310 target: its forecasts and one-year valuation roll-forward differ.",
+      "assessment": "This is a real, sourced disagreement with a consequential counterfactual, not a straw man. Morningstar also supplies a cautious-units/recovering-margin case and Wedgewood supplies an owner argument. Access and conflicts are handled honestly."
+    },
+    {
+      "topic": "Near-term edge",
+      "current_excerpt": "The revenue differences are only approximately -0.8% and +0.5%. FY2027 house EBIT is lower, but FY2028 is again close.",
+      "assessment": "Correctly refuses to dress up familiar memory-pressure commentary as an earnings edge. Consensus data-provider overlap and EPS-basis limitations are handled better than many research notes."
+    },
+    {
+      "topic": "Compensation and equity convention",
+      "current_excerpt": "The house retains GAAP stock compensation inside forecast R&D/SG&A and treats that charge as a cash-equivalent employee cost while holding current ordinary shares fixed.",
+      "assessment": "A legitimate simplifying owner convention. No finding demands adding gross RSUs or $24.1bn unrecognized accounting expense on top of all forecast compensation. Adequacy of the forecast cost still remains an economic assumption, but the memo admits its lower granularity."
+    },
+    {
+      "topic": "Capital, tax and terminal discipline",
+      "current_excerpt": "Setting only the return on new terminal investment equal to WACC lowers value to $139.85.",
+      "assessment": "Explicit reinvestment, cash-tax stresses, a terminal handoff bridge and a test of new terminal capital earning WACC are valuable. Their presence prevents treating unmeasured 3x investment efficiency or 50% continuing ROIC as observed facts."
+    },
+    {
+      "topic": "Return interpretation",
+      "current_excerpt": "The base’s 0.30% fixed-exit return is not the 6.37% reverse-WACC result.",
+      "assessment": "A genuinely useful distinction, well explained. This area reaches or exceeds benchmark quality."
+    }
+  ],
+  "calculation_checks": {
+    "method": "Independent direct FCFF/terminal-value recomputation from frozen annual cashflows and assumptions; no author or refine scripts used.",
+    "applied_wacc": 0.10022778894896833,
+    "scenario_values_recomputed": {
+      "bear": 98.87725306776093,
+      "base": 162.07286596774927,
+      "bull": 242.57641358422933
+    },
+    "max_per_share_value_error": 2.842170943040401e-14,
+    "max_nopat_less_net_reinvestment_less_fcff_error": 0.0,
+    "weighted_value": 166.39984964687218,
+    "weighted_value_error": 0.0,
+    "operating_reverse_growth": 0.16522124553099277,
+    "operating_reverse_FY2036_revenue": 2209372406368.3594,
+    "base_FY2036_revenue": 821007342843.4215,
+    "base_revenue_CAGR": 0.055397852397751635,
+    "conditional_equity_beta_at_6_5_percent_WACC_same_rate_inputs": 0.3624966154797133,
+    "services_monetization_duration_tests": {
+      "base": 162.0728659677493,
+      "FY2027_growth_uplift_only_then_base_growth": 164.98363707431938,
+      "FY2027_and_FY2028_uplifts_then_base_growth": 167.832078605493,
+      "first_four_year_growth_uplifts_then_base_growth": 172.4291848206174,
+      "full_frozen_counterfactual": 176.67696267595466
+    },
+    "services_duration_method": "Apply the frozen Services monetization growth override for only the indicated number of initial years, then resume base growth rates while retaining the resulting revenue level. All category margins, expenses, taxes, reinvestment convention, rate, terminal assumptions and equity bridge remain base. These are independent diagnostic calculations, not forecast changes.",
+    "historical_cash_context_billions": {
+      "FY2024": {
+        "CFO": 118.254,
+        "net_income": 93.736,
+        "capex": 9.447,
+        "SBC": 11.688,
+        "CFO_less_capex_less_SBC": 97.119,
+        "CFO_to_net_income": 1.2615643936161134
+      },
+      "FY2025": {
+        "CFO": 111.482,
+        "net_income": 112.01,
+        "capex": 12.715,
+        "SBC": 12.863,
+        "CFO_less_capex_less_SBC": 85.904,
+        "CFO_to_net_income": 0.995286135166503
+      },
+      "FY2026": {
+        "CFO": 145.097,
+        "net_income": 132.175,
+        "capex": 9.041,
+        "SBC": 13.789,
+        "CFO_less_capex_less_SBC": 122.267,
+        "CFO_to_net_income": 1.09776432759599
+      }
+    },
+    "historical_cash_context_basis": "S4/E9. CFO-capex-SBC is a cash-equivalent equity sanity measure, not unlevered operating FCFF or a measured historical ROIC."
+  },
+  "findings": [
+    {
+      "id": "IC1",
+      "severity": "high_for_A_plus_underwriting; not a numerical blocker",
+      "category": "Economic adjudication of required return",
+      "locations": [
+        "memo-body.md: Required returns are underwritten from issuer history and explicit alternatives",
+        "memo-body.md: Executive view",
+        "assumptions.json: model_rationale.discount_rate_adjudication"
+      ],
+      "current_excerpts": [
+        "The house prefers the five-year estimate for its broader cycle coverage and larger sample, while retaining the shorter window as a live valuation comparison.",
+        "The decision turns on the durability/rate judgment, not a near-term earnings surprise.",
+        "The quote-equating constant rate remains 6.37%, equivalent to equity beta 0.33 under the same ERP/financing inputs."
+      ],
+      "finding": "The preferred-rate calculation is carefully underwritten statistically, but the final economic judgment is still largely delegated to the reader. Broader cycle coverage explains which historical sample to prefer; it does not alone explain what forward business-risk change would justify accepting the rival rate or why the committee rejects that change today. Since the thesis is explicitly rate-led, this is the largest remaining underwriting gap. This is not a request to prove a unique future WACC.",
+      "economic_materiality": "At fixed house cash flows, 10.02% gives $162.07, unit-risk normalization gives $180.69, and the sourced 6.5%/3.5% alternative gives $369.81. The sign of the price/value conclusion can change under a real outside convention.",
+      "practical_fix": "Add a short house adjudication: distinguish observed covariance from the policy of using a market-required return; identify the Apple exposures that make a very low forward systematic-risk assumption unattractive today, while acknowledging that ecosystem stability might support one. Under the current matched Treasury/ERP/financing inputs, 6.5% WACC corresponds to equity beta about 0.36. Make clear that Phillip may use different underlying risk inputs, so this translation diagnoses the house framework rather than disproving Phillip. State the evidence or committee adoption needed to move to a lower-risk convention. Then state the investment decision conditional on the chosen convention. Do not add more nominal fit intervals or claim beta below one is impossible.",
+      "benchmark_comparison": "FIG connects workflow persistence, supplier capture and cost/grant claims to its return and hurdle; MU ties its required return to cyclicality and separates unallocated future-cash/rate disagreement. AAPL has better issuer-specific covariance work but needs an equally explicit economic decision."
+    },
+    {
+      "id": "IC2",
+      "severity": "medium",
+      "category": "Historical cash/return/capital context",
+      "locations": [
+        "memo-body.md: Historical financial quality and operating forecast",
+        "memo-body.md: Capital, tax and the equity bridge",
+        "sources.json: S4/E7-E11"
+      ],
+      "current_excerpts": [
+        "Historical CFO less capex and SBC is $122.267 billion, a useful cash-equivalent sanity check against the forecast’s 116.03 billion unlevered FCFF, not an identical accounting measure.",
+        "The full provision-to-cash reconciliation is not modeled.",
+        "It is a house efficiency assumption, not a measured Apple incremental-return statistic."
+      ],
+      "finding": "The caveats are correct, but one current-year cash statistic leaves the reader with little historical evidence for cash conversion or capital efficiency. The actual benchmark pages analyze the operating/cash bridge and return history before choosing forecast reinvestment. Here the memorandum jumps from one-year gross-profit growth to long-horizon 3x investment efficiency and enduring excess returns. A disclosed assumption remains an assumption until its historical plausibility has been examined.",
+      "economic_materiality": "The memo itself shows $152.03-$164.58 for explicit 1x-6x capital efficiency and $139.85 for new terminal investment earning WACC. These do not close the whole price gap, so this is a context/underwriting weakness, not a claimed fatal valuation error.",
+      "practical_fix": "Use existing S4/E9 to add a compact FY2024-FY2026 cash table: CFO $118.254/$111.482/$145.097bn; CFO less capex and SBC $97.119/$85.904/$122.267bn; CFO/net income 1.26x/1.00x/1.10x. Then explain major FY2026 balance/cash movements instead of calling the ratios recurring economics: the cashflow lines for receivables, vendor receivables, inventories, other assets, payables and other liabilities sum to a $14.858bn use, while capex minus D&A is negative $4.382bn. Those broad categories include timing/tax/nonoperating effects, so their sum cannot certify normalized operating capital. Show what can and cannot be reconciled. Note the observed cash-paid tax/provision gap of $7.526bn without inventing its cause. If an economic ROIC/ROIIC denominator cannot be established, say why and use this cash/investment bridge plus already-computed stresses; do not force an impressive but meaningless ROIC. A brief commitments discussion may also connect supplier/AI obligations to reinvestment without deducting operating purchases twice.",
+      "benchmark_comparison": "FIG B7 separates customer-prepayment financing, compensation and owner economics and refuses invalid return ratios; MU B7 explains tax timing and shows cycle/forecast incremental returns. Their advantage is causal cash interpretation, not just greater length."
+    },
+    {
+      "id": "IC3",
+      "severity": "medium",
+      "category": "Quote-implied operating requirements and decision usefulness",
+      "locations": [
+        "memo-body.md: Executive view",
+        "memo-body.md: Scenarios",
+        "valuation.json: reverse_dcf.constant_annual_growth_solutions",
+        "valuation.json: reverse_dcf.solution_projections[0]"
+      ],
+      "current_excerpts": [
+        "Reverse-DCF aggregate growth solutions likewise do not establish a unique market forecast or a coherent category-level adoption path.",
+        "Current price therefore needs a more favorable cash-flow/exit/risk combination than the preferred original case; an investor should not read the reverse solve as the expected holding-period return."
+      ],
+      "finding": "The body warns about an operating reverse solve but never gives its already-computed answer. It foregrounds a quote-equating WACC, which can make the disagreement look like a discount-rate argument by construction. The reader needs the alternate operating requirement as well as a direct decision sentence. The current headline valuation gap is clear; the committee action and change-of-mind standard are less clear.",
+      "economic_materiality": "At the preferred WACC and frozen base margin/capital/terminal path, the existing solve requires 16.52% annual aggregate revenue growth and approximately $2.209tn FY2036 revenue, versus house 5.54% CAGR and $821.0bn. This is a large operating alternative to the low-rate explanation. It is an arithmetic conditional requirement, not a claim that the market uniquely forecasts it.",
+      "practical_fix": "Add two sentences or a small table comparing the base path, the quote-equating aggregate-growth path and the quote-equating rate path, with the fixed assumptions named. State that no category-level adoption story has yet been established for the $2.209tn path. Add a plain conclusion such as declining a new purchase under the preferred return convention, with a conditional reconsideration trigger. Do not turn the 53% value gap into a prediction of a near-term fall or a self-sufficient short thesis. A purchase/avoid conclusion need not claim proprietary operating insight.",
+      "benchmark_comparison": "FIG page one/B10 gives price-required growth, mature margin and compensation settings. MU page one/B10 quantifies what pricing duration or a lower rate must explain. AAPL already has the hard computation and only needs to expose and interpret it."
+    },
+    {
+      "id": "IC4",
+      "severity": "medium",
+      "category": "Observation-to-forecast persistence",
+      "locations": [
+        "assumptions.json: monitoring[name=Services monetization]",
+        "assumptions.json: counterfactuals.services_growth_monetization",
+        "memo-body.md: Catalysts and disconfirming observations"
+      ],
+      "current_excerpts": [
+        "Four-quarter Services revenue growth at least12%, with evidence of recurring paid usage, pricing or retention benefits after licensing/FX normalization. Does not assume disclosed separate AI revenue or eliminate regulatory risk.",
+        "The growth cases require sustained category evidence, not one quarter or a product announcement."
+      ],
+      "finding": "The monitoring caveat is honest, but the four-quarter Services observation is paired with growth uplifts across eight initial forecast years. The first-year result does not provide the same evidence as repeated renewal, pricing and margin durability. Most of the displayed $14.60 benefit is therefore a persistence judgment that is not visible in the monitoring table. A committee should see that distinction directly rather than discover it by opening arrays.",
+      "economic_materiality": "Independent recomputation: applying only the FY2027 Services uplift, then resuming base growth, gives $164.98 (+$2.91). Applying two years gives $167.83 (+$5.76); four years gives $172.43 (+$10.36); the full frozen path gives $176.68 (+$14.60). Resulting revenue levels are retained in every test. The difference is duration, not a lost-year accounting trick.",
+      "practical_fix": "Display a short-duration response and the persistent response side by side, or explicitly say that the $176.68 case requires adopting multiyear monetization durability in addition to observing 12% trailing growth. Name follow-up evidence such as continued paid usage/pricing retention with Services profit conversion, and keep exact forward arrays editable. The rate-review rows should likewise be treated as committee adoption of risk economics; two highly overlapping monthly historical regressions are not independent confirmation of a new decade-long rate.",
+      "benchmark_comparison": "FIG and MU also use judgmental monitoring rules, so neither supplies an empirical proof of persistence. Their strongest rows identify the economic mechanism and forecast driver. AAPL can improve on them by making the duration decision explicit rather than adding more monitoring rows."
+    }
+  ],
+  "prose_and_presentation": {
+    "assessment": "Clear, candid, sometimes overly defensive. A large share of the 4,504-word body explains what a number does not mean. This protects interpretation but slows the investment argument. The generated appendix repeats rate and monitoring tables and expands amounts to whole currency units; it adds reviewability but not executive clarity.",
+    "practical_fix": "Lead each major section with the economic conclusion, move repeated date/measurement and model-convention caveats into one compact assumptions box or technical appendix, and use the saved space for the rate adjudication and historical cash bridge. Keep the strongest necessary caveats: target-price timing, no unique market beliefs, SBC convention and fixed-exit versus reverse-rate difference. Remove the inconsistent section numbering beginning at “4.” and avoid “No currently recorded material finding” while independent review is still marked pending.",
+    "severity": "low; editorial compression, not a substantive error"
+  },
+  "minimum_high_value_revision": [
+    "Expose and interpret the existing 16.52% operating reverse solve and state a conditional investment decision.",
+    "Add an economic house adjudication of forward risk with an explicit lower-rate adoption threshold; no claim of uniquely knowable WACC.",
+    "Add the three-year cash-quality context and a bounded cash-to-reinvestment bridge from existing S4 evidence.",
+    "Separate short-duration Services evidence from the full persistence counterfactual."
+  ],
+  "not_requested_or_supported": [
+    "No invented finding count, guaranteed investment edge or claim of certifying future rates.",
+    "No requirement for a new paid review, more sources merely to increase volume, or an additional model solely for cosmetic complexity.",
+    "No automatic dilution/share addition on top of the current all-compensation-charged convention.",
+    "No deduction of operating purchase commitments from equity on top of forecast operating costs."
+  ]
+}

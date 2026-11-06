@@ -1,0 +1,19 @@
+{
+  "format": "intrinsicvalue_review_manifest_v2",
+  "iteration": 6,
+  "hash_scheme": "sha256 of exact UTF-8 file bytes",
+  "file_sha256": {
+    "memo-body.md": "6ebbf38e8aae3d3d6a19f2a62a4640ebe092e0d7d01b7d49a16400ffb292c0af",
+    "memo.md": "630c2abddd532df17918316cbb176c56b787832d220d43da97003616d1070808",
+    "assumptions.json": "0940d655bb2df9e3cfe9f324d026c38008fb1a548f1b5f0922cdace1f3aa1a4f",
+    "valuation.json": "86956faead94bdfd40efc4c1f2d011e42de09ae201b0838d620fb76fa72fa6bf",
+    "sources.json": "f4b578770f3357aae4eaa43cf991d6fc5ceb1596af2861e6799c7599da56b7f8",
+    "cashflows.csv": "296cdace9737fb30b88f17a8f982fc860e70fdb2fc4c142f9f77c33a56fe48f6",
+    "sensitivity.csv": "81ecd7bb8ed0f76e62f11ba27acbfed14307ee7d7d9af9119f91dab9178309d6"
+  },
+  "scope": "Final editorial candidate. Main forecasts/values unchanged; added consistent 17% debt-shield comparison and adjudicated clarity fixes. Automated workflow approval is not claimed.",
+  "word_counts": {
+    "memo_body": 6212,
+    "memo_rendered": 8091
+  }
+}
