@@ -7,6 +7,11 @@ and reviews and revises a complete memo. The local application requires Python
 
 This standalone edition contains only the portable application, tests and public data.
 
+**Audit status:** an independent external audit assessed the showcase memo at B−
+and the process/software at C, and reproduced live SEC access, reported-input
+coverage and default-budget failures. The previous benchmark-parity claim is
+withdrawn. Repair and validation status is tracked in [audit status](docs/audit-status.md).
+
 ## Run locally
 
 Install Python 3.10+ and [Git](https://git-scm.com/downloads), then run:
@@ -177,9 +182,11 @@ reproducible offline. Read the review findings and source limits alongside the m
 arithmetic and model review do not establish forecast plausibility or investment certainty.
 The [quality record](examples/AAPL-2026-11-06-revised/quality-review.md) includes
 fresh benchmark comparisons, conflicting automated reviews and independent
-adjudications. The editorial assessment is A / near-A+, at core DeepValue benchmark
-parity; the automated attempts did not approve the paper. This agent-directed
-research example is not a guarantee of the same depth for every new ticker.
+adjudications. Its earlier A / near-A+ assessment did not survive the independent
+external audit. The paper was assembled through agent-directed editorial work,
+not demonstrated as an output of an unassisted fresh pipeline run. The automated
+attempts did not approve it. Historical files are retained for reproduction;
+they do not establish benchmark parity or current pipeline readiness.
 Its five additional OpenRouter requests report **$1.665431** in usage cost.
 
 The [earlier AAPL snapshot](examples/AAPL-2026-11-06/memo.md) retains its own
@@ -208,13 +215,16 @@ python -m pip install .
 investmentideas --help
 ```
 
-All **268 tests** pass from source and a fresh installed wheel. The
+The v0.2.0 release passed **268 tests** from source and a fresh installed wheel. The
 [CI matrix](https://github.com/praveenchunduru/IntrinsicValue/actions/runs/42261827883)
 passes on Python 3.10, 3.12 and 3.13. CI runs synthetic evidence and mocked transports without model calls or
 secrets. [Live-validation guidance](docs/openrouter_live_validation.md) explains
 local budget controls and review provenance. Model review is a recorded assessment,
 **not independent publication certification or a guarantee of investment truth**.
-Financial facts, forecasts and source support still require careful inspection.
+Those primarily mocked tests missed material live-data and workflow failures
+identified by the external audit. A fresh end-to-end baseline is required before
+claiming the automated workflow works in practice. Financial facts, forecasts and
+source support still require careful inspection.
 The canonical input adapter currently recognizes a bounded set of US-GAAP/DEI
 inline-XBRL concepts; unsupported taxonomies or missing bridge components require
 additional primary coverage rather than a model-generated substitute.
