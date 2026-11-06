@@ -67,9 +67,12 @@ check delivered-file bindings without invoking models or changing saved files.
 Fresh independent reviewers reproduced the original integrity failures and
 verified their repair using offline transports.
 
-The repair checkout passes 389 offline tests from source. This is regression
-coverage for tested software behavior, not a replacement for the live evidence
-required above.
+The repair implementation passes 389 offline tests from source and a fresh
+installed wheel, with no runtime dependencies. Both historical Apple models'
+main values and annual cashflows reproduce exactly; a source secret scan found
+no findings. The [repair CI run](https://github.com/praveenchunduru/IntrinsicValue/actions/runs/42307996274)
+tests Python 3.10, 3.12 and 3.13. This is regression coverage for tested software
+behavior, not a replacement for the live evidence required above.
 
 Research/author/review instructions now require economic engagement with sourced
 opposing views, an honest explanation of any differentiated thesis, normalization
