@@ -1,0 +1,3013 @@
+{
+  "schema_version": 1,
+  "created_at_utc": "2026-11-06T08:09:20.293507+00:00",
+  "status": "pass",
+  "scope": "Mathematical recomputation of evaluate(assumptions), independent FCFF arithmetic and valuation-related numerical claims in the inspected draft. This is not certification, investment advice, source authentication or verification of forecast plausibility.",
+  "files": {
+    "inputs": {
+      "path": "assumptions.json",
+      "sha256": "421c98527bf304a60d864092dff71567943378824e6eb6fceb525f937c954296",
+      "unchanged_during_check": true
+    },
+    "saved_output": {
+      "path": "valuation.json",
+      "sha256": "f36700a5cc83221cf4e17055aa1501ba84fb9f6051ca7c43eb3c88d34b471042",
+      "unchanged_during_check": true
+    },
+    "draft": {
+      "path": "memo-body.md",
+      "sha256": "6e7fccc36b954dc08acbc01aca9271b71be68eba19e3557bdb353302bddff35c",
+      "unchanged_during_check": true
+    },
+    "engine": {
+      "path": "../../investmentideas/valuation.py",
+      "sha256": "2cbbf262cdda1e5530afefcc5f26b5efff20dddb3256eaca737bd4846b30ae32",
+      "unchanged_during_check": true
+    },
+    "state": {
+      "path": "/workspace/scratch/aapl-passed-review/AAPL/full-5022c7450d77cde7/state.json",
+      "sha256": "d093f6faf2b4c3d794bc75a4548481e6c9f706b04d2bc3076a9c8f62ed0bd5e0",
+      "unchanged_during_check": true
+    },
+    "final_review": {
+      "path": "/workspace/scratch/aapl-passed-review/AAPL/full-5022c7450d77cde7/reviews/review-8.json",
+      "sha256": "0dbbea0991eba0d7bcdb4609c47638617d3d1501e34b5654068612f0f0c19414",
+      "unchanged_during_check": true
+    },
+    "rendered_memo": {
+      "path": "/workspace/scratch/aapl-passed-review/AAPL/full-5022c7450d77cde7/memo.md",
+      "sha256": "bcc8750496887164867b527ca29648c88e3c05e4ae1162a734c08e5c11383293",
+      "unchanged_during_check": true
+    }
+  },
+  "input_sha256": "421c98527bf304a60d864092dff71567943378824e6eb6fceb525f937c954296",
+  "output_sha256": "f36700a5cc83221cf4e17055aa1501ba84fb9f6051ca7c43eb3c88d34b471042",
+  "recomputed_output_canonical_json_sha256": "15e4485d6566b8db09e00b35426304372100b4936f7105829d151162a4cee5d8",
+  "recomputation_comparison": {
+    "numeric_fields_checked": 818,
+    "nonnumeric_fields_checked": 50,
+    "differences": [],
+    "maximum_absolute_numeric_difference": 0.0,
+    "exact_json_data_equal": true,
+    "status": "pass"
+  },
+  "numeric_check_count": 211,
+  "narrative_check_count": 41,
+  "failed_check_count": 0,
+  "numeric_checks": [
+    {
+      "name": "bear.per_share_value",
+      "group": "independent_arithmetic",
+      "observed": 88.24853072660255,
+      "expected": 88.24853072660255,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.enterprise_value",
+      "group": "independent_arithmetic",
+      "observed": 1227075709751.5806,
+      "expected": 1227075709751.5806,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.equity_value",
+      "group": "independent_arithmetic",
+      "observed": 1282443709751.5806,
+      "expected": 1282443709751.5806,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.pv_forecast_fcff",
+      "group": "independent_arithmetic",
+      "observed": 568985910183.4904,
+      "expected": 568985910183.4904,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.pv_terminal_value",
+      "group": "independent_arithmetic",
+      "observed": 658089799568.0902,
+      "expected": 658089799568.0902,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.terminal_value_fraction",
+      "group": "independent_arithmetic",
+      "observed": 0.5363074130945998,
+      "expected": 0.5363074130945998,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.terminal_revenue",
+      "group": "independent_arithmetic",
+      "observed": 586161542530.6638,
+      "expected": 586161542530.6638,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.terminal_nopat",
+      "group": "independent_arithmetic",
+      "observed": 128926231279.6195,
+      "expected": 128926231279.6195,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.terminal_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 23022541299.932056,
+      "expected": 23022541299.932056,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.terminal_fcff",
+      "group": "independent_arithmetic",
+      "observed": 105903689979.68745,
+      "expected": 105903689979.68745,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_1.revenue",
+      "group": "independent_arithmetic",
+      "observed": 497987360000.0,
+      "expected": 497987360000.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_1.nopat",
+      "group": "independent_arithmetic",
+      "observed": 123998852640.0,
+      "expected": 123998852640.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_1.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 6840485714.285715,
+      "expected": 6840485714.285715,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_1.fcff",
+      "group": "independent_arithmetic",
+      "observed": 117158366925.71428,
+      "expected": 117158366925.71428,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_2.revenue",
+      "group": "independent_arithmetic",
+      "observed": 512926980800.0,
+      "expected": 512926980800.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_2.nopat",
+      "group": "independent_arithmetic",
+      "observed": 123461524278.56,
+      "expected": 123461524278.56,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_2.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 5335578857.142858,
+      "expected": 5335578857.142858,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_2.fcff",
+      "group": "independent_arithmetic",
+      "observed": 118125945421.41714,
+      "expected": 118125945421.41714,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_3.revenue",
+      "group": "independent_arithmetic",
+      "observed": 528314790224.0,
+      "expected": 528314790224.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_3.nopat",
+      "group": "independent_arithmetic",
+      "observed": 122780357248.0576,
+      "expected": 122780357248.0576,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_3.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 5495646222.857143,
+      "expected": 5495646222.857143,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_3.fcff",
+      "group": "independent_arithmetic",
+      "observed": 117284711025.20045,
+      "expected": 117284711025.20045,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_4.revenue",
+      "group": "independent_arithmetic",
+      "observed": 538881086028.48,
+      "expected": 538881086028.48,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_4.nopat",
+      "group": "independent_arithmetic",
+      "observed": 122999607886.00055,
+      "expected": 122999607886.00055,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_4.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 3773677073.028565,
+      "expected": 3773677073.028565,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_4.fcff",
+      "group": "independent_arithmetic",
+      "observed": 119225930812.97198,
+      "expected": 119225930812.97198,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_5.revenue",
+      "group": "independent_arithmetic",
+      "observed": 549658707749.04956,
+      "expected": 549658707749.04956,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_5.nopat",
+      "group": "independent_arithmetic",
+      "observed": 123178516406.562,
+      "expected": 123178516406.562,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_5.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 3849150614.489136,
+      "expected": 3849150614.489136,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_5.fcff",
+      "group": "independent_arithmetic",
+      "observed": 119329365792.07286,
+      "expected": 119329365792.07286,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_6.revenue",
+      "group": "independent_arithmetic",
+      "observed": 560651881904.0305,
+      "expected": 560651881904.0305,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_6.nopat",
+      "group": "independent_arithmetic",
+      "observed": 124711404610.73254,
+      "expected": 124711404610.73254,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_6.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 3926133626.7789135,
+      "expected": 3926133626.7789135,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_6.fcff",
+      "group": "independent_arithmetic",
+      "observed": 120785270983.95363,
+      "expected": 120785270983.95363,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_7.revenue",
+      "group": "independent_arithmetic",
+      "observed": 571864919542.1111,
+      "expected": 571864919542.1111,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_7.nopat",
+      "group": "independent_arithmetic",
+      "observed": 125781689053.28735,
+      "expected": 125781689053.28735,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_7.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 4004656299.3144884,
+      "expected": 4004656299.3144884,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bear.year_7.fcff",
+      "group": "independent_arithmetic",
+      "observed": 121777032753.97287,
+      "expected": 121777032753.97287,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.per_share_value",
+      "group": "independent_arithmetic",
+      "observed": 152.3085909213904,
+      "expected": 152.3085909213904,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.enterprise_value",
+      "group": "independent_arithmetic",
+      "observed": 2158008163433.1929,
+      "expected": 2158008163433.1929,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.equity_value",
+      "group": "independent_arithmetic",
+      "observed": 2213376163433.193,
+      "expected": 2213376163433.193,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.pv_forecast_fcff",
+      "group": "independent_arithmetic",
+      "observed": 774103087993.5248,
+      "expected": 774103087993.5248,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.pv_terminal_value",
+      "group": "independent_arithmetic",
+      "observed": 1383905075439.668,
+      "expected": 1383905075439.668,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.terminal_value_fraction",
+      "group": "independent_arithmetic",
+      "observed": 0.6412881558510891,
+      "expected": 0.6412881558510891,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.terminal_revenue",
+      "group": "independent_arithmetic",
+      "observed": 762369959433.0449,
+      "expected": 762369959433.0449,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.terminal_nopat",
+      "group": "independent_arithmetic",
+      "observed": 203750995358.07556,
+      "expected": 203750995358.07556,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.terminal_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 33958499226.34593,
+      "expected": 33958499226.34593,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.terminal_fcff",
+      "group": "independent_arithmetic",
+      "observed": 169792496131.72964,
+      "expected": 169792496131.72964,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_1.revenue",
+      "group": "independent_arithmetic",
+      "observed": 512352380000.0,
+      "expected": 512352380000.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_1.nopat",
+      "group": "independent_arithmetic",
+      "observed": 140333316882.0,
+      "expected": 140333316882.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_1.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 11172793333.333334,
+      "expected": 11172793333.333334,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_1.fcff",
+      "group": "independent_arithmetic",
+      "observed": 129160523548.66667,
+      "expected": 129160523548.66667,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_2.revenue",
+      "group": "independent_arithmetic",
+      "observed": 553340570400.0,
+      "expected": 553340570400.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_2.nopat",
+      "group": "independent_arithmetic",
+      "observed": 152478527579.424,
+      "expected": 152478527579.424,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_2.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 13662730133.333334,
+      "expected": 13662730133.333334,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_2.fcff",
+      "group": "independent_arithmetic",
+      "observed": 138815797446.09067,
+      "expected": 138815797446.09067,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_3.revenue",
+      "group": "independent_arithmetic",
+      "observed": 597607816032.0,
+      "expected": 597607816032.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_3.nopat",
+      "group": "independent_arithmetic",
+      "observed": 165172824273.08447,
+      "expected": 165172824273.08447,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_3.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 14755748544.0,
+      "expected": 14755748544.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_3.fcff",
+      "group": "independent_arithmetic",
+      "observed": 150417075729.08447,
+      "expected": 150417075729.08447,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_4.revenue",
+      "group": "independent_arithmetic",
+      "observed": 639440363154.24,
+      "expected": 639440363154.24,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_4.nopat",
+      "group": "independent_arithmetic",
+      "observed": 175142715467.94635,
+      "expected": 175142715467.94635,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_4.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 13944182374.079996,
+      "expected": 13944182374.079996,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_4.fcff",
+      "group": "independent_arithmetic",
+      "observed": 161198533093.86636,
+      "expected": 161198533093.86636,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_5.revenue",
+      "group": "independent_arithmetic",
+      "observed": 677806784943.4944,
+      "expected": 677806784943.4944,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_5.nopat",
+      "group": "independent_arithmetic",
+      "observed": 184526119133.0169,
+      "expected": 184526119133.0169,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_5.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 12788807263.084799,
+      "expected": 12788807263.084799,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_5.fcff",
+      "group": "independent_arithmetic",
+      "observed": 171737311869.9321,
+      "expected": 171737311869.9321,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_6.revenue",
+      "group": "independent_arithmetic",
+      "observed": 711697124190.6692,
+      "expected": 711697124190.6692,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_6.nopat",
+      "group": "independent_arithmetic",
+      "observed": 191980299250.433,
+      "expected": 191980299250.433,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_6.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 11296779749.058268,
+      "expected": 11296779749.058268,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_6.fcff",
+      "group": "independent_arithmetic",
+      "observed": 180683519501.37476,
+      "expected": 180683519501.37476,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_7.revenue",
+      "group": "independent_arithmetic",
+      "observed": 740165009158.296,
+      "expected": 740165009158.296,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_7.nopat",
+      "group": "independent_arithmetic",
+      "observed": 197816500347.64618,
+      "expected": 197816500347.64618,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_7.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 9489294989.208944,
+      "expected": 9489294989.208944,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "base.year_7.fcff",
+      "group": "independent_arithmetic",
+      "observed": 188327205358.43723,
+      "expected": 188327205358.43723,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.per_share_value",
+      "group": "independent_arithmetic",
+      "observed": 213.98768274492167,
+      "expected": 213.98768274492167,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.enterprise_value",
+      "group": "independent_arithmetic",
+      "observed": 3054339951407.4614,
+      "expected": 3054339951407.4614,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.equity_value",
+      "group": "independent_arithmetic",
+      "observed": 3109707951407.4614,
+      "expected": 3109707951407.4614,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.pv_forecast_fcff",
+      "group": "independent_arithmetic",
+      "observed": 891081337091.765,
+      "expected": 891081337091.765,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.pv_terminal_value",
+      "group": "independent_arithmetic",
+      "observed": 2163258614315.6965,
+      "expected": 2163258614315.6965,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.terminal_value_fraction",
+      "group": "independent_arithmetic",
+      "observed": 0.7082573154042174,
+      "expected": 0.7082573154042174,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.terminal_revenue",
+      "group": "independent_arithmetic",
+      "observed": 921961480513.351,
+      "expected": 921961480513.351,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.terminal_nopat",
+      "group": "independent_arithmetic",
+      "observed": 258647073743.21548,
+      "expected": 258647073743.21548,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.terminal_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 41148398095.51156,
+      "expected": 41148398095.51156,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.terminal_fcff",
+      "group": "independent_arithmetic",
+      "observed": 217498675647.70392,
+      "expected": 217498675647.70392,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_1.revenue",
+      "group": "independent_arithmetic",
+      "observed": 526717400000.00006,
+      "expected": 526717400000.00006,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_1.nopat",
+      "group": "independent_arithmetic",
+      "observed": 146453773070.00003,
+      "expected": 146453773070.00003,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_1.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 14963562500.00002,
+      "expected": 14963562500.00002,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_1.fcff",
+      "group": "independent_arithmetic",
+      "observed": 131490210570.00002,
+      "expected": 131490210570.00002,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_2.revenue",
+      "group": "independent_arithmetic",
+      "observed": 584656314000.0001,
+      "expected": 584656314000.0001,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_2.nopat",
+      "group": "independent_arithmetic",
+      "observed": 164990011810.80005,
+      "expected": 164990011810.80005,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_2.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 18105910625.00002,
+      "expected": 18105910625.00002,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_2.fcff",
+      "group": "independent_arithmetic",
+      "observed": 146884101185.80002,
+      "expected": 146884101185.80002,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_3.revenue",
+      "group": "independent_arithmetic",
+      "observed": 648968508540.0002,
+      "expected": 648968508540.0002,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_3.nopat",
+      "group": "independent_arithmetic",
+      "observed": 185832132420.42908,
+      "expected": 185832132420.42908,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_3.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 20097560793.75004,
+      "expected": 20097560793.75004,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_3.fcff",
+      "group": "independent_arithmetic",
+      "observed": 165734571626.67905,
+      "expected": 165734571626.67905,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_4.revenue",
+      "group": "independent_arithmetic",
+      "observed": 713865359394.0004,
+      "expected": 713865359394.0004,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_4.nopat",
+      "group": "independent_arithmetic",
+      "observed": 204415345662.472,
+      "expected": 204415345662.472,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_4.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 20280265891.87504,
+      "expected": 20280265891.87504,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_4.fcff",
+      "group": "independent_arithmetic",
+      "observed": 184135079770.59695,
+      "expected": 184135079770.59695,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_5.revenue",
+      "group": "independent_arithmetic",
+      "observed": 778113241739.4604,
+      "expected": 778113241739.4604,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_5.nopat",
+      "group": "independent_arithmetic",
+      "observed": 220875224800.16327,
+      "expected": 220875224800.16327,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_5.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 20077463232.956276,
+      "expected": 20077463232.956276,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_5.fcff",
+      "group": "independent_arithmetic",
+      "observed": 200797761567.207,
+      "expected": 200797761567.207,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_6.revenue",
+      "group": "independent_arithmetic",
+      "observed": 840362301078.6173,
+      "expected": 840362301078.6173,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_6.nopat",
+      "group": "independent_arithmetic",
+      "observed": 237150241364.38583,
+      "expected": 237150241364.38583,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_6.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 19452831043.48652,
+      "expected": 19452831043.48652,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_6.fcff",
+      "group": "independent_arithmetic",
+      "observed": 217697410320.89932,
+      "expected": 217697410320.89932,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_7.revenue",
+      "group": "independent_arithmetic",
+      "observed": 890784039143.3344,
+      "expected": 890784039143.3344,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_7.nopat",
+      "group": "independent_arithmetic",
+      "observed": 249900554341.27103,
+      "expected": 249900554341.27103,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_7.net_reinvestment",
+      "group": "independent_arithmetic",
+      "observed": 15756793145.224075,
+      "expected": 15756793145.224075,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "bull.year_7.fcff",
+      "group": "independent_arithmetic",
+      "observed": 234143761196.04694,
+      "expected": 234143761196.04694,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "scenario_probability_sum",
+      "group": "independent_arithmetic",
+      "observed": 1.0,
+      "expected": 1,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "weighted_per_share_value",
+      "group": "independent_arithmetic",
+      "observed": 151.71334882857624,
+      "expected": 151.71334882857624,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "weighted_upside_percent",
+      "group": "independent_arithmetic",
+      "observed": -55.91906649952749,
+      "expected": -55.91906649952749,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "sensitivity.wacc_0.085.g_0.025",
+      "group": "independent_arithmetic",
+      "observed": 172.14903801453218,
+      "expected": 172.14903801453212,
+      "absolute_difference": 5.684341886080802e-14,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "sensitivity.wacc_0.085.g_0.03",
+      "group": "independent_arithmetic",
+      "observed": 179.03471508796383,
+      "expected": 179.03471508796383,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "sensitivity.wacc_0.085.g_0.035",
+      "group": "independent_arithmetic",
+      "observed": 187.25480563137242,
+      "expected": 187.25480563137242,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "sensitivity.wacc_0.095.g_0.025",
+      "group": "independent_arithmetic",
+      "observed": 148.0104564248237,
+      "expected": 148.0104564248237,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "sensitivity.wacc_0.095.g_0.03",
+      "group": "independent_arithmetic",
+      "observed": 152.3085909213904,
+      "expected": 152.3085909213904,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "sensitivity.wacc_0.095.g_0.035",
+      "group": "independent_arithmetic",
+      "observed": 157.28969403642557,
+      "expected": 157.28969403642557,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "sensitivity.wacc_0.105.g_0.025",
+      "group": "independent_arithmetic",
+      "observed": 129.89395458030484,
+      "expected": 129.89395458030484,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "sensitivity.wacc_0.105.g_0.03",
+      "group": "independent_arithmetic",
+      "observed": 132.67829032275796,
+      "expected": 132.67829032275796,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "sensitivity.wacc_0.105.g_0.035",
+      "group": "independent_arithmetic",
+      "observed": 135.83353516652633,
+      "expected": 135.83353516652633,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "tax_0.2.weighted_value",
+      "group": "independent_arithmetic",
+      "observed": 146.21805680726737,
+      "expected": 146.21805680726737,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "tax_0.2.dollar_delta",
+      "group": "independent_arithmetic",
+      "observed": -5.49529202130887,
+      "expected": -5.49529202130887,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "tax_0.2.percent_delta",
+      "group": "independent_arithmetic",
+      "observed": -3.6221545854334174,
+      "expected": -3.6221545854334174,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "tax_0.24.weighted_value",
+      "group": "independent_arithmetic",
+      "observed": 138.8910007788555,
+      "expected": 138.8910007788555,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "tax_0.24.dollar_delta",
+      "group": "independent_arithmetic",
+      "observed": -12.822348049720745,
+      "expected": -12.822348049720745,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "tax_0.24.percent_delta",
+      "group": "independent_arithmetic",
+      "observed": -8.451694032678004,
+      "expected": -8.451694032678004,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.bear.last_forecast_fcff",
+      "group": "independent_arithmetic",
+      "observed": 121777032753.97287,
+      "expected": 121777032753.97287,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.bear.terminal_fcff",
+      "group": "independent_arithmetic",
+      "observed": 105903689979.68745,
+      "expected": 105903689979.68745,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.bear.fcff_step_percent",
+      "group": "independent_arithmetic",
+      "observed": -13.034759030756202,
+      "expected": -13.034759030756204,
+      "absolute_difference": 1.7763568394002505e-15,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.bear.implied_forecast_incremental_roic",
+      "group": "independent_arithmetic",
+      "observed": 0.61586,
+      "expected": 0.61586,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.bear.equivalent_terminal_sales_to_capital",
+      "group": "independent_arithmetic",
+      "observed": 0.6209837047222485,
+      "expected": 0.6209837047222485,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.bear.terminal_roic_required_for_continuing_forecast_sales_to_capital",
+      "group": "independent_arithmetic",
+      "observed": 0.6312564999999999,
+      "expected": 0.6312564999999999,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.bear.terminal_reinvestment_if_forecast_sales_to_capital_continued",
+      "group": "independent_arithmetic",
+      "observed": 5105936781.625977,
+      "expected": 5105936781.625977,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.bear.reinvestment_step_vs_continuing_forecast_sales_to_capital",
+      "group": "independent_arithmetic",
+      "observed": 17916604518.30608,
+      "expected": 17916604518.30608,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.bear.alternative_per_share_value_if_forecast_sales_to_capital_continued",
+      "group": "independent_arithmetic",
+      "observed": 95.90976858295687,
+      "expected": 95.90976858295687,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.base.last_forecast_fcff",
+      "group": "independent_arithmetic",
+      "observed": 188327205358.43723,
+      "expected": 188327205358.43723,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.base.terminal_fcff",
+      "group": "independent_arithmetic",
+      "observed": 169792496131.72964,
+      "expected": 169792496131.72964,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.base.fcff_step_percent",
+      "group": "independent_arithmetic",
+      "observed": -9.841758757812528,
+      "expected": -9.841758757812524,
+      "absolute_difference": 3.552713678800501e-15,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.base.implied_forecast_incremental_roic",
+      "group": "independent_arithmetic",
+      "observed": 0.8017799999999999,
+      "expected": 0.8017799999999999,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.base.equivalent_terminal_sales_to_capital",
+      "group": "independent_arithmetic",
+      "observed": 0.6538849118962734,
+      "expected": 0.6538849118962734,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.base.terminal_roic_required_for_continuing_forecast_sales_to_capital",
+      "group": "independent_arithmetic",
+      "observed": 0.8258333999999999,
+      "expected": 0.8258333999999999,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.base.terminal_reinvestment_if_forecast_sales_to_capital_continued",
+      "group": "independent_arithmetic",
+      "observed": 7401650091.582967,
+      "expected": 7401650091.582967,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.base.reinvestment_step_vs_continuing_forecast_sales_to_capital",
+      "group": "independent_arithmetic",
+      "observed": 26556849134.762962,
+      "expected": 26556849134.762962,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.base.alternative_per_share_value_if_forecast_sales_to_capital_continued",
+      "group": "independent_arithmetic",
+      "observed": 167.2033515200503,
+      "expected": 167.2033515200503,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.bull.last_forecast_fcff",
+      "group": "independent_arithmetic",
+      "observed": 234143761196.04694,
+      "expected": 234143761196.04694,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.bull.terminal_fcff",
+      "group": "independent_arithmetic",
+      "observed": 217498675647.70392,
+      "expected": 217498675647.70392,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.bull.fcff_step_percent",
+      "group": "independent_arithmetic",
+      "observed": -7.1089169591011245,
+      "expected": -7.108916959101119,
+      "absolute_difference": 5.329070518200751e-15,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.bull.implied_forecast_incremental_roic",
+      "group": "independent_arithmetic",
+      "observed": 0.8977280000000001,
+      "expected": 0.8977280000000001,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.bull.equivalent_terminal_sales_to_capital",
+      "group": "independent_arithmetic",
+      "observed": 0.7576829916355242,
+      "expected": 0.7576829916355242,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.bull.terminal_roic_required_for_continuing_forecast_sales_to_capital",
+      "group": "independent_arithmetic",
+      "observed": 0.92914848,
+      "expected": 0.92914848,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.bull.terminal_reinvestment_if_forecast_sales_to_capital_continued",
+      "group": "independent_arithmetic",
+      "observed": 9742950428.130188,
+      "expected": 9742950428.130188,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.bull.reinvestment_step_vs_continuing_forecast_sales_to_capital",
+      "group": "independent_arithmetic",
+      "observed": 31405447667.38137,
+      "expected": 31405447667.38137,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "terminal_transition.bull.alternative_per_share_value_if_forecast_sales_to_capital_continued",
+      "group": "independent_arithmetic",
+      "observed": 235.48211533184224,
+      "expected": 235.48211533184224,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.growth_15pct.per_share_value",
+      "group": "independent_arithmetic",
+      "observed": 232.2475029301406,
+      "expected": 232.2475029301406,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.growth_15pct.enterprise_value",
+      "group": "independent_arithmetic",
+      "observed": 3319694981626.3364,
+      "expected": 3319694981626.3364,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.growth_15pct.equity_value",
+      "group": "independent_arithmetic",
+      "observed": 3375062981626.3364,
+      "expected": 3375062981626.3364,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.growth_15pct.terminal_value_fraction",
+      "group": "independent_arithmetic",
+      "observed": 0.7173802774191984,
+      "expected": 0.7173802774191984,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.growth_15pct.year_1.revenue",
+      "group": "independent_arithmetic",
+      "observed": 550659100000.0,
+      "expected": 550659100000.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.growth_15pct.year_1.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 71825100000.0,
+      "expected": 71825100000.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.growth_15pct.year_2.revenue",
+      "group": "independent_arithmetic",
+      "observed": 633257965000.0,
+      "expected": 633257965000.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.growth_15pct.year_2.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 82598865000.0,
+      "expected": 82598865000.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.growth_15pct.year_3.revenue",
+      "group": "independent_arithmetic",
+      "observed": 728246659750.0,
+      "expected": 728246659750.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.growth_15pct.year_3.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 94988694750.0,
+      "expected": 94988694750.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.growth_15pct.year_4.revenue",
+      "group": "independent_arithmetic",
+      "observed": 837483658712.4999,
+      "expected": 837483658712.4999,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.growth_15pct.year_4.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 109236998962.49988,
+      "expected": 109236998962.49988,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.growth_15pct.year_5.revenue",
+      "group": "independent_arithmetic",
+      "observed": 963106207519.3748,
+      "expected": 963106207519.3748,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.growth_15pct.year_5.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 125622548806.87488,
+      "expected": 125622548806.87488,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.growth_15pct.year_6.revenue",
+      "group": "independent_arithmetic",
+      "observed": 1107572138647.2808,
+      "expected": 1107572138647.2808,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.growth_15pct.year_6.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 144465931127.906,
+      "expected": 144465931127.906,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.growth_15pct.year_7.revenue",
+      "group": "independent_arithmetic",
+      "observed": 1273707959444.3728,
+      "expected": 1273707959444.3728,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.growth_15pct.year_7.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 166135820797.09204,
+      "expected": 166135820797.09204,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.market_case_15pct_36pct_8pct.per_share_value",
+      "group": "independent_arithmetic",
+      "observed": 342.44040004457236,
+      "expected": 342.44040004457236,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.market_case_15pct_36pct_8pct.enterprise_value",
+      "group": "independent_arithmetic",
+      "observed": 4921038217600.533,
+      "expected": 4921038217600.533,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.market_case_15pct_36pct_8pct.equity_value",
+      "group": "independent_arithmetic",
+      "observed": 4976406217600.533,
+      "expected": 4976406217600.533,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.market_case_15pct_36pct_8pct.terminal_value_fraction",
+      "group": "independent_arithmetic",
+      "observed": 0.7746640534032645,
+      "expected": 0.7746640534032645,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.market_case_15pct_36pct_8pct.year_1.revenue",
+      "group": "independent_arithmetic",
+      "observed": 550659100000.0,
+      "expected": 550659100000.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.market_case_15pct_36pct_8pct.year_1.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 71825100000.0,
+      "expected": 71825100000.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.market_case_15pct_36pct_8pct.year_2.revenue",
+      "group": "independent_arithmetic",
+      "observed": 633257965000.0,
+      "expected": 633257965000.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.market_case_15pct_36pct_8pct.year_2.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 82598865000.0,
+      "expected": 82598865000.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.market_case_15pct_36pct_8pct.year_3.revenue",
+      "group": "independent_arithmetic",
+      "observed": 728246659750.0,
+      "expected": 728246659750.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.market_case_15pct_36pct_8pct.year_3.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 94988694750.0,
+      "expected": 94988694750.0,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.market_case_15pct_36pct_8pct.year_4.revenue",
+      "group": "independent_arithmetic",
+      "observed": 837483658712.4999,
+      "expected": 837483658712.4999,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.market_case_15pct_36pct_8pct.year_4.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 109236998962.49988,
+      "expected": 109236998962.49988,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.market_case_15pct_36pct_8pct.year_5.revenue",
+      "group": "independent_arithmetic",
+      "observed": 963106207519.3748,
+      "expected": 963106207519.3748,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.market_case_15pct_36pct_8pct.year_5.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 125622548806.87488,
+      "expected": 125622548806.87488,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.market_case_15pct_36pct_8pct.year_6.revenue",
+      "group": "independent_arithmetic",
+      "observed": 1107572138647.2808,
+      "expected": 1107572138647.2808,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.market_case_15pct_36pct_8pct.year_6.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 144465931127.906,
+      "expected": 144465931127.906,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.market_case_15pct_36pct_8pct.year_7.revenue",
+      "group": "independent_arithmetic",
+      "observed": 1273707959444.3728,
+      "expected": 1273707959444.3728,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "counterfactual.market_case_15pct_36pct_8pct.year_7.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 166135820797.09204,
+      "expected": 166135820797.09204,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "reverse_dcf.solved_market_price",
+      "group": "independent_arithmetic",
+      "observed": 344.17000003308254,
+      "expected": 344.17,
+      "absolute_difference": 3.30825287164771e-08,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "reverse_dcf.year_1.revenue",
+      "group": "independent_arithmetic",
+      "observed": 588635159333.5388,
+      "expected": 588635159333.5388,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "reverse_dcf.year_1.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 109801159333.53882,
+      "expected": 109801159333.53882,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "reverse_dcf.year_2.revenue",
+      "group": "independent_arithmetic",
+      "observed": 723614761699.5048,
+      "expected": 723614761699.5048,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "reverse_dcf.year_2.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 134979602365.96594,
+      "expected": 134979602365.96594,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "reverse_dcf.year_3.revenue",
+      "group": "independent_arithmetic",
+      "observed": 889546461924.3595,
+      "expected": 889546461924.3595,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "reverse_dcf.year_3.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 165931700224.85474,
+      "expected": 165931700224.85474,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "reverse_dcf.year_4.revenue",
+      "group": "independent_arithmetic",
+      "observed": 1093527868425.0306,
+      "expected": 1093527868425.0306,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "reverse_dcf.year_4.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 203981406500.67114,
+      "expected": 203981406500.67114,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "reverse_dcf.year_5.revenue",
+      "group": "independent_arithmetic",
+      "observed": 1344284138273.458,
+      "expected": 1344284138273.458,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "reverse_dcf.year_5.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 250756269848.42737,
+      "expected": 250756269848.42737,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "reverse_dcf.year_6.revenue",
+      "group": "independent_arithmetic",
+      "observed": 1652541189477.2427,
+      "expected": 1652541189477.2427,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "reverse_dcf.year_6.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 308257051203.78467,
+      "expected": 308257051203.78467,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "reverse_dcf.year_7.revenue",
+      "group": "independent_arithmetic",
+      "observed": 2031484494361.663,
+      "expected": 2031484494361.663,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "reverse_dcf.year_7.revenue_increment",
+      "group": "independent_arithmetic",
+      "observed": 378943304884.4204,
+      "expected": 378943304884.4204,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    },
+    {
+      "name": "draft_cash_flow_identity_billions",
+      "group": "selected_draft_arithmetic",
+      "observed": 145.097,
+      "expected": 145.097,
+      "absolute_difference": 0.0,
+      "absolute_tolerance": 1e-06,
+      "relative_tolerance": 1e-12,
+      "status": "pass",
+      "revalidated_against_identical_input_output_engine": true
+    }
+  ],
+  "draft_numeric_claim_checks": [
+    {
+      "name": "weighted_intrinsic_value",
+      "computed_value": 151.71334882857624,
+      "draft_reported_value": 151.71,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "151.71",
+      "anchor": "house probability-weighted intrinsic value",
+      "draft_line_numbers": [
+        9
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "market_price",
+      "computed_value": 344.17,
+      "draft_reported_value": 344.17,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "344.17",
+      "anchor": "regular-session observed price",
+      "draft_line_numbers": [
+        9
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "market_premium_percent",
+      "computed_value": 126.85544987137827,
+      "draft_reported_value": 126.9,
+      "display_decimals": 1,
+      "rounding_valid": true,
+      "draft_token": "126.9",
+      "anchor": "premium of approximately",
+      "draft_line_numbers": [
+        9,
+        81
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "weighted_downside_percent",
+      "computed_value": 55.91906649952749,
+      "draft_reported_value": 55.9,
+      "display_decimals": 1,
+      "rounding_valid": true,
+      "draft_token": "55.9",
+      "anchor": "weighted downside",
+      "draft_line_numbers": [
+        9
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "bear_per_share_value",
+      "computed_value": 88.24853072660255,
+      "draft_reported_value": 88.25,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "88.25",
+      "anchor": "house model produces three scenarios",
+      "draft_line_numbers": [
+        11
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "base_per_share_value",
+      "computed_value": 152.3085909213904,
+      "draft_reported_value": 152.31,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "152.31",
+      "anchor": "house model produces three scenarios",
+      "draft_line_numbers": [
+        11
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "bull_per_share_value",
+      "computed_value": 213.98768274492167,
+      "draft_reported_value": 213.99,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "213.99",
+      "anchor": "house model produces three scenarios",
+      "draft_line_numbers": [
+        11
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "reverse_growth_percent",
+      "computed_value": 22.93094461411238,
+      "draft_reported_value": 22.9,
+      "display_decimals": 1,
+      "rounding_valid": true,
+      "draft_token": "22.9",
+      "anchor": "reverse-DCF solves one specific combination",
+      "draft_line_numbers": [
+        11
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "joint_counterfactual_value",
+      "computed_value": 342.44040004457236,
+      "draft_reported_value": 342.44,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "342.44",
+      "anchor": "The model-computed conditional counterfactual assumes",
+      "draft_line_numbers": [
+        111
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "joint_counterfactual_gap",
+      "computed_value": 1.729599955427659,
+      "draft_reported_value": 1.73,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "1.73",
+      "anchor": "The model-computed conditional counterfactual assumes",
+      "draft_line_numbers": [
+        111
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "joint_counterfactual_terminal_EV_percent",
+      "computed_value": 77.46640534032645,
+      "draft_reported_value": 77.5,
+      "display_decimals": 1,
+      "rounding_valid": true,
+      "draft_token": "77.5",
+      "anchor": "The model-computed conditional counterfactual assumes",
+      "draft_line_numbers": [
+        111
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "growth_only_counterfactual_value",
+      "computed_value": 232.2475029301406,
+      "draft_reported_value": 232.25,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "232.25",
+      "anchor": "Fifteen percent growth alone produces",
+      "draft_line_numbers": [
+        141
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "reverse_year_one_increment_billions",
+      "computed_value": 109.80115933353882,
+      "draft_reported_value": 109.8,
+      "display_decimals": 1,
+      "rounding_valid": true,
+      "draft_token": "109.8",
+      "anchor": "year-1 incremental revenue",
+      "draft_line_numbers": [
+        109
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "reverse_increment_share_of_services_percent",
+      "computed_value": 89.05131291193,
+      "draft_reported_value": 89,
+      "display_decimals": 0,
+      "rounding_valid": true,
+      "draft_token": "89%",
+      "anchor": "year-1 incremental revenue",
+      "draft_line_numbers": [
+        109
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "tax_0.2_value_decline",
+      "computed_value": 5.49529202130887,
+      "draft_reported_value": 5.5,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "5.50",
+      "anchor": "raising the uniform tax rate",
+      "draft_line_numbers": [
+        59
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "tax_0.2_percent_decline",
+      "computed_value": 3.6221545854334174,
+      "draft_reported_value": 3.6,
+      "display_decimals": 1,
+      "rounding_valid": true,
+      "draft_token": "3.6",
+      "anchor": "raising the uniform tax rate",
+      "draft_line_numbers": [
+        59
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "tax_0.24_value_decline",
+      "computed_value": 12.822348049720745,
+      "draft_reported_value": 12.82,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "12.82",
+      "anchor": "raising the uniform tax rate",
+      "draft_line_numbers": [
+        59
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "tax_0.24_percent_decline",
+      "computed_value": 8.451694032678004,
+      "draft_reported_value": 8.5,
+      "display_decimals": 1,
+      "rounding_valid": true,
+      "draft_token": "8.5",
+      "anchor": "raising the uniform tax rate",
+      "draft_line_numbers": [
+        59
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "bear_fcff_decline_percent",
+      "computed_value": 13.034759030756202,
+      "draft_reported_value": 13.0,
+      "display_decimals": 1,
+      "rounding_valid": true,
+      "draft_token": "13.0",
+      "anchor": "A material modeling disclosure:",
+      "draft_line_numbers": [
+        73
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "bear_year_seven_fcff_billions",
+      "computed_value": 121.77703275397288,
+      "draft_reported_value": 121.8,
+      "display_decimals": 1,
+      "rounding_valid": true,
+      "draft_token": "121.8",
+      "anchor": "A material modeling disclosure:",
+      "draft_line_numbers": [
+        73
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "bear_terminal_fcff_billions",
+      "computed_value": 105.90368997968746,
+      "draft_reported_value": 105.9,
+      "display_decimals": 1,
+      "rounding_valid": true,
+      "draft_token": "105.9",
+      "anchor": "A material modeling disclosure:",
+      "draft_line_numbers": [
+        73
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "bear_continued_capital_efficiency_value",
+      "computed_value": 95.90976858295687,
+      "draft_reported_value": 95.91,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "95.91",
+      "anchor": "**Bear case**",
+      "draft_line_numbers": [
+        77
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "base_fcff_decline_percent",
+      "computed_value": 9.841758757812528,
+      "draft_reported_value": 9.8,
+      "display_decimals": 1,
+      "rounding_valid": true,
+      "draft_token": "9.8",
+      "anchor": "A material modeling disclosure:",
+      "draft_line_numbers": [
+        73
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "base_year_seven_fcff_billions",
+      "computed_value": 188.32720535843723,
+      "draft_reported_value": 188.3,
+      "display_decimals": 1,
+      "rounding_valid": true,
+      "draft_token": "188.3",
+      "anchor": "A material modeling disclosure:",
+      "draft_line_numbers": [
+        73
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "base_terminal_fcff_billions",
+      "computed_value": 169.79249613172965,
+      "draft_reported_value": 169.8,
+      "display_decimals": 1,
+      "rounding_valid": true,
+      "draft_token": "169.8",
+      "anchor": "A material modeling disclosure:",
+      "draft_line_numbers": [
+        73
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "base_continued_capital_efficiency_value",
+      "computed_value": 167.2033515200503,
+      "draft_reported_value": 167.2,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "167.20",
+      "anchor": "A material modeling disclosure:",
+      "draft_line_numbers": [
+        73
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "bull_fcff_decline_percent",
+      "computed_value": 7.1089169591011245,
+      "draft_reported_value": 7.1,
+      "display_decimals": 1,
+      "rounding_valid": true,
+      "draft_token": "7.1",
+      "anchor": "A material modeling disclosure:",
+      "draft_line_numbers": [
+        73
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "bull_year_seven_fcff_billions",
+      "computed_value": 234.14376119604694,
+      "draft_reported_value": 234.1,
+      "display_decimals": 1,
+      "rounding_valid": true,
+      "draft_token": "234.1",
+      "anchor": "A material modeling disclosure:",
+      "draft_line_numbers": [
+        73
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "bull_terminal_fcff_billions",
+      "computed_value": 217.49867564770392,
+      "draft_reported_value": 217.5,
+      "display_decimals": 1,
+      "rounding_valid": true,
+      "draft_token": "217.5",
+      "anchor": "A material modeling disclosure:",
+      "draft_line_numbers": [
+        73
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "bull_continued_capital_efficiency_value",
+      "computed_value": 235.48211533184224,
+      "draft_reported_value": 235.48,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "235.48",
+      "anchor": "**Bull case**",
+      "draft_line_numbers": [
+        79
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "grid_wacc_0.085_g_0.025",
+      "computed_value": 172.14903801453218,
+      "draft_reported_value": 172.15,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "172.15",
+      "anchor": "| **8.5%** |",
+      "draft_line_numbers": [
+        87
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "grid_wacc_0.085_g_0.03",
+      "computed_value": 179.03471508796383,
+      "draft_reported_value": 179.03,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "179.03",
+      "anchor": "| **8.5%** |",
+      "draft_line_numbers": [
+        87
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "grid_wacc_0.085_g_0.035",
+      "computed_value": 187.25480563137242,
+      "draft_reported_value": 187.25,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "187.25",
+      "anchor": "| **8.5%** |",
+      "draft_line_numbers": [
+        87
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "grid_wacc_0.095_g_0.025",
+      "computed_value": 148.0104564248237,
+      "draft_reported_value": 148.01,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "148.01",
+      "anchor": "| **9.5%** |",
+      "draft_line_numbers": [
+        88
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "grid_wacc_0.095_g_0.03",
+      "computed_value": 152.3085909213904,
+      "draft_reported_value": 152.31,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "152.31",
+      "anchor": "| **9.5%** |",
+      "draft_line_numbers": [
+        88
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "grid_wacc_0.095_g_0.035",
+      "computed_value": 157.28969403642557,
+      "draft_reported_value": 157.29,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "157.29",
+      "anchor": "| **9.5%** |",
+      "draft_line_numbers": [
+        88
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "grid_wacc_0.105_g_0.025",
+      "computed_value": 129.89395458030484,
+      "draft_reported_value": 129.89,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "129.89",
+      "anchor": "| **10.5%** |",
+      "draft_line_numbers": [
+        89
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "grid_wacc_0.105_g_0.03",
+      "computed_value": 132.67829032275796,
+      "draft_reported_value": 132.68,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "132.68",
+      "anchor": "| **10.5%** |",
+      "draft_line_numbers": [
+        89
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "grid_wacc_0.105_g_0.035",
+      "computed_value": 135.83353516652633,
+      "draft_reported_value": 135.83,
+      "display_decimals": 2,
+      "rounding_valid": true,
+      "draft_token": "135.83",
+      "anchor": "| **10.5%** |",
+      "draft_line_numbers": [
+        89
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "cash_return_share_of_OCF_percent",
+      "computed_value": 70.37430132945546,
+      "draft_reported_value": 70.4,
+      "display_decimals": 1,
+      "rounding_valid": true,
+      "draft_token": "70.4",
+      "anchor": "combined cash returns",
+      "draft_line_numbers": [
+        45
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    },
+    {
+      "name": "capex_share_of_revenue_percent",
+      "computed_value": 1.888128244861476,
+      "draft_reported_value": 1.9,
+      "display_decimals": 1,
+      "rounding_valid": true,
+      "draft_token": "1.9",
+      "anchor": "Capital intensity is low relative to revenue",
+      "draft_line_numbers": [
+        37
+      ],
+      "token_present_in_anchored_line": true,
+      "status": "pass"
+    }
+  ],
+  "material_current_math_findings": [],
+  "limitations": [
+    "Rounding checks use the reported display precision.",
+    "Only valuation-related and selected historical arithmetic claims are covered; cited source truth and qualitative investment judgments are not certified.",
+    "Reverse-DCF root coverage is limited to the engine search procedure; a reported root is checked against the market price, not asserted globally unique."
+  ],
+  "refresh_provenance": {
+    "previous_check_created_at_utc": "2026-11-06T08:07:21.931190+00:00",
+    "previous_draft_sha256": "070e7979434a93b04e6ff0b4bacb70fbbba82f127ef509f5c11f1f672079c580",
+    "final_model_and_engine_identical_to_previously_independently_checked_bytes": {
+      "inputs": true,
+      "saved_output": true,
+      "engine": true
+    },
+    "method": "Recomputed evaluate() for final files; preserved independent arithmetic checks only after matching input/output/engine bytes; rechecked all draft-number anchors and tokens against the final body."
+  },
+  "final_live_review": {
+    "workflow_run_id": "42185437486",
+    "repository_head_reported_by_parent": "7349fa46",
+    "iteration": 8,
+    "review_model": "openai/gpt-5.4",
+    "verdict": "pass",
+    "finding_count": 0,
+    "review_type": "model_peer_review_not_publication_certification",
+    "memo_manifest_hash_basis": "UTF-8 bytes of state.current_memo + newline + valuation_section(assumptions, valuation). This is the exact submitted review text, distinct from raw body and rendered memo.md.",
+    "structured_manifest_hash_basis": "sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode())",
+    "manifest_checks": {
+      "memo_sha256": {
+        "expected": "8eca00ae90db18a0ab05a51673f43e21709514304c73b09cba7bc7a71f1cac11",
+        "computed": "8eca00ae90db18a0ab05a51673f43e21709514304c73b09cba7bc7a71f1cac11",
+        "matches": true
+      },
+      "sources_sha256": {
+        "expected": "cd053b1155d5bd35eb537f1dc533bf38ee84e67dc14b4c07c400a1760ceeae9a",
+        "computed": "cd053b1155d5bd35eb537f1dc533bf38ee84e67dc14b4c07c400a1760ceeae9a",
+        "matches": true
+      },
+      "valuation_sha256": {
+        "expected": "9336090ac77d1655677511ee11eb465ab0796c3d6e0f054eb6be8ac4b5cb5494",
+        "computed": "9336090ac77d1655677511ee11eb465ab0796c3d6e0f054eb6be8ac4b5cb5494",
+        "matches": true
+      }
+    },
+    "state_consistency_checks": {
+      "memo_body_equals_validation_draft": true,
+      "state_plan_equals_saved_assumptions": true,
+      "state_valuation_equals_saved_output": true,
+      "review_file_equals_latest_state_review": true,
+      "review_verdict_pass": true,
+      "review_model_verdict_pass": true,
+      "review_has_no_findings": true,
+      "run_marked_complete": true,
+      "quality_status_reviewed_draft": true
+    },
+    "raw_memo_body_sha256": "6e7fccc36b954dc08acbc01aca9271b71be68eba19e3557bdb353302bddff35c"
+  }
+}

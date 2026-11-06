@@ -1,0 +1,26 @@
+{
+  "iteration": 8,
+  "verdict": "pass",
+  "model_verdict": "pass",
+  "findings": [],
+  "manifest": {
+    "memo_sha256": "8eca00ae90db18a0ab05a51673f43e21709514304c73b09cba7bc7a71f1cac11",
+    "sources_sha256": "cd053b1155d5bd35eb537f1dc533bf38ee84e67dc14b4c07c400a1760ceeae9a",
+    "valuation_sha256": "9336090ac77d1655677511ee11eb465ab0796c3d6e0f054eb6be8ac4b5cb5494",
+    "review_type": "model_peer_review_not_publication_certification"
+  },
+  "diagnostic_scope": {
+    "checks": [
+      "source reference resolution",
+      "decision-section coverage",
+      "explicit quote dates",
+      "explicit model value comparisons"
+    ],
+    "limitations": [
+      "A resolving citation does not establish support for its claim.",
+      "Unlabelled prose numbers are not independently verified here.",
+      "Model review and software checks are not independent certification."
+    ]
+  },
+  "review_model": "openai/gpt-5.4"
+}

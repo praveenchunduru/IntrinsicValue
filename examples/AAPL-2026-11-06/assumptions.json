@@ -1,0 +1,550 @@
+{
+  "assumptions_label": "Growth, margins, taxes, discount rates, capital efficiency, terminal returns and scenario weights are house forecasts, not reported facts or company guidance. Historical actuals use the reported-input snapshot. All reported cash and marketable securities are classified as nonoperating under an explicit house policy, not proof that operating cash needs are zero. Identified finance leases are deducted once outside financial net debt; additional unidentified claims are assumed zero, not established absent. GAAP EBIT retains operating rent, SBC and R&D. Annual year-end cash flows are used without an interim balance-sheet roll-forward or stub-period adjustment.",
+  "scenario_rationales": {
+    "bear": "UK CMA SMS designation [S11] and DOJ lawsuit [S12] risk forcing App Store fee reductions, compressing services growth. Memory cost inflation persists beyond the December quarter per management guidance [S20]; Q4 FY2026 gross margin was 47.9% including approximately one percentage point of tariff-refund benefit on margin (not revenue) [S3, S21], while Q1 FY2027 is guided at 45\u201346% [S20]. R&D rose $11.2B driven by infrastructure costs including AI and headcount [S19, S21]; AI-specific portion undisclosed. EBIT margins enter at ~30% (year-1, ~301bp below FY2026's 33.0%) and compress to ~26.5% by year 7 (~651bp total). FY2026 revenue growth of 15.1% is the highest of the three available year-over-year comparisons (FY2024: 2.0%, FY2025: 6.4%, FY2026: 15.1%) [S2 derived_metrics]; FY2023 is the base year with no prior-year comparison in the supplied series. FY2024 effective rate of 24.1% reflected a disclosed one-time Ireland charge [S19, S37]; 17% normalized rate retained [S21]. Greater China grew ~28% YoY to $82.4B in FY2026 [S7]; geopolitical risk remains a headwind. Higher WACC reflects regulatory and execution risk. Terminal reinvestment governed by terminal ROIC (14%), not forecast sales-to-capital (2.8x), producing a ~13.0% FCFF step-down at the terminal boundary; if forecast sales-to-capital were continued instead, the bear-case value would be approximately $95.91 per share [computed_diagnostics].",
+    "base": "Services sustain mid-to-high single-digit growth driven by installed base expansion (reached new all-time high across all categories and geographies [S3]). Hardware cycles normalize post-iPhone Duo launch [S3, S4]. Memory headwinds partially offset by services mix shift; annual FY2026 gross margin was 48.8% [S18, S21] with near-term pressure from memory costs [S20]. EBIT margins hold near FY2026 levels with modest fade as AI opex scales. Revenue grows ~7\u20139% annually. FY2026 revenue growth of 15.1% is the highest of the three available year-over-year comparisons (FY2024: 2.0%, FY2025: 6.4%, FY2026: 15.1%) [S2 derived_metrics]; FY2023 is the base year with no prior-year comparison in the supplied series. House WACC of 9.5% is a separately selected house discount-rate judgment, not derived from any third-party model inputs. Terminal reinvestment is set by terminal ROIC (18%), not by continuing forecast sales-to-capital (3.0x), reflecting deliberate competitive-fade assumption; this produces a ~9.8% FCFF step-down at the terminal boundary. Two model-computed conditional counterfactuals bracket the market price: 15% constant growth under base inputs yields $232.25 per share [computed growth_15pct], and 15% growth with 36% EBIT margins and 8.0% WACC yields $342.44 per share [computed market_case_15pct_36pct_8pct]. The reverse-DCF finds one solution within the search range of \u221250% to +50% annual growth: approximately 22.9% constant growth under fixed base inputs [computed reverse_dcf]; uniqueness outside that range is not established. Other combinations not explicitly submitted to the model remain untested. The persistence assumptions required for any market-closing combination are not supported by near-term evidence on memory costs [S20] or regulatory proceedings [S11, S12].",
+    "bull": "AI-powered Siri and Apple Intelligence drive accelerated services monetization across the installed base [S3, S4, S5]. Installed base reached a new all-time high across all major product categories and geographic segments [S3]; further expansion supports services revenue. Regulatory outcomes manageable; App Store model adapts without material revenue loss. Annual FY2026 gross margin of 48.8% [S18, S21] recovers above 49% as memory costs normalize and services mix rises [S20]; Q4 FY2026 gross margin of 47.9% included approximately one percentage point of tariff-refund benefit on margin (not revenue) [S3, S21]. iPhone Duo cycle sustains hardware momentum [S3]. Revenue re-accelerates to low double digits. Share repurchase program ($100B authorized [S18]) is discretionary and non-obligatory; if executed below intrinsic value, value per remaining share increases all else equal, but no minimum acquisition is guaranteed. Terminal reinvestment governed by terminal ROIC (22%), reflecting sustained competitive moat [S11]; step-down from forecast capital efficiency (~7.1%) is a deliberate fade assumption; if forecast sales-to-capital (3.2x) were continued instead, the bull-case value would be approximately $235.48 per share [computed_diagnostics]. Even this scenario implies approximately 38% downside to the observed market price."
+  },
+  "scenarios": {
+    "bear": {
+      "probability": 0.25,
+      "growth_rates": [
+        0.04,
+        0.03,
+        0.03,
+        0.02,
+        0.02,
+        0.02,
+        0.02
+      ],
+      "ebit_margins": [
+        0.3,
+        0.29,
+        0.28,
+        0.275,
+        0.27,
+        0.268,
+        0.265
+      ],
+      "tax_rate": 0.17,
+      "sales_to_capital": 2.8,
+      "wacc": 0.105,
+      "terminal_growth": 0.025,
+      "terminal_roic": 0.14
+    },
+    "base": {
+      "probability": 0.5,
+      "growth_rates": [
+        0.07,
+        0.08,
+        0.08,
+        0.07,
+        0.06,
+        0.05,
+        0.04
+      ],
+      "ebit_margins": [
+        0.33,
+        0.332,
+        0.333,
+        0.33,
+        0.328,
+        0.325,
+        0.322
+      ],
+      "tax_rate": 0.17,
+      "sales_to_capital": 3.0,
+      "wacc": 0.095,
+      "terminal_growth": 0.03,
+      "terminal_roic": 0.18
+    },
+    "bull": {
+      "probability": 0.25,
+      "growth_rates": [
+        0.1,
+        0.11,
+        0.11,
+        0.1,
+        0.09,
+        0.08,
+        0.06
+      ],
+      "ebit_margins": [
+        0.335,
+        0.34,
+        0.345,
+        0.345,
+        0.342,
+        0.34,
+        0.338
+      ],
+      "tax_rate": 0.17,
+      "sales_to_capital": 3.2,
+      "wacc": 0.09,
+      "terminal_growth": 0.035,
+      "terminal_roic": 0.22
+    }
+  },
+  "counterfactuals": {
+    "growth_15pct": {
+      "growth_rates": [
+        0.15,
+        0.15,
+        0.15,
+        0.15,
+        0.15,
+        0.15,
+        0.15
+      ]
+    },
+    "market_case_15pct_36pct_8pct": {
+      "growth_rates": [
+        0.15,
+        0.15,
+        0.15,
+        0.15,
+        0.15,
+        0.15,
+        0.15
+      ],
+      "ebit_margins": [
+        0.36,
+        0.36,
+        0.36,
+        0.36,
+        0.36,
+        0.36,
+        0.36
+      ],
+      "wacc": 0.08
+    }
+  },
+  "currency": "USD",
+  "amount_unit": "currency_units",
+  "share_unit": "shares",
+  "valuation_date": "2026-11-06",
+  "actuals": {
+    "revenue": 478834000000,
+    "net_debt": -56824000000,
+    "other_equity_claims": 1456000000,
+    "shares_outstanding": 14532182000
+  },
+  "source_refs": {
+    "revenue": [
+      "S19"
+    ],
+    "net_debt": [
+      "S19"
+    ],
+    "other_equity_claims": [
+      "S19",
+      "assumption: additional unidentified claims are zero, not a reported fact"
+    ],
+    "shares_outstanding": [
+      "S19"
+    ],
+    "market_price": [
+      "S1"
+    ]
+  },
+  "input_dates": {
+    "revenue": {
+      "start_date": "2025-09-28",
+      "end_date": "2026-09-26",
+      "basis": "primary annual duration"
+    },
+    "net_debt": {
+      "instant": "2026-09-26",
+      "basis": "same-period primary financial debt less selected nonoperating assets"
+    },
+    "other_equity_claims": {
+      "instant": "2026-09-26",
+      "basis": "reported finance lease liabilities plus explicit house assumption for unidentified claims"
+    },
+    "shares_outstanding": {
+      "instant": "2026-10-23",
+      "basis": "latest reported ordinary shares outstanding; never annual average or issued shares"
+    },
+    "market_price": {
+      "observed_at": "2026-11-05T21:00:01+00:00",
+      "basis": "regular-session observed quote; not the research date"
+    }
+  },
+  "net_debt_bridge": {
+    "currency": "USD",
+    "as_of": "2026-09-26",
+    "debt": 80111000000,
+    "selected_cash_and_nonoperating_investments": 136935000000,
+    "net_debt": -56824000000,
+    "cash_components": {
+      "cash_and_cash_equivalents": {
+        "value": 36305000000,
+        "source_refs": [
+          "S19"
+        ],
+        "facts": [
+          {
+            "concept": "us-gaap:CashAndCashEquivalentsAtCarryingValue",
+            "source_id": "S19",
+            "context_ref": "c-19",
+            "instant": "2026-09-26",
+            "start_date": null,
+            "end_date": null,
+            "unit": "iso4217:USD",
+            "entity_identifier": "320193",
+            "value": 36305000000
+          }
+        ]
+      },
+      "current_marketable_securities": {
+        "value": 20417000000,
+        "source_refs": [
+          "S19"
+        ],
+        "facts": [
+          {
+            "concept": "us-gaap:MarketableSecuritiesCurrent",
+            "source_id": "S19",
+            "context_ref": "c-19",
+            "instant": "2026-09-26",
+            "start_date": null,
+            "end_date": null,
+            "unit": "iso4217:USD",
+            "entity_identifier": "320193",
+            "value": 20417000000
+          }
+        ]
+      },
+      "noncurrent_marketable_securities": {
+        "value": 80213000000,
+        "source_refs": [
+          "S19"
+        ],
+        "facts": [
+          {
+            "concept": "us-gaap:MarketableSecuritiesNoncurrent",
+            "source_id": "S19",
+            "context_ref": "c-19",
+            "instant": "2026-09-26",
+            "start_date": null,
+            "end_date": null,
+            "unit": "iso4217:USD",
+            "entity_identifier": "320193",
+            "value": 80213000000
+          }
+        ]
+      }
+    },
+    "debt_components": {
+      "commercial_paper": {
+        "value": 1997000000,
+        "source_refs": [
+          "S19"
+        ],
+        "facts": [
+          {
+            "concept": "us-gaap:CommercialPaper",
+            "source_id": "S19",
+            "context_ref": "c-19",
+            "instant": "2026-09-26",
+            "start_date": null,
+            "end_date": null,
+            "unit": "iso4217:USD",
+            "entity_identifier": "320193",
+            "value": 1997000000
+          }
+        ]
+      },
+      "current_term_debt": {
+        "value": 9906000000,
+        "source_refs": [
+          "S19"
+        ],
+        "facts": [
+          {
+            "concept": "us-gaap:LongTermDebtCurrent",
+            "source_id": "S19",
+            "context_ref": "c-19",
+            "instant": "2026-09-26",
+            "start_date": null,
+            "end_date": null,
+            "unit": "iso4217:USD",
+            "entity_identifier": "320193",
+            "value": 9906000000
+          }
+        ]
+      },
+      "noncurrent_term_debt": {
+        "value": 68208000000,
+        "source_refs": [
+          "S19"
+        ],
+        "facts": [
+          {
+            "concept": "us-gaap:LongTermDebtNoncurrent",
+            "source_id": "S19",
+            "context_ref": "c-19",
+            "instant": "2026-09-26",
+            "start_date": null,
+            "end_date": null,
+            "unit": "iso4217:USD",
+            "entity_identifier": "320193",
+            "value": 68208000000
+          }
+        ]
+      }
+    },
+    "cash_classification_policy": "Explicit house modeling policy: all reported cash and cash equivalents plus current and noncurrent marketable securities are classified as nonoperating assets. This does not establish that all cash is economically surplus or that required operating cash is zero.",
+    "explanation": "Exact sum of reported financial-debt components minus the exact sum of selected cash and marketable securities. No rounding residual or second cash add-back is permitted. Finance leases are outside this debt subtotal.",
+    "lease_policy": "Finance leases are excluded from financial debt and deducted once in other equity claims. Operating lease liabilities are not added under the unadjusted operating-EBIT convention; capitalizing them would require a consistent EBIT and reinvestment restatement."
+  },
+  "other_claims_bridge": {
+    "currency": "USD",
+    "as_of": "2026-09-26",
+    "reported_finance_lease_liabilities": 1456000000,
+    "finance_leases_included_in_net_debt": false,
+    "additional_unidentified_claims": 0,
+    "additional_unidentified_claims_basis": "Explicit house assumption: additional unidentified equity claims are zero. This is not a reported fact or evidence that no additional claims exist; identified finance lease liabilities are deducted once as other equity claims, outside financial net debt.",
+    "other_equity_claims": 1456000000,
+    "source_facts": [
+      {
+        "concept": "us-gaap:FinanceLeaseLiability",
+        "source_id": "S19",
+        "context_ref": "c-19",
+        "instant": "2026-09-26",
+        "start_date": null,
+        "end_date": null,
+        "unit": "iso4217:USD",
+        "entity_identifier": "320193",
+        "value": 1456000000
+      }
+    ],
+    "lease_policy": "Finance leases are excluded from financial debt and deducted once in other equity claims. Operating lease liabilities are not added under the unadjusted operating-EBIT convention; capitalizing them would require a consistent EBIT and reinvestment restatement."
+  },
+  "market_price": 344.17,
+  "reported_inputs": {
+    "actuals": {
+      "revenue": 478834000000,
+      "net_debt": -56824000000,
+      "other_equity_claims": 1456000000,
+      "shares_outstanding": 14532182000
+    },
+    "currency": "USD",
+    "source_refs": {
+      "revenue": [
+        "S19"
+      ],
+      "net_debt": [
+        "S19"
+      ],
+      "other_equity_claims": [
+        "S19",
+        "assumption: additional unidentified claims are zero, not a reported fact"
+      ],
+      "shares_outstanding": [
+        "S19"
+      ],
+      "market_price": [
+        "S1"
+      ]
+    },
+    "input_dates": {
+      "revenue": {
+        "start_date": "2025-09-28",
+        "end_date": "2026-09-26",
+        "basis": "primary annual duration"
+      },
+      "net_debt": {
+        "instant": "2026-09-26",
+        "basis": "same-period primary financial debt less selected nonoperating assets"
+      },
+      "other_equity_claims": {
+        "instant": "2026-09-26",
+        "basis": "reported finance lease liabilities plus explicit house assumption for unidentified claims"
+      },
+      "shares_outstanding": {
+        "instant": "2026-10-23",
+        "basis": "latest reported ordinary shares outstanding; never annual average or issued shares"
+      },
+      "market_price": {
+        "observed_at": "2026-11-05T21:00:01+00:00",
+        "basis": "regular-session observed quote; not the research date"
+      }
+    },
+    "net_debt_bridge": {
+      "currency": "USD",
+      "as_of": "2026-09-26",
+      "debt": 80111000000,
+      "selected_cash_and_nonoperating_investments": 136935000000,
+      "net_debt": -56824000000,
+      "cash_components": {
+        "cash_and_cash_equivalents": {
+          "value": 36305000000,
+          "source_refs": [
+            "S19"
+          ],
+          "facts": [
+            {
+              "concept": "us-gaap:CashAndCashEquivalentsAtCarryingValue",
+              "source_id": "S19",
+              "context_ref": "c-19",
+              "instant": "2026-09-26",
+              "start_date": null,
+              "end_date": null,
+              "unit": "iso4217:USD",
+              "entity_identifier": "320193",
+              "value": 36305000000
+            }
+          ]
+        },
+        "current_marketable_securities": {
+          "value": 20417000000,
+          "source_refs": [
+            "S19"
+          ],
+          "facts": [
+            {
+              "concept": "us-gaap:MarketableSecuritiesCurrent",
+              "source_id": "S19",
+              "context_ref": "c-19",
+              "instant": "2026-09-26",
+              "start_date": null,
+              "end_date": null,
+              "unit": "iso4217:USD",
+              "entity_identifier": "320193",
+              "value": 20417000000
+            }
+          ]
+        },
+        "noncurrent_marketable_securities": {
+          "value": 80213000000,
+          "source_refs": [
+            "S19"
+          ],
+          "facts": [
+            {
+              "concept": "us-gaap:MarketableSecuritiesNoncurrent",
+              "source_id": "S19",
+              "context_ref": "c-19",
+              "instant": "2026-09-26",
+              "start_date": null,
+              "end_date": null,
+              "unit": "iso4217:USD",
+              "entity_identifier": "320193",
+              "value": 80213000000
+            }
+          ]
+        }
+      },
+      "debt_components": {
+        "commercial_paper": {
+          "value": 1997000000,
+          "source_refs": [
+            "S19"
+          ],
+          "facts": [
+            {
+              "concept": "us-gaap:CommercialPaper",
+              "source_id": "S19",
+              "context_ref": "c-19",
+              "instant": "2026-09-26",
+              "start_date": null,
+              "end_date": null,
+              "unit": "iso4217:USD",
+              "entity_identifier": "320193",
+              "value": 1997000000
+            }
+          ]
+        },
+        "current_term_debt": {
+          "value": 9906000000,
+          "source_refs": [
+            "S19"
+          ],
+          "facts": [
+            {
+              "concept": "us-gaap:LongTermDebtCurrent",
+              "source_id": "S19",
+              "context_ref": "c-19",
+              "instant": "2026-09-26",
+              "start_date": null,
+              "end_date": null,
+              "unit": "iso4217:USD",
+              "entity_identifier": "320193",
+              "value": 9906000000
+            }
+          ]
+        },
+        "noncurrent_term_debt": {
+          "value": 68208000000,
+          "source_refs": [
+            "S19"
+          ],
+          "facts": [
+            {
+              "concept": "us-gaap:LongTermDebtNoncurrent",
+              "source_id": "S19",
+              "context_ref": "c-19",
+              "instant": "2026-09-26",
+              "start_date": null,
+              "end_date": null,
+              "unit": "iso4217:USD",
+              "entity_identifier": "320193",
+              "value": 68208000000
+            }
+          ]
+        }
+      },
+      "cash_classification_policy": "Explicit house modeling policy: all reported cash and cash equivalents plus current and noncurrent marketable securities are classified as nonoperating assets. This does not establish that all cash is economically surplus or that required operating cash is zero.",
+      "explanation": "Exact sum of reported financial-debt components minus the exact sum of selected cash and marketable securities. No rounding residual or second cash add-back is permitted. Finance leases are outside this debt subtotal.",
+      "lease_policy": "Finance leases are excluded from financial debt and deducted once in other equity claims. Operating lease liabilities are not added under the unadjusted operating-EBIT convention; capitalizing them would require a consistent EBIT and reinvestment restatement."
+    },
+    "other_claims_bridge": {
+      "currency": "USD",
+      "as_of": "2026-09-26",
+      "reported_finance_lease_liabilities": 1456000000,
+      "finance_leases_included_in_net_debt": false,
+      "additional_unidentified_claims": 0,
+      "additional_unidentified_claims_basis": "Explicit house assumption: additional unidentified equity claims are zero. This is not a reported fact or evidence that no additional claims exist; identified finance lease liabilities are deducted once as other equity claims, outside financial net debt.",
+      "other_equity_claims": 1456000000,
+      "source_facts": [
+        {
+          "concept": "us-gaap:FinanceLeaseLiability",
+          "source_id": "S19",
+          "context_ref": "c-19",
+          "instant": "2026-09-26",
+          "start_date": null,
+          "end_date": null,
+          "unit": "iso4217:USD",
+          "entity_identifier": "320193",
+          "value": 1456000000
+        }
+      ],
+      "lease_policy": "Finance leases are excluded from financial debt and deducted once in other equity claims. Operating lease liabilities are not added under the unadjusted operating-EBIT convention; capitalizing them would require a consistent EBIT and reinvestment restatement."
+    },
+    "coverage": {
+      "status": "complete",
+      "complete": true,
+      "fields": {
+        "revenue": "pinned",
+        "net_debt": "pinned",
+        "other_equity_claims": "pinned_with_disclosed_assumption",
+        "shares_outstanding": "pinned"
+      },
+      "recognized_primary_source_ids": [
+        "S19"
+      ],
+      "missing_fields": [],
+      "conflicts": [],
+      "notes": []
+    },
+    "notes": [
+      "Explicit house modeling policy: all reported cash and cash equivalents plus current and noncurrent marketable securities are classified as nonoperating assets. This does not establish that all cash is economically surplus or that required operating cash is zero.",
+      "Explicit house assumption: additional unidentified equity claims are zero. This is not a reported fact or evidence that no additional claims exist; identified finance lease liabilities are deducted once as other equity claims, outside financial net debt.",
+      "Finance leases are excluded from financial debt and deducted once in other equity claims. Operating lease liabilities are not added under the unadjusted operating-EBIT convention; capitalizing them would require a consistent EBIT and reinvestment restatement.",
+      "Reported shares can postdate the balance sheet and predate the quote; the dates remain distinct.",
+      "Missing primary facts are not zero; unsupported or ambiguous inputs remain unpinned."
+    ],
+    "market_price": 344.17
+  }
+}

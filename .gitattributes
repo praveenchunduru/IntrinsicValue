@@ -1,0 +1,3 @@
+* text=auto eol=lf
+# Frozen evidence and review inputs retain their exact original bytes.
+examples/** -text

@@ -1,0 +1,24 @@
+{
+  "scope": "Frozen final memo, evidence and computed output provenance; not investment certification.",
+  "workflow_run": 42185437486,
+  "head_sha": "7349fa467be8fa593a57f4c962c83571a67e2c96",
+  "checks": {
+    "complete": true,
+    "review_no_findings": true,
+    "review_memo_matches": true,
+    "review_sources_match": true,
+    "review_valuation_matches": true,
+    "provided_draft_matches": true,
+    "saved_sources_match": true,
+    "saved_model_matches": true,
+    "saved_valuation_matches": true,
+    "frozen_revision_matches": true
+  },
+  "review_manifest": {
+    "memo_sha256": "8eca00ae90db18a0ab05a51673f43e21709514304c73b09cba7bc7a71f1cac11",
+    "sources_sha256": "cd053b1155d5bd35eb537f1dc533bf38ee84e67dc14b4c07c400a1760ceeae9a",
+    "valuation_sha256": "9336090ac77d1655677511ee11eb465ab0796c3d6e0f054eb6be8ac4b5cb5494",
+    "review_type": "model_peer_review_not_publication_certification"
+  },
+  "recorded_charges_and_retained_reservations_usd": 12.2630191
+}

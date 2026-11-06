@@ -1,0 +1,1140 @@
+{
+  "model": "unlevered-fcff-incremental-sales-to-capital-v1",
+  "currency": "USD",
+  "amount_unit": "currency_units",
+  "share_unit": "shares",
+  "assumptions_label": "Growth, margins, taxes, discount rates, capital efficiency, terminal returns and scenario weights are house forecasts, not reported facts or company guidance. Historical actuals use the reported-input snapshot. All reported cash and marketable securities are classified as nonoperating under an explicit house policy, not proof that operating cash needs are zero. Identified finance leases are deducted once outside financial net debt; additional unidentified claims are assumed zero, not established absent. GAAP EBIT retains operating rent, SBC and R&D. Annual year-end cash flows are used without an interim balance-sheet roll-forward or stub-period adjustment.",
+  "source_refs": {
+    "revenue": [
+      "S19"
+    ],
+    "net_debt": [
+      "S19"
+    ],
+    "other_equity_claims": [
+      "S19",
+      "assumption: additional unidentified claims are zero, not a reported fact"
+    ],
+    "shares_outstanding": [
+      "S19"
+    ],
+    "market_price": [
+      "S1"
+    ]
+  },
+  "scenarios": {
+    "bear": {
+      "enterprise_value": 1227075709751.5806,
+      "net_debt": -56824000000.0,
+      "other_equity_claims": 1456000000.0,
+      "equity_value": 1282443709751.5806,
+      "shares_outstanding": 14532182000.0,
+      "per_share_value": 88.24853072660255,
+      "pv_forecast_fcff": 568985910183.4904,
+      "pv_terminal_value": 658089799568.0902,
+      "terminal_value_fraction": 0.5363074130945998,
+      "terminal_revenue": 586161542530.6638,
+      "terminal_nopat": 128926231279.6195,
+      "terminal_reinvestment": 23022541299.932056,
+      "terminal_fcff": 105903689979.68745,
+      "terminal_reinvestment_rate": 0.17857142857142858,
+      "terminal_enterprise_value": 1323796124746.0933,
+      "cashflows": [
+        {
+          "year": 1,
+          "revenue": 497987360000.0,
+          "revenue_growth": 0.04,
+          "ebit_margin": 0.3,
+          "ebit": 149396208000.0,
+          "cash_operating_tax": 25397355360.0,
+          "nopat": 123998852640.0,
+          "net_reinvestment": 6840485714.285715,
+          "fcff": 117158366925.71428,
+          "discount_factor": 0.9049773755656109,
+          "pv_fcff": 106025671425.98578
+        },
+        {
+          "year": 2,
+          "revenue": 512926980800.0,
+          "revenue_growth": 0.03,
+          "ebit_margin": 0.29,
+          "ebit": 148748824432.0,
+          "cash_operating_tax": 25287300153.440002,
+          "nopat": 123461524278.56,
+          "net_reinvestment": 5335578857.142858,
+          "fcff": 118125945421.41714,
+          "discount_factor": 0.8189840502856207,
+          "pv_fcff": 96743265225.05038
+        },
+        {
+          "year": 3,
+          "revenue": 528314790224.0,
+          "revenue_growth": 0.03,
+          "ebit_margin": 0.28,
+          "ebit": 147928141262.72,
+          "cash_operating_tax": 25147784014.662403,
+          "nopat": 122780357248.0576,
+          "net_reinvestment": 5495646222.857143,
+          "fcff": 117284711025.20045,
+          "discount_factor": 0.7411620364575753,
+          "pv_fcff": 86926975268.7758
+        },
+        {
+          "year": 4,
+          "revenue": 538881086028.48,
+          "revenue_growth": 0.02,
+          "ebit_margin": 0.275,
+          "ebit": 148192298657.832,
+          "cash_operating_tax": 25192690771.831444,
+          "nopat": 122999607886.00055,
+          "net_reinvestment": 3773677073.028565,
+          "fcff": 119225930812.97198,
+          "discount_factor": 0.6707348746222401,
+          "pv_fcff": 79968989755.55864
+        },
+        {
+          "year": 5,
+          "revenue": 549658707749.04956,
+          "revenue_growth": 0.02,
+          "ebit_margin": 0.27,
+          "ebit": 148407851092.24338,
+          "cash_operating_tax": 25229334685.681377,
+          "nopat": 123178516406.562,
+          "net_reinvestment": 3849150614.489136,
+          "fcff": 119329365792.07286,
+          "discount_factor": 0.6069998865359639,
+          "pv_fcff": 72432911496.19676
+        },
+        {
+          "year": 6,
+          "revenue": 560651881904.0305,
+          "revenue_growth": 0.02,
+          "ebit_margin": 0.268,
+          "ebit": 150254704350.28018,
+          "cash_operating_tax": 25543299739.547634,
+          "nopat": 124711404610.73254,
+          "net_reinvestment": 3926133626.7789135,
+          "fcff": 120785270983.95363,
+          "discount_factor": 0.5493211642859402,
+          "pv_fcff": 66349905685.4982
+        },
+        {
+          "year": 7,
+          "revenue": 571864919542.1111,
+          "revenue_growth": 0.02,
+          "ebit_margin": 0.265,
+          "ebit": 151544203678.65945,
+          "cash_operating_tax": 25762514625.37211,
+          "nopat": 125781689053.28735,
+          "net_reinvestment": 4004656299.3144884,
+          "fcff": 121777032753.97287,
+          "discount_factor": 0.49712322559813593,
+          "pv_fcff": 60538191326.42484
+        }
+      ],
+      "probability": 0.25,
+      "upside_percent": -74.3590287571251
+    },
+    "base": {
+      "enterprise_value": 2158008163433.1929,
+      "net_debt": -56824000000.0,
+      "other_equity_claims": 1456000000.0,
+      "equity_value": 2213376163433.193,
+      "shares_outstanding": 14532182000.0,
+      "per_share_value": 152.3085909213904,
+      "pv_forecast_fcff": 774103087993.5248,
+      "pv_terminal_value": 1383905075439.668,
+      "terminal_value_fraction": 0.6412881558510891,
+      "terminal_revenue": 762369959433.0449,
+      "terminal_nopat": 203750995358.07556,
+      "terminal_reinvestment": 33958499226.34593,
+      "terminal_fcff": 169792496131.72964,
+      "terminal_reinvestment_rate": 0.16666666666666666,
+      "terminal_enterprise_value": 2612192248180.456,
+      "cashflows": [
+        {
+          "year": 1,
+          "revenue": 512352380000.0,
+          "revenue_growth": 0.07,
+          "ebit_margin": 0.33,
+          "ebit": 169076285400.0,
+          "cash_operating_tax": 28742968518.000004,
+          "nopat": 140333316882.0,
+          "net_reinvestment": 11172793333.333334,
+          "fcff": 129160523548.66667,
+          "discount_factor": 0.9132420091324202,
+          "pv_fcff": 117954816026.17961
+        },
+        {
+          "year": 2,
+          "revenue": 553340570400.0,
+          "revenue_growth": 0.08,
+          "ebit_margin": 0.332,
+          "ebit": 183709069372.80002,
+          "cash_operating_tax": 31230541793.376007,
+          "nopat": 152478527579.424,
+          "net_reinvestment": 13662730133.333334,
+          "fcff": 138815797446.09067,
+          "discount_factor": 0.8340109672442193,
+          "pv_fcff": 115773897496.7917
+        },
+        {
+          "year": 3,
+          "revenue": 597607816032.0,
+          "revenue_growth": 0.08,
+          "ebit_margin": 0.333,
+          "ebit": 199003402738.656,
+          "cash_operating_tax": 33830578465.57152,
+          "nopat": 165172824273.08447,
+          "net_reinvestment": 14755748544.0,
+          "fcff": 150417075729.08447,
+          "discount_factor": 0.7616538513645839,
+          "pv_fcff": 114565745040.05545
+        },
+        {
+          "year": 4,
+          "revenue": 639440363154.24,
+          "revenue_growth": 0.07,
+          "ebit_margin": 0.33,
+          "ebit": 211015319840.8992,
+          "cash_operating_tax": 35872604372.952866,
+          "nopat": 175142715467.94635,
+          "net_reinvestment": 13944182374.079996,
+          "fcff": 161198533093.86636,
+          "discount_factor": 0.6955742934836383,
+          "pv_fcff": 112125555767.36497
+        },
+        {
+          "year": 5,
+          "revenue": 677806784943.4944,
+          "revenue_growth": 0.06,
+          "ebit_margin": 0.328,
+          "ebit": 222320625461.46616,
+          "cash_operating_tax": 37794506328.44925,
+          "nopat": 184526119133.0169,
+          "net_reinvestment": 12788807263.084799,
+          "fcff": 171737311869.9321,
+          "discount_factor": 0.6352276652818615,
+          "pv_fcff": 109092291660.91988
+        },
+        {
+          "year": 6,
+          "revenue": 711697124190.6692,
+          "revenue_growth": 0.05,
+          "ebit_margin": 0.325,
+          "ebit": 231301565361.9675,
+          "cash_operating_tax": 39321266111.53448,
+          "nopat": 191980299250.433,
+          "net_reinvestment": 11296779749.058268,
+          "fcff": 180683519501.37476,
+          "discount_factor": 0.5801165892985036,
+          "pv_fcff": 104817507075.58717
+        },
+        {
+          "year": 7,
+          "revenue": 740165009158.296,
+          "revenue_growth": 0.04,
+          "ebit_margin": 0.322,
+          "ebit": 238333132948.9713,
+          "cash_operating_tax": 40516632601.32513,
+          "nopat": 197816500347.64618,
+          "net_reinvestment": 9489294989.208944,
+          "fcff": 188327205358.43723,
+          "discount_factor": 0.5297868395420124,
+          "pv_fcff": 99773274926.626
+        }
+      ],
+      "probability": 0.5,
+      "upside_percent": -55.746116476918274
+    },
+    "bull": {
+      "enterprise_value": 3054339951407.4614,
+      "net_debt": -56824000000.0,
+      "other_equity_claims": 1456000000.0,
+      "equity_value": 3109707951407.4614,
+      "shares_outstanding": 14532182000.0,
+      "per_share_value": 213.98768274492167,
+      "pv_forecast_fcff": 891081337091.765,
+      "pv_terminal_value": 2163258614315.6965,
+      "terminal_value_fraction": 0.7082573154042174,
+      "terminal_revenue": 921961480513.351,
+      "terminal_nopat": 258647073743.21548,
+      "terminal_reinvestment": 41148398095.51156,
+      "terminal_fcff": 217498675647.70392,
+      "terminal_reinvestment_rate": 0.15909090909090912,
+      "terminal_enterprise_value": 3954521375412.799,
+      "cashflows": [
+        {
+          "year": 1,
+          "revenue": 526717400000.00006,
+          "revenue_growth": 0.1,
+          "ebit_margin": 0.335,
+          "ebit": 176450329000.00003,
+          "cash_operating_tax": 29996555930.000008,
+          "nopat": 146453773070.00003,
+          "net_reinvestment": 14963562500.00002,
+          "fcff": 131490210570.00002,
+          "discount_factor": 0.9174311926605504,
+          "pv_fcff": 120633220706.42203
+        },
+        {
+          "year": 2,
+          "revenue": 584656314000.0001,
+          "revenue_growth": 0.11,
+          "ebit_margin": 0.34,
+          "ebit": 198783146760.00006,
+          "cash_operating_tax": 33793134949.200012,
+          "nopat": 164990011810.80005,
+          "net_reinvestment": 18105910625.00002,
+          "fcff": 146884101185.80002,
+          "discount_factor": 0.84167999326656,
+          "pv_fcff": 123629409297.02887
+        },
+        {
+          "year": 3,
+          "revenue": 648968508540.0002,
+          "revenue_growth": 0.11,
+          "ebit_margin": 0.345,
+          "ebit": 223894135446.30008,
+          "cash_operating_tax": 38062003025.87102,
+          "nopat": 185832132420.42908,
+          "net_reinvestment": 20097560793.75004,
+          "fcff": 165734571626.67905,
+          "discount_factor": 0.7721834800610642,
+          "pv_fcff": 127977498285.11873
+        },
+        {
+          "year": 4,
+          "revenue": 713865359394.0004,
+          "revenue_growth": 0.1,
+          "ebit_margin": 0.345,
+          "ebit": 246283548990.9301,
+          "cash_operating_tax": 41868203328.45812,
+          "nopat": 204415345662.472,
+          "net_reinvestment": 20280265891.87504,
+          "fcff": 184135079770.59695,
+          "discount_factor": 0.7084252110651963,
+          "pv_fcff": 130445932750.99191
+        },
+        {
+          "year": 5,
+          "revenue": 778113241739.4604,
+          "revenue_growth": 0.09,
+          "ebit_margin": 0.342,
+          "ebit": 266114728674.8955,
+          "cash_operating_tax": 45239503874.73224,
+          "nopat": 220875224800.16327,
+          "net_reinvestment": 20077463232.956276,
+          "fcff": 200797761567.207,
+          "discount_factor": 0.6499313862983452,
+          "pv_fcff": 130504767540.97945
+        },
+        {
+          "year": 6,
+          "revenue": 840362301078.6173,
+          "revenue_growth": 0.08,
+          "ebit_margin": 0.34,
+          "ebit": 285723182366.7299,
+          "cash_operating_tax": 48572941002.34409,
+          "nopat": 237150241364.38583,
+          "net_reinvestment": 19452831043.48652,
+          "fcff": 217697410320.89932,
+          "discount_factor": 0.5962673268792158,
+          "pv_fcff": 129805852920.57045
+        },
+        {
+          "year": 7,
+          "revenue": 890784039143.3344,
+          "revenue_growth": 0.06,
+          "ebit_margin": 0.338,
+          "ebit": 301085005230.447,
+          "cash_operating_tax": 51184450889.175995,
+          "nopat": 249900554341.27103,
+          "net_reinvestment": 15756793145.224075,
+          "fcff": 234143761196.04694,
+          "discount_factor": 0.5470342448433172,
+          "pv_fcff": 128084655590.65353
+        }
+      ],
+      "probability": 0.25,
+      "upside_percent": -37.82500428714831
+    }
+  },
+  "weighted_per_share_value": 151.71334882857624,
+  "sensitivity": [
+    {
+      "wacc": 0.085,
+      "terminal_growth": 0.025,
+      "per_share_value": 172.14903801453218,
+      "enterprise_value": 2446333151552.1
+    },
+    {
+      "wacc": 0.085,
+      "terminal_growth": 0.03,
+      "per_share_value": 179.03471508796383,
+      "enterprise_value": 2546397063976.4365
+    },
+    {
+      "wacc": 0.085,
+      "terminal_growth": 0.035,
+      "per_share_value": 187.25480563137242,
+      "enterprise_value": 2665852915809.729
+    },
+    {
+      "wacc": 0.095,
+      "terminal_growth": 0.025,
+      "per_share_value": 148.0104564248237,
+      "enterprise_value": 2095546890668.6074
+    },
+    {
+      "wacc": 0.095,
+      "terminal_growth": 0.03,
+      "per_share_value": 152.3085909213904,
+      "enterprise_value": 2158008163433.1929
+    },
+    {
+      "wacc": 0.095,
+      "terminal_growth": 0.035,
+      "per_share_value": 157.28969403642557,
+      "enterprise_value": 2230394460461.651
+    },
+    {
+      "wacc": 0.105,
+      "terminal_growth": 0.025,
+      "per_share_value": 129.89395458030484,
+      "enterprise_value": 1832274588660.7236
+    },
+    {
+      "wacc": 0.105,
+      "terminal_growth": 0.03,
+      "per_share_value": 132.67829032275796,
+      "enterprise_value": 1872737062419.1572
+    },
+    {
+      "wacc": 0.105,
+      "terminal_growth": 0.035,
+      "per_share_value": 135.83353516652633,
+      "enterprise_value": 1918589654743.3608
+    }
+  ],
+  "computed_diagnostics": {
+    "basis": "Computed, conditional house-assumption diagnostics; these are not observed market inputs, forecasts or automatic assumption corrections.",
+    "delta_unit": "result currency units per share",
+    "percentage_delta_basis": "Signed value difference / absolute baseline value * 100; null for a zero baseline or nonfinite comparison.",
+    "base_wacc": {
+      "baseline_wacc": 0.095,
+      "baseline_per_share_value": 152.3085909213904,
+      "fixed_assumptions": "All other base-case forecast and terminal inputs, net debt, claims and shares are fixed.",
+      "changes": [
+        {
+          "wacc": 0.085,
+          "wacc_change_percentage_points": -1.0,
+          "per_share_value": 179.03471508796383,
+          "dollar_delta": 26.72612416657344,
+          "percent_delta": 17.54735173170064,
+          "status": "calculated"
+        },
+        {
+          "wacc": 0.105,
+          "wacc_change_percentage_points": 1.0,
+          "per_share_value": 132.67829032275796,
+          "dollar_delta": -19.63030059863243,
+          "percent_delta": -12.888505159084582,
+          "status": "calculated"
+        }
+      ]
+    },
+    "uniform_tax": {
+      "baseline_weighted_per_share_value": 151.71334882857624,
+      "baseline_scenario_tax_rates": {
+        "bear": 0.17,
+        "base": 0.17,
+        "bull": 0.17
+      },
+      "fixed_assumptions": "Replace every scenario cash operating tax rate with the stated alternative; all other scenario inputs, probability weights, net debt, claims and shares stay fixed.",
+      "changes": [
+        {
+          "tax_rate": 0.2,
+          "weighted_per_share_value": 146.21805680726737,
+          "dollar_delta": -5.49529202130887,
+          "percent_delta": -3.6221545854334174,
+          "status": "calculated",
+          "scenario_per_share_values": {
+            "bear": 85.13771785745377,
+            "base": 146.7863668488077,
+            "bull": 206.1617756740003
+          }
+        },
+        {
+          "tax_rate": 0.24,
+          "weighted_per_share_value": 138.8910007788555,
+          "dollar_delta": -12.822348049720745,
+          "percent_delta": -8.451694032678004,
+          "status": "calculated",
+          "scenario_per_share_values": {
+            "bear": 80.98996736525538,
+            "base": 139.4234014186974,
+            "bull": 195.7272329127718
+          }
+        }
+      ]
+    },
+    "terminal_transition": {
+      "bear": {
+        "basis": "Conditional forecast-to-terminal bridge; no observed return or capital-efficiency measurement is asserted.",
+        "last_forecast_fcff": 121777032753.97287,
+        "terminal_fcff": 105903689979.68745,
+        "fcff_step_currency_units": -15873342774.285416,
+        "fcff_step_percent": -13.034759030756202,
+        "implied_forecast_incremental_roic": 0.61586,
+        "implied_forecast_incremental_roic_basis": "Final forecast after-tax EBIT margin times forecast sales-to-capital; a constant-margin incremental-return identity, not measured historical ROIC or a claim about changing-margin incremental returns.",
+        "terminal_roic": 0.14,
+        "forecast_sales_to_capital": 2.8,
+        "equivalent_terminal_sales_to_capital": 0.6209837047222485,
+        "terminal_roic_required_for_continuing_forecast_sales_to_capital": 0.6312564999999999,
+        "reinvestment_timing_note": "Forecast reinvestment uses the current-year revenue increase; terminal reinvestment uses next-year NOPAT times growth/ROIC. Thus cash-flow-equivalent terminal sales-to-capital is ROIC / [after-tax margin * (1 + terminal growth)].",
+        "terminal_reinvestment": 23022541299.932056,
+        "terminal_reinvestment_if_forecast_sales_to_capital_continued": 5105936781.625977,
+        "reinvestment_step_vs_continuing_forecast_sales_to_capital": 17916604518.30608,
+        "alternative_per_share_value_if_forecast_sales_to_capital_continued": 95.90976858295687,
+        "alternative_value_basis": "Only terminal reinvestment changes to incremental terminal revenue / forecast sales-to-capital; forecast cash flows, WACC, terminal growth, terminal NOPAT, net debt, claims and shares stay fixed."
+      },
+      "base": {
+        "basis": "Conditional forecast-to-terminal bridge; no observed return or capital-efficiency measurement is asserted.",
+        "last_forecast_fcff": 188327205358.43723,
+        "terminal_fcff": 169792496131.72964,
+        "fcff_step_currency_units": -18534709226.70758,
+        "fcff_step_percent": -9.841758757812528,
+        "implied_forecast_incremental_roic": 0.8017799999999999,
+        "implied_forecast_incremental_roic_basis": "Final forecast after-tax EBIT margin times forecast sales-to-capital; a constant-margin incremental-return identity, not measured historical ROIC or a claim about changing-margin incremental returns.",
+        "terminal_roic": 0.18,
+        "forecast_sales_to_capital": 3.0,
+        "equivalent_terminal_sales_to_capital": 0.6538849118962734,
+        "terminal_roic_required_for_continuing_forecast_sales_to_capital": 0.8258333999999999,
+        "reinvestment_timing_note": "Forecast reinvestment uses the current-year revenue increase; terminal reinvestment uses next-year NOPAT times growth/ROIC. Thus cash-flow-equivalent terminal sales-to-capital is ROIC / [after-tax margin * (1 + terminal growth)].",
+        "terminal_reinvestment": 33958499226.34593,
+        "terminal_reinvestment_if_forecast_sales_to_capital_continued": 7401650091.582967,
+        "reinvestment_step_vs_continuing_forecast_sales_to_capital": 26556849134.762962,
+        "alternative_per_share_value_if_forecast_sales_to_capital_continued": 167.2033515200503,
+        "alternative_value_basis": "Only terminal reinvestment changes to incremental terminal revenue / forecast sales-to-capital; forecast cash flows, WACC, terminal growth, terminal NOPAT, net debt, claims and shares stay fixed."
+      },
+      "bull": {
+        "basis": "Conditional forecast-to-terminal bridge; no observed return or capital-efficiency measurement is asserted.",
+        "last_forecast_fcff": 234143761196.04694,
+        "terminal_fcff": 217498675647.70392,
+        "fcff_step_currency_units": -16645085548.343018,
+        "fcff_step_percent": -7.1089169591011245,
+        "implied_forecast_incremental_roic": 0.8977280000000001,
+        "implied_forecast_incremental_roic_basis": "Final forecast after-tax EBIT margin times forecast sales-to-capital; a constant-margin incremental-return identity, not measured historical ROIC or a claim about changing-margin incremental returns.",
+        "terminal_roic": 0.22,
+        "forecast_sales_to_capital": 3.2,
+        "equivalent_terminal_sales_to_capital": 0.7576829916355242,
+        "terminal_roic_required_for_continuing_forecast_sales_to_capital": 0.92914848,
+        "reinvestment_timing_note": "Forecast reinvestment uses the current-year revenue increase; terminal reinvestment uses next-year NOPAT times growth/ROIC. Thus cash-flow-equivalent terminal sales-to-capital is ROIC / [after-tax margin * (1 + terminal growth)].",
+        "terminal_reinvestment": 41148398095.51156,
+        "terminal_reinvestment_if_forecast_sales_to_capital_continued": 9742950428.130188,
+        "reinvestment_step_vs_continuing_forecast_sales_to_capital": 31405447667.38137,
+        "alternative_per_share_value_if_forecast_sales_to_capital_continued": 235.48211533184224,
+        "alternative_value_basis": "Only terminal reinvestment changes to incremental terminal revenue / forecast sales-to-capital; forecast cash flows, WACC, terminal growth, terminal NOPAT, net debt, claims and shares stay fixed."
+      }
+    }
+  },
+  "disclosures": [
+    "Forecasts and scenario weights are explicit house assumptions, not reported facts.",
+    "Cash operating taxes are zero on losses; no NOL benefit is assumed.",
+    "Net debt includes the selected cash balance and is subtracted once. Cash is not added again.",
+    "Incremental sales-to-capital represents net operating reinvestment, including working capital. Maintenance investment is assumed to offset depreciation.",
+    "Terminal growth consumes reinvestment at terminal ROIC; it is not free growth.",
+    "Negative cash flows and negative equity values are preserved; no artificial value floor is applied.",
+    "Source references establish traceability only; the caller must verify financial definitions, dates and accounting support."
+  ],
+  "valuation_date": "2026-11-06",
+  "counterfactuals": {
+    "growth_15pct": {
+      "enterprise_value": 3319694981626.3364,
+      "net_debt": -56824000000.0,
+      "other_equity_claims": 1456000000.0,
+      "equity_value": 3375062981626.3364,
+      "shares_outstanding": 14532182000.0,
+      "per_share_value": 232.2475029301406,
+      "pv_forecast_fcff": 938211274760.1143,
+      "pv_terminal_value": 2381483706866.222,
+      "terminal_value_fraction": 0.7173802774191984,
+      "terminal_revenue": 1311919198227.704,
+      "terminal_nopat": 350623524918.3362,
+      "terminal_reinvestment": 58437254153.05603,
+      "terminal_fcff": 292186270765.28015,
+      "terminal_reinvestment_rate": 0.16666666666666666,
+      "terminal_enterprise_value": 4495173396388.925,
+      "cashflows": [
+        {
+          "year": 1,
+          "revenue": 550659100000.0,
+          "revenue_growth": 0.15,
+          "ebit_margin": 0.33,
+          "ebit": 181717503000.0,
+          "cash_operating_tax": 30891975510.000004,
+          "nopat": 150825527490.0,
+          "net_reinvestment": 23941700000.0,
+          "fcff": 126883827490.0,
+          "discount_factor": 0.9132420091324202,
+          "pv_fcff": 115875641543.379
+        },
+        {
+          "year": 2,
+          "revenue": 633257965000.0,
+          "revenue_growth": 0.15,
+          "ebit_margin": 0.332,
+          "ebit": 210241644380.0,
+          "cash_operating_tax": 35741079544.600006,
+          "nopat": 174500564835.4,
+          "net_reinvestment": 27532955000.0,
+          "fcff": 146967609835.4,
+          "discount_factor": 0.8340109672442193,
+          "pv_fcff": 122572598432.39297
+        },
+        {
+          "year": 3,
+          "revenue": 728246659750.0,
+          "revenue_growth": 0.15,
+          "ebit_margin": 0.333,
+          "ebit": 242506137696.75,
+          "cash_operating_tax": 41226043408.4475,
+          "nopat": 201280094288.3025,
+          "net_reinvestment": 31662898250.0,
+          "fcff": 169617196038.3025,
+          "discount_factor": 0.7616538513645839,
+          "pv_fcff": 129189590620.23473
+        },
+        {
+          "year": 4,
+          "revenue": 837483658712.4999,
+          "revenue_growth": 0.15,
+          "ebit_margin": 0.33,
+          "ebit": 276369607375.125,
+          "cash_operating_tax": 46982833253.771255,
+          "nopat": 229386774121.35376,
+          "net_reinvestment": 36412332987.49996,
+          "fcff": 192974441133.8538,
+          "discount_factor": 0.6955742934836383,
+          "pv_fcff": 134228060552.08029
+        },
+        {
+          "year": 5,
+          "revenue": 963106207519.3748,
+          "revenue_growth": 0.15,
+          "ebit_margin": 0.328,
+          "ebit": 315898836066.3549,
+          "cash_operating_tax": 53702802131.28034,
+          "nopat": 262196033935.0746,
+          "net_reinvestment": 41874182935.62496,
+          "fcff": 220321850999.44962,
+          "discount_factor": 0.6352276652818615,
+          "pv_fcff": 139954535020.95853
+        },
+        {
+          "year": 6,
+          "revenue": 1107572138647.2808,
+          "revenue_growth": 0.15,
+          "ebit_margin": 0.325,
+          "ebit": 359960945060.3663,
+          "cash_operating_tax": 61193360660.26227,
+          "nopat": 298767584400.104,
+          "net_reinvestment": 48155310375.968666,
+          "fcff": 250612274024.13535,
+          "discount_factor": 0.5801165892985036,
+          "pv_fcff": 145384337643.22336
+        },
+        {
+          "year": 7,
+          "revenue": 1273707959444.3728,
+          "revenue_growth": 0.15,
+          "ebit_margin": 0.322,
+          "ebit": 410133962941.0881,
+          "cash_operating_tax": 69722773699.98497,
+          "nopat": 340411189241.1031,
+          "net_reinvestment": 55378606932.36401,
+          "fcff": 285032582308.7391,
+          "discount_factor": 0.5297868395420124,
+          "pv_fcff": 151006510947.8454
+        }
+      ],
+      "basis": "Conditional base-scenario counterfactual, not an observed market input, forecast or replacement for the house scenarios.",
+      "overrides": {
+        "growth_rates": [
+          0.15,
+          0.15,
+          0.15,
+          0.15,
+          0.15,
+          0.15,
+          0.15
+        ]
+      },
+      "effective_inputs": {
+        "growth_rates": [
+          0.15,
+          0.15,
+          0.15,
+          0.15,
+          0.15,
+          0.15,
+          0.15
+        ],
+        "ebit_margins": [
+          0.33,
+          0.332,
+          0.333,
+          0.33,
+          0.328,
+          0.325,
+          0.322
+        ],
+        "tax_rate": 0.17,
+        "sales_to_capital": 3.0,
+        "wacc": 0.095,
+        "terminal_growth": 0.03,
+        "terminal_roic": 0.18
+      },
+      "fixed_input_basis": {
+        "reference_scenario": "base",
+        "actuals": {
+          "revenue": 478834000000.0,
+          "net_debt": -56824000000.0,
+          "other_equity_claims": 1456000000.0,
+          "shares_outstanding": 14532182000.0
+        },
+        "unchanged_base_inputs": {
+          "ebit_margins": [
+            0.33,
+            0.332,
+            0.333,
+            0.33,
+            0.328,
+            0.325,
+            0.322
+          ],
+          "tax_rate": 0.17,
+          "sales_to_capital": 3.0,
+          "wacc": 0.095,
+          "terminal_growth": 0.03,
+          "terminal_roic": 0.18
+        },
+        "house_scenarios_and_probabilities_unchanged": true,
+        "note": "Only the listed forecast overrides change; actuals, the equity bridge, shares, currency and all unlisted base forecast inputs stay fixed. This case has no scenario probability and does not enter the weighted value."
+      },
+      "revenue_path": [
+        {
+          "year": 1,
+          "revenue": 550659100000.0,
+          "revenue_increment": 71825100000.0
+        },
+        {
+          "year": 2,
+          "revenue": 633257965000.0,
+          "revenue_increment": 82598865000.0
+        },
+        {
+          "year": 3,
+          "revenue": 728246659750.0,
+          "revenue_increment": 94988694750.0
+        },
+        {
+          "year": 4,
+          "revenue": 837483658712.4999,
+          "revenue_increment": 109236998962.49988
+        },
+        {
+          "year": 5,
+          "revenue": 963106207519.3748,
+          "revenue_increment": 125622548806.87488
+        },
+        {
+          "year": 6,
+          "revenue": 1107572138647.2808,
+          "revenue_increment": 144465931127.906
+        },
+        {
+          "year": 7,
+          "revenue": 1273707959444.3728,
+          "revenue_increment": 166135820797.09204
+        }
+      ]
+    },
+    "market_case_15pct_36pct_8pct": {
+      "enterprise_value": 4921038217600.533,
+      "net_debt": -56824000000.0,
+      "other_equity_claims": 1456000000.0,
+      "equity_value": 4976406217600.533,
+      "shares_outstanding": 14532182000.0,
+      "per_share_value": 342.44040004457236,
+      "pv_forecast_fcff": 1108886805001.7275,
+      "pv_terminal_value": 3812151412598.805,
+      "terminal_value_fraction": 0.7746640534032645,
+      "terminal_revenue": 1311919198227.704,
+      "terminal_nopat": 392001456430.4379,
+      "terminal_reinvestment": 65333576071.739655,
+      "terminal_fcff": 326667880358.69824,
+      "terminal_reinvestment_rate": 0.16666666666666666,
+      "terminal_enterprise_value": 6533357607173.965,
+      "cashflows": [
+        {
+          "year": 1,
+          "revenue": 550659100000.0,
+          "revenue_growth": 0.15,
+          "ebit_margin": 0.36,
+          "ebit": 198237276000.0,
+          "cash_operating_tax": 33700336920.000004,
+          "nopat": 164536939080.0,
+          "net_reinvestment": 23941700000.0,
+          "fcff": 140595239080.0,
+          "discount_factor": 0.9259259259259258,
+          "pv_fcff": 130180776925.92592
+        },
+        {
+          "year": 2,
+          "revenue": 633257965000.0,
+          "revenue_growth": 0.15,
+          "ebit_margin": 0.36,
+          "ebit": 227972867400.0,
+          "cash_operating_tax": 38755387458.0,
+          "nopat": 189217479942.0,
+          "net_reinvestment": 27532955000.0,
+          "fcff": 161684524942.0,
+          "discount_factor": 0.8573388203017832,
+          "pv_fcff": 138618419874.82852
+        },
+        {
+          "year": 3,
+          "revenue": 728246659750.0,
+          "revenue_growth": 0.15,
+          "ebit_margin": 0.36,
+          "ebit": 262168797510.0,
+          "cash_operating_tax": 44568695576.700005,
+          "nopat": 217600101933.3,
+          "net_reinvestment": 31662898250.0,
+          "fcff": 185937203683.3,
+          "discount_factor": 0.7938322410201696,
+          "pv_fcff": 147602947088.93777
+        },
+        {
+          "year": 4,
+          "revenue": 837483658712.4999,
+          "revenue_growth": 0.15,
+          "ebit_margin": 0.36,
+          "ebit": 301494117136.49994,
+          "cash_operating_tax": 51253999913.204994,
+          "nopat": 250240117223.29495,
+          "net_reinvestment": 36412332987.49996,
+          "fcff": 213827784235.79498,
+          "discount_factor": 0.7350298527964533,
+          "pv_fcff": 157169804770.62814
+        },
+        {
+          "year": 5,
+          "revenue": 963106207519.3748,
+          "revenue_growth": 0.15,
+          "ebit_margin": 0.36,
+          "ebit": 346718234706.9749,
+          "cash_operating_tax": 58942099900.18574,
+          "nopat": 287776134806.7892,
+          "net_reinvestment": 41874182935.62496,
+          "fcff": 245901951871.1642,
+          "discount_factor": 0.6805831970337529,
+          "pv_fcff": 167356736561.317
+        },
+        {
+          "year": 6,
+          "revenue": 1107572138647.2808,
+          "revenue_growth": 0.15,
+          "ebit_margin": 0.36,
+          "ebit": 398725969913.02106,
+          "cash_operating_tax": 67783414885.213585,
+          "nopat": 330942555027.8075,
+          "net_reinvestment": 48155310375.968666,
+          "fcff": 282787244651.8388,
+          "discount_factor": 0.6301696268831045,
+          "pv_fcff": 178203932449.55048
+        },
+        {
+          "year": 7,
+          "revenue": 1273707959444.3728,
+          "revenue_growth": 0.15,
+          "ebit_margin": 0.36,
+          "ebit": 458534865399.9742,
+          "cash_operating_tax": 77950927117.99562,
+          "nopat": 380583938281.9786,
+          "net_reinvestment": 55378606932.36401,
+          "fcff": 325205331349.61456,
+          "discount_factor": 0.5834903952621338,
+          "pv_fcff": 189754187330.5398
+        }
+      ],
+      "basis": "Conditional base-scenario counterfactual, not an observed market input, forecast or replacement for the house scenarios.",
+      "overrides": {
+        "growth_rates": [
+          0.15,
+          0.15,
+          0.15,
+          0.15,
+          0.15,
+          0.15,
+          0.15
+        ],
+        "ebit_margins": [
+          0.36,
+          0.36,
+          0.36,
+          0.36,
+          0.36,
+          0.36,
+          0.36
+        ],
+        "wacc": 0.08
+      },
+      "effective_inputs": {
+        "growth_rates": [
+          0.15,
+          0.15,
+          0.15,
+          0.15,
+          0.15,
+          0.15,
+          0.15
+        ],
+        "ebit_margins": [
+          0.36,
+          0.36,
+          0.36,
+          0.36,
+          0.36,
+          0.36,
+          0.36
+        ],
+        "tax_rate": 0.17,
+        "sales_to_capital": 3.0,
+        "wacc": 0.08,
+        "terminal_growth": 0.03,
+        "terminal_roic": 0.18
+      },
+      "fixed_input_basis": {
+        "reference_scenario": "base",
+        "actuals": {
+          "revenue": 478834000000.0,
+          "net_debt": -56824000000.0,
+          "other_equity_claims": 1456000000.0,
+          "shares_outstanding": 14532182000.0
+        },
+        "unchanged_base_inputs": {
+          "tax_rate": 0.17,
+          "sales_to_capital": 3.0,
+          "terminal_growth": 0.03,
+          "terminal_roic": 0.18
+        },
+        "house_scenarios_and_probabilities_unchanged": true,
+        "note": "Only the listed forecast overrides change; actuals, the equity bridge, shares, currency and all unlisted base forecast inputs stay fixed. This case has no scenario probability and does not enter the weighted value."
+      },
+      "revenue_path": [
+        {
+          "year": 1,
+          "revenue": 550659100000.0,
+          "revenue_increment": 71825100000.0
+        },
+        {
+          "year": 2,
+          "revenue": 633257965000.0,
+          "revenue_increment": 82598865000.0
+        },
+        {
+          "year": 3,
+          "revenue": 728246659750.0,
+          "revenue_increment": 94988694750.0
+        },
+        {
+          "year": 4,
+          "revenue": 837483658712.4999,
+          "revenue_increment": 109236998962.49988
+        },
+        {
+          "year": 5,
+          "revenue": 963106207519.3748,
+          "revenue_increment": 125622548806.87488
+        },
+        {
+          "year": 6,
+          "revenue": 1107572138647.2808,
+          "revenue_increment": 144465931127.906
+        },
+        {
+          "year": 7,
+          "revenue": 1273707959444.3728,
+          "revenue_increment": 166135820797.09204
+        }
+      ]
+    }
+  },
+  "market_price": 344.17,
+  "weighted_upside_percent": -55.91906649952749,
+  "reverse_dcf": {
+    "status": "solved",
+    "constant_annual_growth_solutions": [
+      0.2293094461411238
+    ],
+    "solution_projections": [
+      {
+        "enterprise_value": 4946173079420.762,
+        "net_debt": -56824000000.0,
+        "other_equity_claims": 1456000000.0,
+        "equity_value": 5001541079420.762,
+        "shares_outstanding": 14532182000.0,
+        "per_share_value": 344.17000003308254,
+        "pv_forecast_fcff": 1147855585837.605,
+        "pv_terminal_value": 3798317493583.1562,
+        "terminal_value_fraction": 0.7679305662364672,
+        "terminal_revenue": 2092429029192.513,
+        "terminal_nopat": 559222582341.991,
+        "terminal_reinvestment": 93203763723.66516,
+        "terminal_fcff": 466018818618.3258,
+        "terminal_reinvestment_rate": 0.16666666666666666,
+        "terminal_enterprise_value": 7169520286435.781,
+        "cashflows": [
+          {
+            "year": 1,
+            "revenue": 588635159333.5388,
+            "revenue_growth": 0.2293094461411238,
+            "ebit_margin": 0.33,
+            "ebit": 194249602580.0678,
+            "cash_operating_tax": 33022432438.61153,
+            "nopat": 161227170141.45627,
+            "net_reinvestment": 36600386444.51294,
+            "fcff": 124626783696.94333,
+            "discount_factor": 0.9132420091324202,
+            "pv_fcff": 113814414335.10806
+          },
+          {
+            "year": 2,
+            "revenue": 723614761699.5048,
+            "revenue_growth": 0.2293094461411238,
+            "ebit_margin": 0.332,
+            "ebit": 240240100884.2356,
+            "cash_operating_tax": 40840817150.32005,
+            "nopat": 199399283733.91553,
+            "net_reinvestment": 44993200788.65531,
+            "fcff": 154406082945.26022,
+            "discount_factor": 0.8340109672442193,
+            "pv_fcff": 128776366585.56763
+          },
+          {
+            "year": 3,
+            "revenue": 889546461924.3595,
+            "revenue_growth": 0.2293094461411238,
+            "ebit_margin": 0.333,
+            "ebit": 296218971820.8117,
+            "cash_operating_tax": 50357225209.537994,
+            "nopat": 245861746611.2737,
+            "net_reinvestment": 55310566741.61825,
+            "fcff": 190551179869.65546,
+            "discount_factor": 0.7616538513645839,
+            "pv_fcff": 145134040029.78864
+          },
+          {
+            "year": 4,
+            "revenue": 1093527868425.0306,
+            "revenue_growth": 0.2293094461411238,
+            "ebit_margin": 0.33,
+            "ebit": 360864196580.26013,
+            "cash_operating_tax": 61346913418.644226,
+            "nopat": 299517283161.6159,
+            "net_reinvestment": 67993802166.89038,
+            "fcff": 231523480994.72552,
+            "discount_factor": 0.6955742934836383,
+            "pv_fcff": 161041781717.77878
+          },
+          {
+            "year": 5,
+            "revenue": 1344284138273.458,
+            "revenue_growth": 0.2293094461411238,
+            "ebit_margin": 0.328,
+            "ebit": 440925197353.6943,
+            "cash_operating_tax": 74957283550.12804,
+            "nopat": 365967913803.5662,
+            "net_reinvestment": 83585423282.80913,
+            "fcff": 282382490520.7571,
+            "discount_factor": 0.6352276652818615,
+            "pv_fcff": 179377170169.97787
+          },
+          {
+            "year": 6,
+            "revenue": 1652541189477.2427,
+            "revenue_growth": 0.2293094461411238,
+            "ebit_margin": 0.325,
+            "ebit": 537075886580.1039,
+            "cash_operating_tax": 91302900718.61766,
+            "nopat": 445772985861.4862,
+            "net_reinvestment": 102752350401.26155,
+            "fcff": 343020635460.2247,
+            "discount_factor": 0.5801165892985036,
+            "pv_fcff": 198991961102.19086
+          },
+          {
+            "year": 7,
+            "revenue": 2031484494361.663,
+            "revenue_growth": 0.2293094461411238,
+            "ebit_margin": 0.322,
+            "ebit": 654138007184.4556,
+            "cash_operating_tax": 111203461221.35745,
+            "nopat": 542934545963.09814,
+            "net_reinvestment": 126314434961.47346,
+            "fcff": 416620111001.6247,
+            "discount_factor": 0.5297868395420124,
+            "pv_fcff": 220719851897.19315
+          }
+        ],
+        "constant_annual_growth": 0.2293094461411238,
+        "revenue_path": [
+          {
+            "year": 1,
+            "revenue": 588635159333.5388,
+            "revenue_increment": 109801159333.53882
+          },
+          {
+            "year": 2,
+            "revenue": 723614761699.5048,
+            "revenue_increment": 134979602365.96594
+          },
+          {
+            "year": 3,
+            "revenue": 889546461924.3595,
+            "revenue_increment": 165931700224.85474
+          },
+          {
+            "year": 4,
+            "revenue": 1093527868425.0306,
+            "revenue_increment": 203981406500.67114
+          },
+          {
+            "year": 5,
+            "revenue": 1344284138273.458,
+            "revenue_increment": 250756269848.42737
+          },
+          {
+            "year": 6,
+            "revenue": 1652541189477.2427,
+            "revenue_increment": 308257051203.78467
+          },
+          {
+            "year": 7,
+            "revenue": 2031484494361.663,
+            "revenue_increment": 378943304884.4204
+          }
+        ]
+      }
+    ],
+    "search_range": [
+      -0.5,
+      0.5
+    ],
+    "target_market_price": 344.17,
+    "interpretation": "Constant forecast revenue growth with base margins, capital efficiency, WACC and terminal assumptions fixed; not a forecast. Multiple solutions may exist."
+  }
+}
