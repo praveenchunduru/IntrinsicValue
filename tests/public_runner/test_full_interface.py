@@ -15,6 +15,7 @@ from unittest.mock import Mock, patch
 
 from investmentideas import __main__ as cli
 from investmentideas import web
+from investmentideas.sec_http import SECContactRequired, user_agent
 
 
 @contextlib.contextmanager
@@ -64,7 +65,25 @@ class CommandLineTests(unittest.TestCase):
                 other = quick if expected == 'full' else full.run
                 self.assertEqual(selected.call_args.args, ('AAPL','synthetic-key'))
                 self.assertEqual(selected.call_args.kwargs['profile'],'balanced')
+                self.assertEqual(selected.call_args.kwargs['budget'],10 if expected=='full' else 2)
                 other.assert_not_called()
+
+    def test_sec_contact_is_scoped_to_cli_run_without_becoming_runner_input(self):
+        full=types.ModuleType('investmentideas.pipeline')
+        email='cli-scope@example.invalid'
+        def scoped(*args,**kwargs):
+            self.assertIn(email,user_agent('https://data.sec.gov/fixture'))
+            self.assertNotIn(email,user_agent('https://openrouter.ai/api/v1/models'))
+            self.assertNotIn('sec_contact',kwargs)
+            return Path('/tmp/full-result')
+        full.run=Mock(side_effect=scoped)
+        with patch.dict(sys.modules,{'investmentideas.pipeline':full}),patch.dict(os.environ,{},clear=True), \
+                patch.object(sys,'argv',['investmentideas','AAPL','--sec-contact',email]), \
+                contextlib.redirect_stdout(io.StringIO()) as stdout:
+            cli.main()
+            self.assertNotIn(email,stdout.getvalue())
+            with self.assertRaises(SECContactRequired):
+                user_agent('https://data.sec.gov/fixture')
 
     def test_revalue_is_offline_and_uses_edited_assumptions(self):
         module = types.ModuleType('investmentideas.valuation')
@@ -89,6 +108,97 @@ class CommandLineTests(unittest.TestCase):
 
 
 class BrowserFlowTests(unittest.TestCase):
+    def test_sec_contact_reaches_worker_scope_and_never_status_or_artifacts(self):
+        full=types.ModuleType('investmentideas.pipeline')
+        email='browser-scope@example.invalid'
+        with tempfile.TemporaryDirectory() as temp:
+            folder=Path(temp)/'finished';folder.mkdir()
+            (folder/'memo.md').write_text('Synthetic memo')
+            (folder/'state.json').write_text(json.dumps({'version':'full-2','complete':False,
+                'quality_status':'needs_review','ledger':[]}))
+            def scoped(*args,**kwargs):
+                self.assertIn(email,user_agent('https://data.sec.gov/fixture'))
+                self.assertNotIn(email,user_agent('https://openrouter.ai/api/v1/models'))
+                self.assertNotIn('sec_contact',kwargs)
+                return folder
+            full.run=Mock(side_effect=scoped)
+            with patch.dict(sys.modules,{'investmentideas.pipeline':full}),patch.dict(os.environ,{},clear=True), \
+                    local_server(temp) as (request,token):
+                headers={'X-Research-Token':token,'Content-Type':'application/json'}
+                body=json.dumps({'key':'synthetic','ticker':'AAPL','sec_contact':email})
+                self.assertEqual(request('/run','POST',body,headers)[0],202)
+                result=wait_for_result(request,token)
+                self.assertEqual(result['memo'],'Synthetic memo')
+                self.assertNotIn(email,json.dumps(result))
+                self.assertEqual(full.run.call_args.kwargs['budget'],10)
+                self.assertTrue(all(email not in p.read_text() for p in folder.iterdir()))
+            with self.assertRaises(SECContactRequired):
+                user_agent('https://data.sec.gov/fixture')
+
+    def test_preflight_stop_exposes_zero_spend_and_downloadable_plan(self):
+        from investmentideas.core import BudgetExceeded
+        full=types.ModuleType('investmentideas.pipeline')
+        with tempfile.TemporaryDirectory() as temp:
+            folder=Path(temp)/'paused';folder.mkdir()
+            (folder/'state.json').write_text(json.dumps({'ledger':[],'iteration':0,'quality_status':'budget_paused'}))
+            (folder/'budget-preflight.json').write_text('{"passed":false}')
+            stopped=BudgetExceeded('Initial budget preflight stopped before paid research; rerun with --budget 10')
+            stopped.folder=folder
+            full.run=Mock(side_effect=stopped)
+            with patch.dict(sys.modules,{'investmentideas.pipeline':full}),local_server(temp) as (request,token):
+                headers={'X-Research-Token':token,'Content-Type':'application/json'}
+                self.assertEqual(request('/run','POST',json.dumps({'key':'synthetic','ticker':'AAPL','budget':2}),headers)[0],202)
+                result=wait_for_result(request,token)
+                self.assertEqual(result['cost_usd'],0)
+                self.assertEqual(result['quality_status'],'budget_paused')
+                self.assertIn('budget-preflight.json',result['downloads'])
+                self.assertIn('--budget 10',result['message'])
+                self.assertEqual(request('/download/budget-preflight.json',headers={'X-Research-Token':token})[0],200)
+
+    def test_completed_full_download_edits_lose_review_badge_without_rerun_or_get_side_effects(self):
+        from investmentideas import pipeline
+        from tests.public_runner.test_budget_workflow import FullContractTransport
+        fixture=FullContractTransport()
+        full=types.ModuleType('investmentideas.pipeline')
+        with tempfile.TemporaryDirectory() as temp,fixture.installed():
+            folder=pipeline.run('AAPL','synthetic-key',directory=temp)
+            before_requests=len(fixture.requests)
+            full.run=Mock(return_value=folder)
+            with patch.dict(sys.modules,{'investmentideas.pipeline':full}),local_server(temp) as (request,token):
+                headers={'X-Research-Token':token,'Content-Type':'application/json'}
+                self.assertEqual(request('/run','POST',json.dumps({'key':'synthetic','ticker':'AAPL'}),headers)[0],202)
+                self.assertEqual(wait_for_result(request,token)['quality_status'],'reviewed_draft')
+                baseline_state=(folder/'state.json').read_bytes()
+                for name in ('memo.md','valuation.json'):
+                    with self.subTest(name=name):
+                        original=(folder/name).read_bytes()
+                        marker=b'UNREVIEWED EXTERNAL EDIT MUST NOT BE SERVED AS REVIEWED'
+                        (folder/name).write_bytes(marker)
+                        _,body,_=request('/status',headers={'X-Research-Token':token})
+                        result=json.loads(body)
+                        self.assertTrue(result['done'])
+                        self.assertEqual(result['quality_status'],'needs_review')
+                        self.assertIn('changed after review',result['message'])
+                        self.assertNotIn('memo',result)
+                        code,body,_=request('/download/'+name,headers={'X-Research-Token':token})
+                        self.assertEqual(code,409)
+                        self.assertNotIn(marker,body)
+                        self.assertEqual((folder/name).read_bytes(),marker)
+                        self.assertEqual((folder/'state.json').read_bytes(),baseline_state)
+                        self.assertEqual(len(fixture.requests),before_requests)
+                        self.assertFalse(list((folder/'revisions').glob('artifact-before-*')))
+                        (folder/name).write_bytes(original)
+                # Raw archives are deliberately not re-read by status/download
+                # checks; full checksums remain enforced at pipeline resume.
+                read_bytes=Path.read_bytes
+                def no_raw_reads(path):
+                    if path.parent.name=='sources_raw':
+                        raise AssertionError('Timer status must not rehash raw archives')
+                    return read_bytes(path)
+                with patch.object(Path,'read_bytes',no_raw_reads):
+                    self.assertEqual(json.loads(request('/status',headers={'X-Research-Token':token})[1])['quality_status'],'reviewed_draft')
+                    self.assertEqual(request('/download/memo.md',headers={'X-Research-Token':token})[0],200)
+
     def test_full_result_metadata_and_downloads_require_auth(self):
         full = types.ModuleType('investmentideas.pipeline')
         with tempfile.TemporaryDirectory() as temp:

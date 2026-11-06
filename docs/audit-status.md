@@ -42,5 +42,64 @@ review records are retained unchanged for reproducibility.
   and primary evidence. A grade or a passing model verdict is not an acceptance
   substitute.
 
-Repairs are in progress. No new claim of A+ quality, benchmark parity or live
-end-to-end success is made here. Licensing decisions remain deferred.
+## Implementation checkpoint
+
+The current repair code adds requester identity configuration shared across SEC
+paths, bounded source retrieval, accounting-scope alternatives, source-honest
+Companyfacts normalization, and explicit missing/conflicting-input reports before
+paid work. A contact is supplied through the local form, `--sec-contact`,
+`SEC_CONTACT_EMAIL`, or a contact-bearing `SEC_USER_AGENT`; no personal email is
+committed. Authenticated redirects are refused, and SEC contact details are not
+forwarded to issuer hosts.
+
+Full mode now defaults to a $10 cumulative planning allowance, while quick mode
+retains $2 and explicit allowances are preserved. An insufficient known-context
+allowance stops before paid requests. Offline full-workflow simulations include
+large evidence and generated-output shapes, no assumed cache savings, and up to
+three revisions. Those are simulated costs, not observed bills or proof of memo
+quality; see [validation details](openrouter_live_validation.md).
+
+Evidence delivery, bounded excerpt selection, changed-workflow resumption and
+artifact integrity have regression coverage. Completed file hashes are checked
+before reuse; changed artifacts lose their reviewed status, edited files are
+preserved, and source-archive drift stops paid work. Browser status and downloads
+check delivered-file bindings without invoking models or changing saved files.
+Fresh independent reviewers reproduced the original integrity failures and
+verified their repair using offline transports.
+
+The repair checkout passes 389 offline tests from source. This is regression
+coverage for tested software behavior, not a replacement for the live evidence
+required above.
+
+Research/author/review instructions now require economic engagement with sourced
+opposing views, an honest explanation of any differentiated thesis, normalization
+of material one-offs, inventory/procurement links, and repurchase economics.
+Deterministic diagnostics supply valuation multiples and comparable exit-multiple
+returns. Optional explicit entry policies and cash-funded repurchase cases are
+calculated rather than left to prose arithmetic. These capabilities have not yet
+established the quality of a newly generated memo.
+
+## Validation still open
+
+No fresh SEC or paid full-memo run has been completed for these repairs. Actual
+SEC verification awaits a real requester contact. A header test is not a live
+HTTP success. Existing authorization covers subsequent provider validation within
+the original non-resetting key limit; that limit has not been increased.
+
+The trimmed recorded Microsoft and CoreWeave fixtures remain partial: both lack
+sufficient debt scope and outstanding shares. The historical Apple showcase source
+records also lack sufficient positive short-term-financing scope under the stricter
+adapter. These failures are reported before paid research. They are not evidence
+of complete multi-issuer support, and no replacement coverage percentage is claimed.
+Retrieving and examining actual complete filings is still required.
+
+The public Apple feed was reachable in a free probe, but its 20 entries exposed
+only the latest quarterly results. Keeping up to three discovered financial
+releases does not establish retrieval of prior-quarter refund evidence. The full
+audit finding tables and stopping criteria have not been independently read here:
+the linked artifact's body required authentication. The supplied summary and
+reproduction scripts support the repairs above, not closure of every finding.
+
+Repairs remain in progress. No new claim of A+ quality, benchmark parity or live
+end-to-end success is made here. Historical examples remain unchanged. Licensing
+decisions remain deferred.

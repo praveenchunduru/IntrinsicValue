@@ -57,6 +57,24 @@ class PrimaryResearchTests(unittest.TestCase):
         self.assertEqual(len(gaps), 3)
         self.assertTrue(all('not reviewed' in g or 'No additional' in g for g in gaps))
 
+    def test_results_discovery_keeps_prior_periods_without_inventing_urls(self):
+        extra=''.join(f'<entry><title>Apple reports {quarter} quarter results</title>'
+            f'<link href="https://www.apple.com/newsroom/2026/{month}/results/" /></entry>'
+            for quarter,month in [('third','07'),('second','05'),('first','01')])
+        feed=FEED.replace('</feed>',extra+'</feed>')
+        calls=[]
+        def text(url):
+            calls.append(url)
+            return feed if url==research.APPLE_FEED else BODY
+        with patch.object(research,'load_directory',side_effect=RuntimeError('blocked')):
+            sources,_=research.gather_primary('AAPL',lambda url:None,text)
+        urls=[s['url'] for s in sources]
+        self.assertEqual(len(sources),4)
+        self.assertTrue(any('/07/' in url for url in urls))
+        self.assertTrue(any('/05/' in url for url in urls))
+        self.assertFalse(any('/01/' in url for url in urls))
+        self.assertTrue(all(url in calls for url in urls))
+
     def test_malicious_or_malformed_filing_paths_are_not_fetched(self):
         import copy
         history = copy.deepcopy(HISTORY)
@@ -77,6 +95,27 @@ class PrimaryResearchTests(unittest.TestCase):
         balance = next(e for e in excerpts if e['label'] == 'balance sheet')
         self.assertIn(heading, balance['text'])
         self.assertGreater(balance['start_char'], len(prefix))
+
+    def test_heading_scan_handles_long_blank_runs_and_failed_heading_prefix(self):
+        prefix = 'Issuer opening.\n' + ' \n' * 20000
+        prefix += 'Item 1' + ' ' * 50000 + 'unrelated text\n'
+        heading = ' \tItem\t1.\tBusiness \t\n'
+        text = prefix + heading + 'Issuer business detail.\n' * 1000
+        excerpts = research.select_excerpts(text, max_chars=10000)
+        business = next(e for e in excerpts if e['label'] == 'business')
+        self.assertEqual(business['start_char'], len(prefix) - 120)
+        self.assertIn(heading, business['text'])
+        for excerpt in excerpts:
+            self.assertEqual(text[excerpt['start_char']:excerpt['end_char']], excerpt['text'])
+        self.assertLessEqual(sum(len(e['text']) for e in excerpts), 10000)
+
+    def test_heading_split_over_lines_is_selected_with_exact_offsets(self):
+        prefix = 'Issuer opening.\n' * 1000
+        heading = 'Item\n1.\nBusiness\n'
+        text = prefix + heading + 'Issuer business detail.\n' * 1000
+        business = next(e for e in research.select_excerpts(text) if e['label'] == 'business')
+        self.assertIn(heading, business['text'])
+        self.assertEqual(text[business['start_char']:business['end_char']], business['text'])
 
     def test_access_control_pages_are_not_primary_evidence(self):
         blocked = '<html><body>Access Denied. ' + ('This request was blocked. ' * 20) + '</body></html>'

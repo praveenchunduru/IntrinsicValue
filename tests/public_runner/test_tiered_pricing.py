@@ -21,6 +21,23 @@ def catalog(pricing=None, **metadata):
 
 
 class TieredPricingTests(unittest.TestCase):
+    def test_invalid_cost_telemetry_never_releases_the_reservation(self):
+        for cost in (False,True,'0',-1,float('inf'),10**500):
+            result=copy.deepcopy(RESULT)
+            result['usage']={'cost':cost,'prompt_tokens':True,'completion_tokens':-1,
+                'prompt_tokens_details':{'cached_tokens':'unknown'}}
+            with self.subTest(cost_type=type(cost).__name__),patch.object(core,'request_json',
+                    side_effect=[catalog(),result]):
+                ledger=[]
+                core.Router('synthetic-key',2,ledger).complete('review',MODEL,'Full reservation retained')
+                self.assertEqual(ledger[0]['charged_or_reserved_usd'],ledger[0]['reserved_usd'])
+                self.assertNotIn('cost',ledger[0]['usage'])
+                # The same persistence validator used by pipeline checkpoints
+                # can still save/summarize this uncertain request.
+                from investmentideas.costs import cost_summary
+                totals=cost_summary(ledger)['totals']
+                self.assertEqual(totals['requests_with_retained_estimates'],1)
+
     def test_highest_tier_is_reserved_capped_and_checkpointed_before_request(self):
         ledger, checkpoints, requests = [], [], []
         def checkpoint():

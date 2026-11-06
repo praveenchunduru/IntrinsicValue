@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 
 from .core import MODELS, run
+from .sec_http import sec_contact_scope
 
 
 def main():
@@ -14,7 +15,8 @@ def main():
     parser.add_argument('ticker', nargs='?')
     parser.add_argument('--quick', action='store_true', help='Use the four-call financial overview instead of the full research pipeline')
     parser.add_argument('--profile', choices=MODELS, default='balanced')
-    parser.add_argument('--budget', type=float, default=2.0, help='Maximum estimated/reserved USD for this run (default: 2)')
+    parser.add_argument('--budget', type=float, help='Total cumulative USD allowance, including prior uncertain charges (default: full 10, quick 2; not a promised cost)')
+    parser.add_argument('--sec-contact',help='Requester contact email for SEC access (memory only; alternatively set SEC_CONTACT_EMAIL)')
     parser.add_argument('--output', default='research-output')
     parser.add_argument('--evidence', type=Path, help='Optional UTF-8 filing or research text (up to 100 KB)')
     parser.add_argument('--easy-model', help='Override extraction model with an OpenRouter model ID')
@@ -30,6 +32,8 @@ def main():
     parser.add_argument('--revalue', type=Path, help='Recompute an edited assumptions.json without a key or model calls; --output is the destination folder')
     parser.add_argument('--port', type=int, default=8765)
     args = parser.parse_args()
+    if args.budget is None:
+        args.budget = 2.0 if args.quick else 10.0
     try:
         if args.revalue:
             if args.ticker or args.quick or args.evidence or args.counterfactuals or args.draft or args.snapshot or args.forecast_plan:
@@ -48,7 +52,8 @@ def main():
             raise ValueError('Budget must be greater than zero and at most $100')
         if not args.ticker:
             from .web import serve
-            serve(args.port, args.output, default_mode='quick' if args.quick else 'full')
+            extra={'sec_contact':args.sec_contact} if args.sec_contact else {}
+            serve(args.port, args.output, default_mode='quick' if args.quick else 'full',**extra)
             return
         evidence = args.evidence.read_text(encoding='utf-8') if args.evidence else ''
         if len(evidence.encode()) > 100000:
@@ -81,9 +86,10 @@ def main():
                 extra['counterfactuals']=json.loads(args.counterfactuals.read_text(encoding='utf-8'))
         elif args.review_notes or args.counterfactuals or args.draft or args.snapshot or args.forecast_plan:
             raise ValueError('--review-notes, --counterfactuals, --draft, --snapshot and --forecast-plan apply only to full research')
-        folder = runner(args.ticker, os.environ.get('OPENROUTER_API_KEY', ''), profile=args.profile,
-                        budget=args.budget, directory=args.output, evidence=evidence,
-                        easy_model=args.easy_model, strong_model=args.strong_model, progress=print, **extra)
+        with sec_contact_scope(args.sec_contact):
+            folder = runner(args.ticker, os.environ.get('OPENROUTER_API_KEY', ''), profile=args.profile,
+                            budget=args.budget, directory=args.output, evidence=evidence,
+                            easy_model=args.easy_model, strong_model=args.strong_model, progress=print, **extra)
         print(folder / 'memo.md')
     except (ValueError, RuntimeError, OSError, KeyError, IndexError, TypeError) as exc:
         print(f'Research stopped: {exc}', file=sys.stderr)

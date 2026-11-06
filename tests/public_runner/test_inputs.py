@@ -32,8 +32,13 @@ def sources():
              fact('dei:EntityCommonStockSharesOutstanding',14532182000,instant='2026-10-23',unit='xbrli:shares'),
              fact('us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding',14720306000,
                   instant=None,start='2025-09-28',end=BALANCE_DATE,unit='xbrli:shares')]
+    # Synthetic reviewed disclosure: taxonomy alone cannot establish that the
+    # commercial-paper subset exhausts an issuer's short-term financing.
+    disclosure = 'Commercial paper is the sole category of short-term financing in this synthetic balance sheet.'
     return [{'id':'S19','kind':'regulatory_primary','data':{'metadata':{
-        'cik':320193,'form':'10-K','reportDate':BALANCE_DATE,'filingDate':'2026-11-03'},'inline_facts':facts}},
+        'cik':320193,'form':'10-K','reportDate':BALANCE_DATE,'filingDate':'2026-11-03'},'inline_facts':facts,
+        'excerpts':[disclosure], 'reported_input_classifications':{'short_term_financing_total':{
+            'reviewed':True,'concept':'us-gaap:CommercialPaper','instant':BALANCE_DATE,'source_excerpt':disclosure}}}},
         {'id':'S1','kind':'market_snapshot','data':{
             'currency':'USD','regularMarketPrice':344.17,
             'regularMarketTime':int(datetime.fromisoformat('2026-11-05T21:00:01+00:00').timestamp()),
@@ -59,6 +64,243 @@ def find(items, concept):
 
 
 class ReportedInputTests(unittest.TestCase):
+    def alternate(self, *extra, remove=()):
+        records = sources()
+        records[0]['data'].pop('reported_input_classifications')
+        retained = records[0]['data']['inline_facts']
+        retained[:] = [item for item in retained if item['concept'].split(':')[-1] not in set(remove)]
+        retained.extend(fact('us-gaap:' + concept, value) for concept, value in extra)
+        return records
+
+    def test_total_long_term_debt_is_not_noncurrent_debt_and_paper_is_subset(self):
+        data = self.alternate(('ShortTermBorrowings', 3000000000), ('LongTermDebt', 78114000000))
+        report = canonical_reported_inputs(data, as_of='2026-11-06')
+        self.assertTrue(report['coverage']['complete'])
+        self.assertEqual(report['net_debt_bridge']['debt'], 81114000000)
+        self.assertEqual(set(report['net_debt_bridge']['debt_components']), {'short_term_borrowings', 'term_debt'})
+        self.assertEqual(report['actuals']['net_debt'], -55821000000)
+
+    def test_current_and_noncurrent_term_alternative_with_explicit_zero_short_term(self):
+        data = self.alternate(('ShortTermBorrowings', 0), remove=('CommercialPaper',))
+        report = canonical_reported_inputs(data, as_of='2026-11-06')
+        self.assertTrue(report['coverage']['complete'])
+        self.assertEqual(report['net_debt_bridge']['debt'], 78114000000)
+        self.assertEqual(report['net_debt_bridge']['debt_components']['short_term_borrowings']['value'], 0)
+        data[0]['data']['inline_facts'].remove(find(data, 'us-gaap:ShortTermBorrowings'))
+        missing = canonical_reported_inputs(data, as_of='2026-11-06')
+        self.assertNotIn('net_debt', missing['actuals'])
+
+    def test_commercial_paper_alone_needs_primary_reviewed_total_scope(self):
+        data = self.alternate()
+        report = canonical_reported_inputs(data, as_of='2026-11-06')
+        self.assertNotIn('net_debt', report['actuals'])
+        self.assertIn('commercial paper alone', ' '.join(report['coverage']['notes']))
+        reviewed = canonical_reported_inputs(sources(), as_of='2026-11-06')
+        scope = reviewed['net_debt_bridge']['debt_components']['short_term_borrowings']['classification_evidence']
+        self.assertEqual(scope['source_id'], 'S19')
+        for change in ('unreviewed', 'invented_excerpt', 'wrong_date', 'different_concept'):
+            data = sources()
+            declaration = data[0]['data']['reported_input_classifications']['short_term_financing_total']
+            if change == 'unreviewed':
+                declaration['reviewed'] = False
+            elif change == 'invented_excerpt':
+                declaration['source_excerpt'] = 'This quotation does not exist in the supplied primary source.'
+            elif change == 'wrong_date':
+                declaration['instant'] = '2025-09-27'
+            else:
+                declaration['concept'] = 'us-gaap:NotesPayableCurrent'
+            with self.subTest(change=change):
+                self.assertNotIn('net_debt', canonical_reported_inputs(data)['actuals'])
+
+    def test_combined_total_includes_finance_leases_once_even_without_separate_lease_tag(self):
+        data = self.alternate(('DebtAndCapitalLeaseObligations', 81567000000),
+                              remove=('CommercialPaper', 'LongTermDebtCurrent', 'LongTermDebtNoncurrent',
+                                      'FinanceLeaseLiability', 'FinanceLeaseLiabilityCurrent', 'FinanceLeaseLiabilityNoncurrent'))
+        report = canonical_reported_inputs(data, as_of='2026-11-06')
+        self.assertTrue(report['coverage']['complete'])
+        self.assertEqual(report['actuals']['net_debt'], -55368000000)
+        self.assertEqual(report['actuals']['other_equity_claims'], 0)
+        self.assertIsNone(report['other_claims_bridge']['reported_finance_lease_liabilities'])
+        self.assertTrue(report['other_claims_bridge']['finance_leases_included_in_net_debt'])
+        self.assertIn('covered by', report['other_claims_bridge']['finance_lease_amount_basis'])
+
+    def test_total_financial_debt_alternative_does_not_require_short_term_components(self):
+        data = self.alternate(('DebtLongtermAndShorttermCombinedAmount', 80111000000),
+                              remove=('CommercialPaper', 'LongTermDebtCurrent', 'LongTermDebtNoncurrent'))
+        report = canonical_reported_inputs(data, as_of='2026-11-06')
+        self.assertTrue(report['coverage']['complete'])
+        self.assertEqual(report['actuals']['net_debt'], -56824000000)
+        self.assertEqual(report['actuals']['other_equity_claims'], 1456000000)
+
+    def test_primary_total_debt_disclosure_can_classify_a_long_term_debt_tag(self):
+        for method in ('primary_debt_table_total', 'manual_primary_review'):
+            data = self.alternate(('LongTermDebt', 78114000000), remove=('CommercialPaper',))
+            quote = ('NOTE DEBT (in millions) 2026 2025 Total debt 78,114 90,678. '
+                     'No short-term borrowings or commercial paper were outstanding as of September 26, 2026.')
+            data[0]['data']['excerpts'].append(quote)
+            data[0]['data']['reported_input_classifications'] = {'financial_debt_total': {
+                'method': method, 'reviewed': method == 'manual_primary_review',
+                'scope_evidence_type': 'dated_no_short_term_financing',
+                'concept': 'us-gaap:LongTermDebt', 'instant': BALANCE_DATE,
+                'normalized_decimal': '78114000000', 'source_excerpt': quote}}
+            with self.subTest(method=method):
+                report = canonical_reported_inputs(data, as_of='2026-11-06')
+                self.assertTrue(report['coverage']['complete'])
+                self.assertEqual(report['net_debt_bridge']['debt'], 78114000000)
+                component = report['net_debt_bridge']['debt_components']['financial_debt']
+                self.assertEqual(component['classification_evidence']['method'], method)
+                self.assertEqual(component['facts'][0]['concept'], 'us-gaap:LongTermDebt')
+                self.assertNotIn('short_term_borrowings', report['net_debt_bridge']['debt_components'])
+
+    def test_classified_total_debt_needs_matching_primary_value_date_and_scope_evidence(self):
+        for change in ('value', 'date', 'method', 'excerpt', 'no_label', 'no_year', 'unreviewed_manual'):
+            data = self.alternate(('LongTermDebt', 78114000000), remove=('CommercialPaper',))
+            quote = ('NOTE DEBT (in millions) 2026 2025 Total debt 78,114 90,678. '
+                     'No short-term borrowings were outstanding as of September 26, 2026.')
+            declaration = {'method': 'primary_debt_table_total', 'concept': 'us-gaap:LongTermDebt',
+                           'scope_evidence_type': 'dated_no_short_term_financing',
+                           'instant': BALANCE_DATE, 'normalized_decimal': '78114000000', 'source_excerpt': quote}
+            if change == 'value':
+                declaration['normalized_decimal'] = '78114000001'
+            elif change == 'date':
+                declaration['instant'] = '2025-09-27'
+            elif change == 'method':
+                declaration['method'] = 'llm_inferred'
+            elif change == 'excerpt':
+                declaration['source_excerpt'] = '2026 Total debt invented excerpt not present in the primary source.'
+            elif change == 'no_label':
+                quote = declaration['source_excerpt'] = '2026 2025 Some unrelated annual debt commentary.'
+            elif change == 'no_year':
+                quote = declaration['source_excerpt'] = 'NOTE DEBT (in millions) Total debt 78,114 90,678.'
+            else:
+                declaration['method'] = 'manual_primary_review'
+            data[0]['data']['excerpts'].append(quote)
+            data[0]['data']['reported_input_classifications'] = {'financial_debt_total': declaration}
+            with self.subTest(change=change):
+                self.assertNotIn('net_debt', canonical_reported_inputs(data)['actuals'])
+
+    def test_reviewed_flags_do_not_expand_a_hard_long_term_only_debt_scope(self):
+        for method in ('primary_debt_table_total', 'manual_primary_review'):
+            data = self.alternate(('LongTermDebt', 78114000000), remove=('CommercialPaper',))
+            quote = 'Components of long-term debt (in millions) 2026 2025 Total debt 78,114 90,678.'
+            data[0]['data']['excerpts'].append(quote)
+            data[0]['data']['reported_input_classifications'] = {'financial_debt_total': {
+                'method': method, 'reviewed': True, 'concept': 'us-gaap:LongTermDebt', 'instant': BALANCE_DATE,
+                'normalized_decimal': '78114000000', 'source_excerpt': quote}}
+            with self.subTest(method=method):
+                self.assertNotIn('net_debt', canonical_reported_inputs(data)['actuals'])
+
+    def test_explicit_disjoint_financing_categories_support_total_scope(self):
+        data = self.alternate(('LongTermDebt', 78114000000), remove=('CommercialPaper',))
+        quote = 'NOTE DEBT 2026 2025 Short-term borrowings $0 $0 Long-term debt $78,114 $90,678 Total debt $78,114 $90,678.'
+        data[0]['data']['excerpts'].append(quote)
+        data[0]['data']['reported_input_classifications'] = {'financial_debt_total': {
+            'method': 'primary_debt_table_total', 'scope_evidence_type': 'disjoint_debt_categories',
+            'concept': 'us-gaap:LongTermDebt', 'instant': BALANCE_DATE,
+            'normalized_decimal': '78114000000', 'source_excerpt': quote}}
+        report = canonical_reported_inputs(data)
+        self.assertTrue(report['coverage']['complete'])
+        self.assertEqual(report['net_debt_bridge']['debt'], 78114000000)
+
+    def test_current_debt_plus_unsuffixed_noncurrent_combined_debt(self):
+        data = self.alternate(('DebtCurrent', 12603000000),
+                              ('LongTermDebtAndCapitalLeaseObligations', 68964000000),
+                              remove=('CommercialPaper', 'LongTermDebtCurrent', 'LongTermDebtNoncurrent'))
+        report = canonical_reported_inputs(data, as_of='2026-11-06')
+        self.assertTrue(report['coverage']['complete'])
+        self.assertEqual(report['net_debt_bridge']['debt'], 81567000000)
+        self.assertEqual(report['actuals']['other_equity_claims'], 0)
+
+    def test_short_term_plus_combined_long_term_total_or_parts(self):
+        for total in (False, True):
+            additions = [('ShortTermBorrowings', 1997000000),
+                         ('LongTermDebtAndCapitalLeaseObligationsCurrent', 10606000000),
+                         ('LongTermDebtAndCapitalLeaseObligations', 68964000000)]
+            if total:
+                additions.append(('LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities', 79570000000))
+            data = self.alternate(*additions, remove=('LongTermDebtCurrent', 'LongTermDebtNoncurrent'))
+            with self.subTest(total=total):
+                report = canonical_reported_inputs(data, as_of='2026-11-06')
+                self.assertTrue(report['coverage']['complete'])
+                self.assertEqual(report['net_debt_bridge']['debt'], 81567000000)
+                self.assertEqual(report['actuals']['other_equity_claims'], 0)
+
+    def test_complete_alternatives_reconcile_and_conflicting_totals_fail(self):
+        for concept, amount in (('LongTermDebt', 78114000001),
+                                ('DebtAndCapitalLeaseObligations', 81567000001),
+                                ('ShortTermBorrowings', 1000000000)):
+            data = self.alternate(('ShortTermBorrowings', 1997000000), (concept, amount))
+            with self.subTest(concept=concept):
+                report = canonical_reported_inputs(data, as_of='2026-11-06')
+                self.assertNotIn('net_debt', report['actuals'])
+                self.assertEqual(report['coverage']['status'], 'conflicted')
+
+    def test_inclusive_debt_totals_do_not_hide_conflicting_partial_subsets(self):
+        for extra in (
+                [('DebtAndCapitalLeaseObligations', 1)],
+                [('DebtCurrent', 1), ('LongTermDebtAndCapitalLeaseObligations', 68964000000)],
+                [('DebtAndCapitalLeaseObligations', 81567000000),
+                 ('LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities', 70000000000)],
+                [('DebtAndCapitalLeaseObligations', 1000000)],
+                [('DebtAndCapitalLeaseObligations', 80111000001),
+                 ('DebtLongtermAndShorttermCombinedAmount', 80111000000)]):
+            data = self.alternate(*extra)
+            with self.subTest(extra=extra):
+                report = canonical_reported_inputs(data, as_of='2026-11-06')
+                self.assertNotIn('net_debt', report['actuals'])
+                self.assertEqual(report['coverage']['status'], 'conflicted')
+
+    def test_cash_subtotals_replace_parts_and_long_term_strategic_investments_are_excluded(self):
+        data = self.alternate(('ShortTermBorrowings', 1997000000),
+                              ('CashCashEquivalentsAndShortTermInvestments', 56722000000),
+                              ('ShortTermInvestments', 20417000000), ('LongTermInvestments', 900000000000))
+        report = canonical_reported_inputs(data, as_of='2026-11-06')
+        self.assertTrue(report['coverage']['complete'])
+        self.assertEqual(report['net_debt_bridge']['selected_cash_and_nonoperating_investments'], 136935000000)
+        self.assertEqual(set(report['net_debt_bridge']['cash_components']),
+                         {'cash_and_short_term_investments', 'noncurrent_marketable_securities'})
+
+    def test_total_marketable_securities_is_not_added_to_its_parts(self):
+        data = self.alternate(('ShortTermBorrowings', 1997000000), ('MarketableSecurities', 100630000000))
+        report = canonical_reported_inputs(data, as_of='2026-11-06')
+        self.assertEqual(report['net_debt_bridge']['selected_cash_and_nonoperating_investments'], 136935000000)
+        self.assertEqual(set(report['net_debt_bridge']['cash_components']),
+                         {'cash_and_cash_equivalents', 'marketable_securities'})
+        find(data, 'us-gaap:MarketableSecurities')['normalized_value'] += 1
+        find(data, 'us-gaap:MarketableSecurities')['normalized_decimal'] = '100630000001'
+        self.assertNotIn('net_debt', canonical_reported_inputs(data)['actuals'])
+
+    def test_omitted_investments_are_explicitly_excluded_by_selected_cash_policy(self):
+        data = self.alternate(('ShortTermBorrowings', 1997000000),
+                              remove=('MarketableSecuritiesNoncurrent', 'MarketableSecuritiesCurrent'))
+        report = canonical_reported_inputs(data, as_of='2026-11-06')
+        self.assertTrue(report['coverage']['complete'])
+        self.assertEqual(report['net_debt_bridge']['selected_cash_and_nonoperating_investments'], 36305000000)
+        self.assertIn('noncurrent_marketable_securities', report['net_debt_bridge']['cash_coverage']['missing_investment_categories'])
+        self.assertIn('not reported as zero', report['net_debt_bridge']['cash_classification_policy'])
+
+    def test_selected_cash_subtotal_does_not_hide_an_impossible_marketable_subset(self):
+        data = self.alternate(('ShortTermBorrowings', 1997000000), ('ShortTermInvestments', 1))
+        report = canonical_reported_inputs(data, as_of='2026-11-06')
+        self.assertNotIn('net_debt', report['actuals'])
+        self.assertEqual(report['coverage']['status'], 'conflicted')
+
+    def test_aggregate_liability_alternative_uses_exact_anchor_currency_and_issuer(self):
+        for change in ('date', 'currency', 'dimension', 'issuer'):
+            data = self.alternate(('DebtAndCapitalLeaseObligations', 81567000000),
+                                  remove=('CommercialPaper', 'LongTermDebtCurrent', 'LongTermDebtNoncurrent'))
+            total = find(data, 'us-gaap:DebtAndCapitalLeaseObligations')
+            if change == 'date':
+                total['instant'] = '2025-09-27'
+            elif change == 'currency':
+                total['unit'] = 'iso4217:EUR'
+            elif change == 'dimension':
+                total['dimensions'] = {'segment': 'subsidiary'}
+            else:
+                total['entity_identifier'] = '9999'
+            with self.subTest(change=change):
+                self.assertNotIn('net_debt', canonical_reported_inputs(data)['actuals'])
+
     def test_direct_regulatory_filing_kind_is_supported(self):
         records=sources()
         records[0]['kind']='sec_filing'
@@ -115,7 +357,7 @@ class ReportedInputTests(unittest.TestCase):
     def test_missing_component_wrong_currency_or_wrong_date_never_becomes_zero(self):
         for case in ('missing','currency','date','dimension'):
             data=sources()
-            target=find(data,'us-gaap:MarketableSecuritiesNoncurrent')
+            target=find(data,'us-gaap:CommercialPaper')
             if case=='missing':
                 data[0]['data']['inline_facts'].remove(target)
             elif case=='currency':

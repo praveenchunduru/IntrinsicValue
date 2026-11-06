@@ -7,9 +7,11 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
+from decimal import Decimal, InvalidOperation
 import hashlib
 import copy
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -23,13 +25,15 @@ from .analytics import annual_metrics
 from .fundamentals import yahoo_financials
 from .inputs import canonical_reported_inputs, pin_reported_inputs
 from .quality import DIAGNOSTIC_SCOPE, claim_ledger, inspect_memo, parse_json, parse_review
-from .research import gather_primary, inline_facts, archive_focus_excerpts
+from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_facts, archive_focus_excerpts
 from .macro import gather_us_calibration
 from .market_beta import gather_weekly_beta
 from .prompt_context import valuation_context as render_valuation_context
+from .primary_debt import classify_primary_debt
 from .valuation import evaluate, materialize, save_valuation
 
 VERSION = 'full-2'
+DEFAULT_BUDGET = 10.0
 SECTIONS = '''Executive valuation conclusion; variant thesis and what the market price implies;
 business economics and industry/competition; management and capital allocation; historical
 financial quality; operating forecast and valuation; bear/base/bull scenarios; catalysts;
@@ -85,6 +89,15 @@ market_equity, financial_debt, finance_lease_debt, pretax_cost_of_debt, marginal
 Every record needs value, observed_at, source_refs and label; currency/amount_unit match the plan,
 as_of is the valuation date, lease_convention is gaap_operating. Omit main WACC when this
 calculation governs. Label sector/yield proxies and differing dates; do not invent a calibration.
+Respect the pinned bridge's finance-lease allocation. If a combined debt subtotal includes
+finance leases and their separate amount is known, financial_debt equals combined debt less
+that amount and finance_lease_debt equals the same reported lease amount, counted once.
+If the split is unknown, use financial_debt at the combined amount with
+allocation:"combined_debt_including_finance_leases" and a label explicitly naming combined debt
+and leases; finance_lease_debt then has value:0, allocation:"included_in_financial_debt" and
+a label explicitly saying zero is an allocation within the combined amount, not an absent liability.
+Both financing records use the same annual balance-sheet measurement date, currency and source
+support. Do not invent a separate lease amount or add leases twice to the canonical bridge.
 If completed-week issuer/benchmark evidence supports a historical equity beta, the unlevered_beta
 record may instead omit value and include calculation:"historical_issuer_cash_corrected" and
 historical_equity_beta:<measured value>, with observed_at, source_refs and label retained.
@@ -103,6 +116,33 @@ source_refs and exactly one of counterfactual(name) or calibration_comparison(na
 Python supplies each conditional value and change.
 These are analyst-selected decision thresholds, not company guidance or automatic forecasts.
 Justify reinvestment and terminal returns; avoid a hidden terminal cash discontinuity.
+For a meaningful positive valuation, select an explicit conditional research entry rule:
+"entry_policy":{"basis":"base"|"weighted","margin_of_safety":<decimal from zero to below one>,
+"label":"House valuation entry rule","rationale":"Why this valuation basis and discount are appropriate"}.
+These four fields are exact. Python computes reference value * (1 - margin_of_safety).
+Choose and justify the discount; zero is allowed and no 20% or other policy is supplied by default.
+This is a conditional valuation threshold, not personal trading, sizing or tax advice.
+Optional "repurchase_tests":[{"name":"historical_price_comparison","amount":<whole currency units>,
+"price":<currency per ordinary share>,"source_refs":["S1"],"label":"Exact period/definition and conditional scope",
+"interpretation":"historical_retrospective_conditional"|"forward_conditional_illustration"}].
+At most eight independent cases. Names are unique 1-64 character identifiers. Each case requires
+all six fields, a positive amount/price, spending within the pinned selected nonoperating cash,
+and a positive remaining ordinary-share count. Python holds operating value fixed, reduces cash
+and shares once, and compares each scenario/weighted per-share value. Use a sourced, same-basis
+historical repurchase measure only when available; never divide mismatched cash-flow payments
+by a different disclosure's share count. A historical-price comparison uses today's house value,
+not historical fair value or a measured historical loss. A forward illustration is not a forecast.
+Do not fund repurchases with future FCFF while also paying that FCFF to owners in a return example.
+For material nonrecurring margin items, inventory/procurement and cash conversion, trace
+source/period/definition -> reported versus normalized baseline -> explicit house adjustment
+-> changed forecast driver. Use named counterfactual overrides for Python to calculate effects;
+never invent adjustment amounts or valuation effects. The sales-to-capital baseline already
+includes operating working capital; do not add the same inventory release or procurement cost twice.
+For each load-bearing disagreement, connect comparable outside expectations, the house array,
+economic evidence/counterevidence and the observation that would change it. If no differentiated
+operating view is supported, say so and defend the actual rate/terminal/valuation disagreement.
+Represent a sourced strongest opposing economic case coherently; a broker target alone or an
+isolated rate substitution does not reconstruct its model. Do not copy issuer-specific examples.
 '''
 REVIEW_SCHEMA = '''Return ONLY {"verdict":"pass"|"revise","findings":[{"id":"F1",
 "severity":"blocker"|"major"|"minor","issue":"precise defect and location",
@@ -175,9 +215,12 @@ def _lock(folder):
 
 
 def _prepare_source(source):
+    _source_raw_bytes(source)
     source=dict(source)
     raw=source.get('raw_document')
-    if isinstance(raw,str):
+    data=source.get('data',{})
+    companyfacts=isinstance(data,dict) and data.get('fact_origin')=='sec_companyfacts'
+    if isinstance(raw,str) and not companyfacts:
         facts=inline_facts(raw)
         if facts:
             data=copy.deepcopy(source.get('data',{}))
@@ -185,23 +228,85 @@ def _prepare_source(source):
                 data={'provided_text':data}
             data['inline_facts']=facts
             data['inline_fact_note']='Selected nondimensional reported facts; dates/units/contexts are distinct. Do not add totals to their components. Nil/unparsed values are unknown, never implicit zeros.'
+            if source.get('kind')=='regulatory_primary' or source.get('source_tier')=='regulatory_primary':
+                metadata=data.get('metadata',{})
+                anchor=metadata.get('reportDate') if isinstance(metadata,dict) else None
+                try:
+                    valid_anchor=isinstance(anchor,str) and date.fromisoformat(anchor).isoformat()==anchor
+                except ValueError:
+                    valid_anchor=False
+                if valid_anchor:
+                    scoped=classify_primary_debt(raw,facts,anchor=anchor)
+                    classifications=data.setdefault('reported_input_classifications',{})
+                    if not isinstance(classifications,dict):
+                        raise ValueError('Primary reported-input classifications must be an object')
+                    for name,declaration in scoped['classifications'].items():
+                        previous=classifications.get(name)
+                        if previous is not None:
+                            try:
+                                amount=Decimal(str(previous['normalized_decimal']))
+                                agrees=(amount.is_finite() and amount==Decimal(declaration['normalized_decimal']) and
+                                    previous.get('instant')==declaration['instant'])
+                            except (KeyError,TypeError,InvalidOperation):
+                                agrees=False
+                            if not agrees:
+                                raise ValueError('Primary debt table conflicts with the supplied '+name+' classification')
+                            # Keep an agreeing explicit user classification and
+                            # its provenance; never silently replace it.
+                        else:
+                            classifications[name]=declaration
+                    excerpts=data.setdefault('excerpts',[])
+                    if not isinstance(excerpts,list):
+                        raise ValueError('Primary source excerpts must be a list')
+                    for excerpt in scoped['excerpts']:
+                        if excerpt not in excerpts:
+                            excerpts.append(excerpt)
+                    data['excerpt_chars']=sum(len(e if isinstance(e,str) else e.get('text',''))
+                        for e in excerpts if isinstance(e,(str,dict)))
             source['data']=data
     return source
 
 
-def _register(folder, sources, source):
-    source = _prepare_source(source)
+def _rebind_companyfacts_data(data,source_id):
+    """Context-table row indices belong to this newly registered source."""
+    if not isinstance(data,dict) or data.get('fact_origin')!='sec_companyfacts':
+        return data
+    data=copy.deepcopy(data)
+    for row in data.get('financial_context_table',[]):
+        if isinstance(row,dict):
+            row['source_refs']=[source_id]
+    return data
+
+
+def _source_raw_bytes(source):
+    """Enforce the archive boundary before HTML parsing or source mutation."""
+    raw=source.get('raw_document')
+    if raw is None:
+        return None
+    if not isinstance(raw,(str,bytes)):
+        raise ValueError('Source raw_document must be text or bytes')
+    if len(raw)>MAX_DOCUMENT_BYTES:
+        raise ValueError('Source raw_document exceeds the 20 MB archive limit')
+    encoded=raw.encode('utf-8') if isinstance(raw,str) else raw
+    if len(encoded)>MAX_DOCUMENT_BYTES:
+        raise ValueError('Source raw_document exceeds the 20 MB archive limit')
+    return encoded
+
+
+def _register(folder, sources, source, *, _prepared=False):
+    raw=_source_raw_bytes(source)
+    suffix=source.get('archive_extension','.html')
+    if raw is not None and suffix not in {'.html','.txt','.csv','.json','.xlsx','.pdf'}:
+        raise ValueError('Unsupported source archive extension')
+    source = dict(source) if _prepared else _prepare_source(source)
     source['id'] = f'S{len(sources)+1}'
+    source['data']=_rebind_companyfacts_data(source.get('data'),source['id'])
     source.setdefault('ingestion_method','public_http')
     source.setdefault('retrieved_at', datetime.now(timezone.utc).isoformat())
-    raw = source.pop('raw_document', None)
+    source.pop('raw_document',None)
     if raw is not None:
-        raw = raw.encode() if isinstance(raw, str) else raw
         archive = folder / 'sources_raw'
         archive.mkdir(exist_ok=True)
-        suffix = source.get('archive_extension', '.html')
-        if suffix not in {'.html','.txt','.csv','.json','.xlsx','.pdf'}:
-            raise ValueError('Unsupported source archive extension')
         target = archive / f'{source["id"]}{suffix}'
         target.write_bytes(raw)
         source['archive'] = str(target.relative_to(folder))
@@ -209,6 +314,99 @@ def _register(folder, sources, source):
     source['evidence_sha256'] = _digest(source.get('data'))
     sources.append(source)
     return source
+
+
+_DELIVERED_FILES=('memo.md','assumptions.json','valuation.json','sources.json',
+    'cashflows.csv','sensitivity.csv','source-ledger.json','usage.json','cost-summary.json',
+    'reported-inputs.json','budget-preflight.json')
+
+
+def _artifact_file_hash(folder,name):
+    target=folder/name
+    if target.is_symlink() or not target.resolve().is_relative_to(folder.resolve()):
+        return 'unsafe_path'
+    if not target.is_file():
+        return None
+    digest=hashlib.sha256()
+    with target.open('rb') as handle:
+        for chunk in iter(lambda:handle.read(65536),b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _delivered_artifact_hashes(folder,state):
+    names=list(_DELIVERED_FILES)+[s['archive'] for s in state['sources'] if s.get('archive')]
+    return {name:_artifact_file_hash(folder,name) for name in names}
+
+
+def _bad_archive_paths(folder,state,hashes):
+    broken=[]
+    for source in state['sources']:
+        name=source.get('archive')
+        if name and (hashes.get(name)!=source.get('archive_sha256') or
+                hashes.get(name) in {None,'unsafe_path'} or
+                (folder/name).stat().st_size>MAX_DOCUMENT_BYTES):
+            broken.append(name)
+    return broken
+
+
+def _verify_completed_artifacts(folder,state):
+    """Reopen changed downloads; original raw evidence must be restored explicitly."""
+    if (not state.get('complete') and not state.get('artifact_integrity_blocked') and
+            not any(source.get('archive') for source in state['sources'])):
+        return None
+    current=_delivered_artifact_hashes(folder,state)
+    bound=state.get('completed_artifact_hashes') or state.get('artifact_blocked_observed_hashes')
+    broken_archives=_bad_archive_paths(folder,state,current)
+    if not state.get('complete') and not state.get('artifact_integrity_blocked') and not broken_archives:
+        return None
+    changed=([name for name in set(current)|set(bound or {}) if current.get(name)!=(bound or {}).get(name)]
+        if bound else list(current))
+    if ((state.get('complete') and (changed or not bound or broken_archives)) or
+            (state.get('artifact_integrity_blocked') and changed) or
+            (broken_archives and not state.get('artifact_integrity_blocked'))):
+        event={'changed_files':sorted(set(changed+broken_archives)),
+            'reason':('Archived source integrity failed' if broken_archives else
+                'Delivered artifact drift' if bound else 'Legacy completion has no exact artifact binding'),
+            'previous_hashes':bound,'observed_hashes':current,
+            'at':datetime.now(timezone.utc).isoformat()}
+        prior=folder/'revisions'/f'artifact-before-{len(state.get("artifact_history",[]))+1}'
+        prior.mkdir(parents=True,exist_ok=True)
+        core.save(prior/'reviewed-state.json',state)
+        for name in current:
+            target=folder/name
+            if target.is_file() and not target.is_symlink() and target.resolve().is_relative_to(folder.resolve()):
+                saved=prior/name
+                saved.parent.mkdir(parents=True,exist_ok=True)
+                shutil.copyfile(target,saved)
+        state.setdefault('artifact_history',[]).append(event)
+        core.save(prior/'integrity.json',event)
+        state['complete']=False
+        state['quality_status']='needs_review'
+        state['review_invalidated']=True
+        state.pop('pending_revision',None)
+        state.pop('completed_artifact_hashes',None)
+        state['artifact_review_record']=_digest(event)
+        # State contains the reviewed editable proposal and narrative. Preserve
+        # external edits above; an intentional edit must be submitted through
+        # --forecast-plan/--draft rather than silently treated as assessed.
+        if state.get('plan') and state.get('valuation'):
+            save_valuation(folder,state['plan'],state['valuation'])
+        report=_render(state.get('current_memo',''),state['sources'],state['gaps'],
+            state.get('plan',{}),state.get('valuation'),state)
+        (folder/'memo.md').write_text(report,encoding='utf-8')
+        core.save(folder/'source-ledger.json',claim_ledger(report))
+    if broken_archives:
+        state['artifact_integrity_blocked']=broken_archives
+        error=RuntimeError('Archived source integrity failed: '+', '.join(broken_archives)+
+            '. Further paid work is stopped. Restore the original bytes matching sources.json archive_sha256, '
+            'or start a fresh research directory. Changed files are preserved under revisions/. '
+            'Submit intentional memo/model edits with --draft/--forecast-plan for a new review.')
+        error.folder=folder
+        return error
+    state.pop('artifact_integrity_blocked',None)
+    state.pop('artifact_blocked_observed_hashes',None)
+    return None
 
 
 
@@ -223,11 +421,13 @@ def _refresh_primary_focus(folder,sources):
         if not source.get('archive'):
             continue
         archive=(folder/source['archive']).resolve()
-        if not archive.is_relative_to(root) or not archive.is_file() or archive.stat().st_size>3000000:
-            raise ValueError('Primary archive must remain inside the research folder and within 3 MB')
+        if not archive.is_relative_to(root) or not archive.is_file() or archive.stat().st_size>MAX_DOCUMENT_BYTES:
+            raise ValueError(f'Primary archive must remain inside the research folder and within {MAX_DOCUMENT_BYTES//1000000} MB')
         raw=archive.read_bytes()
         if hashlib.sha256(raw).hexdigest()!=source.get('archive_sha256'):
             raise ValueError('Primary archive checksum changed; supply a new source instead of editing its archive')
+        if isinstance(source.get('data'),dict) and source['data'].get('fact_origin')=='sec_companyfacts':
+            continue  # Canonical JSON is audited through its structured facts, not HTML prose windows.
         focus=archive_focus_excerpts(raw.decode('utf-8'))
         if focus and focus!=source.get('primary_focus_excerpts'):
             # Keep derived windows outside source.data so supplemental-source
@@ -244,7 +444,11 @@ def _evidence_context(sources):
     for source in sources:
         row = {key: source[key] for key in ('id','title','url','kind','source_tier','retrieved_at','primary_focus_excerpts') if key in source}
         data = source.get('data')
-        if isinstance(data, dict) and (source.get('kind') in {'financial_timeseries','sec_facts','macro_calibration'} or 'excerpts' in data or 'inline_facts' in data):
+        if source.get('kind')=='user_evidence':
+            # The public interface already bounds this focused input at 100 KB.
+            # Include all accepted text, including corrections near its end.
+            row['data']=copy.deepcopy(data)
+        elif isinstance(data, dict) and (source.get('kind') in {'financial_timeseries','sec_facts','macro_calibration'} or 'excerpts' in data or 'inline_facts' in data):
             # Preserve all structured financial rows; do not truncate JSON midway.
             row['data'] = copy.deepcopy(data)
             if 'inline_facts' in row['data']:
@@ -258,6 +462,138 @@ def _evidence_context(sources):
             row['excerpt_truncated'] = len(text) > 14000
         packed.append(row)
     return json.dumps(packed, ensure_ascii=False)
+
+
+def _workflow_contract():
+    """Track mutable prompts and the code that presents/audits their outputs."""
+    root=Path(__file__).parent
+    return {'system':_digest(core.SYSTEM),
+            'forecast':_digest([FORECAST_SCHEMA,UNDERWRITING_GUIDANCE]),
+            'review':_digest(REVIEW_SCHEMA), 'sections':_digest(SECTIONS),
+            'implementation':_digest({name:hashlib.sha256((root/name).read_bytes()).hexdigest()
+                for name in ('pipeline.py','prompt_context.py','quality.py','valuation.py','inputs.py','operating.py','rates.py','primary_debt.py','companyfacts.py')
+                if (root/name).is_file()})}
+
+
+def _refresh_workflow_contract(folder,state):
+    contract=_workflow_contract()
+    previous=state.get('workflow_contract')
+    state['workflow_contract']=contract
+    if previous==contract or (previous is None and not state.get('ledger') and not state.get('current_memo')):
+        return
+    changed=[name for name,value in contract.items() if not previous or previous.get(name)!=value]
+    prior=folder/'revisions'/f'contract-before-{len(state.get("contract_history",[]))+1}'
+    prior.mkdir(parents=True,exist_ok=True)
+    for name in ('memo.md','assumptions.json','valuation.json','cashflows.csv','sensitivity.csv'):
+        if (folder/name).exists():
+            shutil.copyfile(folder/name,prior/name)
+    core.save(prior/'review-history.json',state.get('review_history',[]))
+    state.setdefault('contract_history',[]).append({'previous':previous,'current':contract,
+        'changed':changed,'at':datetime.now(timezone.utc).isoformat(),
+        'policy':'Retain spending and source archives; invalidate affected generated descendants and require a fresh review.'})
+    if state.get('complete'):
+        state['iteration']+=1
+    state['complete']=False
+    state['quality_status']='needs_review'
+    state['review_invalidated']=True
+    state.pop('pending_revision',None)
+    # A legacy run has no evidence of which contract produced its forecasts.
+    # Preserve the model for inspection and require a fresh review. Known
+    # forecast/system changes invalidate outputs authored under those rules.
+    if previous and any(name in changed for name in ('system','forecast','implementation')):
+        if not state.get('provided_forecast_digest'):
+            state.pop('plan',None)
+            state.pop('valuation',None)
+        if not state.get('provided_draft_digest'):
+            state.pop('current_memo',None)
+        if 'system' in changed and not all(s.get('ingestion_method')=='provided_dated_snapshot' for s in state['sources']):
+            state['web_research_complete']=False
+    elif previous and 'sections' in changed and not state.get('provided_draft_digest'):
+        state.pop('current_memo',None)
+    if not state.get('plan'):
+        for name in ('assumptions.json','valuation.json','cashflows.csv','sensitivity.csv'):
+            (folder/name).unlink(missing_ok=True)
+    if state.get('current_memo'):
+        report=_render(state['current_memo'],state['sources'],state['gaps'],
+            state.get('plan',{}),state.get('valuation'),state)
+    else:
+        report='# '+state['ticker']+' — workflow update in progress\n\nChanged research contracts require a fresh draft and review. Prior artifacts remain under revisions/.\n'
+    (folder/'memo.md').write_text(report,encoding='utf-8')
+
+
+def _recover_supplied_evidence(folder,state,evidence):
+    """Repair legacy snapshot runs that accepted but omitted this exact input."""
+    if (not evidence or not state.get('evidence_collected') or
+            any(s.get('kind')=='user_evidence' and s.get('data')==evidence for s in state['sources'])):
+        return
+    prior=folder/'revisions'/f'evidence-recovery-{len(state.get("evidence_recoveries",[]))+1}'
+    prior.mkdir(parents=True,exist_ok=True)
+    core.save(prior/'sources.json',state['sources'])
+    core.save(prior/'review-history.json',state.get('review_history',[]))
+    for name in ('memo.md','assumptions.json','valuation.json','cashflows.csv','sensitivity.csv'):
+        if (folder/name).exists():
+            shutil.copyfile(folder/name,prior/name)
+    source=_register(folder,state['sources'],{'title':'Recovered supplied evidence (verify provenance)',
+        'url':None,'kind':'user_evidence','data':evidence,'source_tier':'unverified'})
+    state.setdefault('evidence_recoveries',[]).append({'source_id':source['id'],
+        'reason':'Accepted evidence was absent from the saved source snapshot',
+        'at':datetime.now(timezone.utc).isoformat()})
+    if state.get('complete'):
+        state['iteration']+=1
+    state['complete']=False
+    state['quality_status']='needs_review'
+    state['review_invalidated']=True
+    for name in ('pending_revision','plan','valuation','current_memo'):
+        state.pop(name,None)
+    for name in ('assumptions.json','valuation.json','cashflows.csv','sensitivity.csv'):
+        (folder/name).unlink(missing_ok=True)
+    (folder/'memo.md').write_text('# '+state['ticker']+' — supplied evidence recovered\n\nThe saved run omitted accepted evidence. '
+        'Its model and memo require a fresh review against the recovered source; prior artifacts remain under revisions/.\n',encoding='utf-8')
+
+
+def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
+                              forecast_plan=None, draft=None, max_revisions=3):
+    """Price known repeated context before the first potentially billed call.
+
+    Future search excerpts, forecasts, derived valuation data and memo prose are
+    unknown at this point. This is deliberately a reservation *floor*, not an
+    upper bound, token prediction, invoice estimate, or completion guarantee.
+    The real request retains its full byte-based reservation in Router.complete.
+    """
+    context = _evidence_context(state['sources'])
+    stages = []
+    def add(stage, model, prompt, tokens, web=False):
+        stages.append({'stage':stage, 'model':model, 'known_prompt_utf8_bytes':len(prompt.encode()),
+                       'max_completion_tokens':tokens, 'web_search':web,
+                       'reservation_floor_usd':router.estimate(model,prompt,tokens,web=web)})
+    if not state.get('web_research_complete'):
+        for lane in ('business','challenge','expectations','claims'):
+            add('web_'+lane,easy,f'Research {ticker}: {lane}.',3500,web=True)
+    supplied_model = forecast_plan is not None or state.get('plan')
+    supplied_memo = draft is not None or state.get('current_memo')
+    if not (supplied_model and supplied_memo):
+        add('evidence_synthesis',easy,'Build a dated evidence table.\nEvidence:\n'+context,6500)
+    if not supplied_model:
+        add('valuation_plan',strong,'Build an investment valuation plan.\n'+
+            FORECAST_SCHEMA+UNDERWRITING_GUIDANCE+'\nEvidence:\n'+context,12000)
+    valuation = ''
+    if state.get('valuation') is not None and state.get('plan'):
+        valuation = render_valuation_context(state['plan'],state['valuation'])
+    if not supplied_memo:
+        add('full_draft',strong,'Write a complete investment-committee draft.\nEvidence:\n'+
+            context+'\nValuation:\n'+valuation,14000)
+    add('review_'+str(state['iteration']),reviewer,'Independently audit the complete memo.\n'+
+        REVIEW_SCHEMA+'\nEvidence:\n'+context+'\nValuation:\n'+valuation+
+        '\nDraft:\n'+(draft or state.get('current_memo','')),12000)
+    floor = sum(row['reservation_floor_usd'] for row in stages)
+    suggested=max(DEFAULT_BUDGET,float(math.ceil(floor)))
+    return {'scope':'First draft and one review; revisions and format/forecast repairs excluded',
+            'basis':'Uncached UTF-8 byte reservations at maximum catalog price tiers and configured output limits. '
+                    'Only currently known context is included. Future search results, synthesis, forecasts, '
+                    'computed valuation and memo text can increase reservations; this floor is not a completion guarantee or predicted bill.',
+            'budget_usd':router.budget, 'known_context_reservation_floor_usd':floor,
+            'suggested_total_allowance_usd':suggested if suggested<=100 else None,
+            'max_revisions':max_revisions, 'passed':router.budget>=floor, 'stages':stages}
 
 
 def _fetch_calibration_bytes(url):
@@ -297,12 +633,18 @@ def _lock_plan(plan, sources):
         locked.get('input_dates',{}).pop('market_price',None)
     # A stale model-authored reconciliation must not survive outside the pinned
     # numeric bridge. Raw proposals remain in the checkpoint for inspection.
+    bridge=locked.get('net_debt_bridge',{})
+    lease_allocation=(
+        'Finance leases are already included in the selected combined net-debt subtotal and are not deducted again in other claims. '
+        if bridge.get('finance_leases_included_in_net_debt') else
+        'Reported finance leases are deducted once in other equity claims, outside the selected financial net-debt subtotal. ')
     locked['assumptions_label']=(
         'Growth, margins, taxes, discount rates, capital efficiency, terminal returns and scenario weights '
         'are house forecasts, not reported facts or company guidance. Historical actuals use the '
-        'reported-input snapshot. All reported cash and marketable securities are classified as '
-        'nonoperating under an explicit house policy, not proof that operating cash needs are zero. '
-        'Identified finance leases are deducted once outside financial net debt; additional unidentified '
+        'reported-input snapshot. Only the cash and investment assets selected in the pinned bridge are '
+        'classified as nonoperating under an explicit house policy. Omitted investment categories are '
+        'not reported zeros, and required operating cash is not established as zero. '+lease_allocation+
+        'Additional unidentified '
         'claims are assumed zero, not established absent. GAAP EBIT retains operating rent, SBC and R&D. '
         'Annual year-end cash flows are used without an interim balance-sheet roll-forward or stub-period adjustment.')
     return locked,changes
@@ -339,7 +681,8 @@ def _validate_plan_sources(plan, sources):
         elif isinstance(value, list):
             for index, entry in enumerate(value):
                 nested_refs(entry, path + '.' + str(index))
-    for field in ('operating_model', 'discount_rate', 'monitoring', 'calibration_comparisons'):
+    for field in ('operating_model', 'discount_rate', 'monitoring', 'calibration_comparisons',
+                  'counterfactuals','entry_policy','repurchase_tests'):
         if field in plan:
             nested_refs(plan[field], field)
     bridge = plan.get('net_debt_bridge')
@@ -349,6 +692,60 @@ def _validate_plan_sources(plan, sources):
             expected = debt - cash
             if abs(expected - plan['actuals']['net_debt']) > max(1,abs(expected)*1e-8):
                 raise ValueError('Net debt does not reconcile to the disclosed debt/cash bridge')
+
+
+def _computed_exhibits(result,currency):
+    """Present saved diagnostic outputs without repeating valuation arithmetic."""
+    diagnostics=result.get('computed_diagnostics',{})
+    clean=lambda value:str(value).replace('|','\\|').replace('\n',' ')
+    def multiple(value):
+        return f'{value["value"]:.2f}×' if value.get('value') is not None else clean(value.get('status','unavailable')).replace('_',' ')
+    def returns(value):
+        rates=value.get('annual_return_solutions',[])
+        return ', '.join(f'{rate:.2%}' for rate in rates) if rates else clean(value.get('status','unavailable')).replace('_',' ')
+    lines=[]
+    multiples=diagnostics.get('valuation_multiples')
+    if isinstance(multiples,dict):
+        lines += ['', '### Computed entry and exit multiples', '',
+            '| Scenario / earnings denominator | Market EV / first forecast year | DCF exit EV / final forecast year | Original exit return | Unchanged entry multiple exit return |',
+            '|---|---:|---:|---:|---:|']
+        for name,row in multiples.get('scenarios',{}).items():
+            original=result['scenarios'][name].get('fixed_exit_return_at_market_price',{})
+            for metric in ('ebit','nopat'):
+                lines.append(f'| {clean(name)} / {metric.upper()} | '
+                    f'{multiple(row["forecast_year1"]["market_ev_to_"+metric])} | '
+                    f'{multiple(row["original_dcf_exit"]["ev_to_final_forecast_"+metric])} | '
+                    f'{returns(original)} | {returns(row["unchanged_entry_multiple_exit_returns"][metric])} |')
+        lines += ['', 'Entry earnings use the first explicit forecast year, not trailing earnings; exit earnings use the final explicit year. '
+            'The return comparison holds operating cash flows, opening financing/claims and shares fixed and changes only the exit valuation. '
+            'All annual FCFF is distributed under the debt/claims-settled diagnostic at integer model years; this is not a common-share payout, '
+            'ongoing buyback or stock-price-return forecast. Multiple/return alternatives do not change the house DCF or scenario weights.']
+    entry=diagnostics.get('entry_policy')
+    if isinstance(entry,dict):
+        policy=entry['policy']
+        price=entry.get('conditional_entry_price')
+        threshold=f'{currency} {price:,.2f}' if price is not None else 'not meaningful for this reference value'
+        lines += ['', '### Conditional research entry threshold', '',
+            f'{clean(policy["label"])}: **{threshold}**, using {clean(policy["basis"])} value and '
+            f'the explicitly selected {policy["margin_of_safety"]:.1%} valuation discount. '+clean(policy['rationale']),
+            '', 'This is a conditional house valuation rule, separate from a WACC reset or promised holding-period return. '
+                'No discount is supplied by default; this is not personal trading or portfolio advice.']
+    repurchases=diagnostics.get('repurchase_tests')
+    if isinstance(repurchases,list) and repurchases:
+        lines += ['', '### Conditional repurchase economics', '',
+            '| Case / scope | Cash spent | Price / share | Shares retired | Weighted value / remaining share | Change from original |',
+            '|---|---:|---:|---:|---:|---:|']
+        for row in repurchases:
+            refs=row['source_refs'] if isinstance(row['source_refs'],list) else [row['source_refs']]
+            citations=' '.join('['+ref.strip().strip('[]')+']' for ref in refs)
+            lines.append(f'| {clean(row["label"])} / {clean(row["interpretation"]).replace("_"," ")} {citations} | '
+                f'{currency} {row["amount"]:,.0f} | {currency} {row["price"]:,.2f} | {row["shares_repurchased"]:,.0f} | '
+                f'{currency} {row["post_repurchase_weighted_per_share_value"]:,.2f} | '
+                f'{currency} {row["weighted_value_change"]["dollar_delta"]:+,.2f} |')
+        lines += ['', 'Each independent case spends the pinned selected nonoperating cash and retires shares once while keeping operating value fixed. '
+            'Historical-price tests compare with current underwriting, not historical fair value or an observed historical loss. '
+            'Forward illustrations are not repurchase forecasts; the same cash is not also counted as a dividend or future FCFF distribution.']
+    return lines
 
 
 def valuation_section(plan, result):
@@ -427,6 +824,7 @@ def valuation_section(plan, result):
             refs=', '.join(row['source_refs']) if isinstance(row['source_refs'],list) else row['source_refs']
             lines.append(f'| {clean(row["name"])} / {row["review_by"]} | {clean(row["threshold"])} [{refs}] | '
                          f'{row["conditional_per_share_value"]:,.2f} / {row["value_change"]["dollar_delta"]:+,.2f} |')
+    lines += _computed_exhibits(result,currency)
     return '\n'.join(lines)+'\n'
 
 
@@ -450,7 +848,7 @@ def _render(memo, sources, gaps, plan, result, state):
             'Software checks and model reviews do not establish investment truth or forecast accuracy.\n')
 
 
-def run(ticker, key, *, profile='balanced', budget=2.0, directory='research-output', evidence='',
+def run(ticker, key, *, profile='balanced', budget=DEFAULT_BUDGET, directory='research-output', evidence='',
         easy_model=None, strong_model=None, progress=lambda message: None, max_revisions=3, review_notes='', extra_sources=None, counterfactuals=None, draft=None, review_model=None,
         source_snapshot=None, forecast_plan=None):
     ticker = core.symbol(ticker)
@@ -491,10 +889,30 @@ def run(ticker, key, *, profile='balanced', budget=2.0, directory='research-outp
         raise ValueError('Evidence must be text of at most 100 KB')
     easy,strong=core.MODELS[profile]
     easy,strong=easy_model or easy,strong_model or strong
-    identity=_digest([VERSION,ticker,profile,easy,strong,evidence,source_snapshot,datetime.now(timezone.utc).date().isoformat(),core.SYSTEM])[:16]
-    folder=Path(directory)/ticker/('full-'+identity)
+    identity_parts=[VERSION,ticker,profile,easy,strong,evidence,source_snapshot,datetime.now(timezone.utc).date().isoformat()]
+    identity=_digest(identity_parts)[:16]
+    base=Path(directory)/ticker
+    folder=base/('full-'+identity)
+    if not folder.exists():
+        # Preserve legacy metered history, without moving a possibly active run.
+        legacy=base/('full-'+_digest(identity_parts+[core.SYSTEM])[:16])
+        if legacy.is_dir():
+            folder=legacy
+        elif base.is_dir():
+            for marker in sorted(base.glob('full-*/run-identity.json')):
+                if json.loads(marker.read_text()).get('id')==identity:
+                    folder=marker.parent
+                    break
     folder.mkdir(parents=True,exist_ok=True)
     with _lock(folder):
+        marker_path=folder/'run-identity.json'
+        marker=json.loads(marker_path.read_text()) if marker_path.exists() else {}
+        marker['id']=identity
+        if folder.name=='full-'+_digest(identity_parts+[core.SYSTEM])[:16]:
+            # The legacy folder digest itself establishes which SYSTEM was
+            # used by its old stage keys, which did not include that field.
+            marker.setdefault('legacy_stage_system_sha256',_digest(core.SYSTEM))
+        core.save(marker_path,marker)
         return _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,review_notes,extra_sources or [],counterfactuals,draft,review_model,source_snapshot,forecast_plan)
 
 
@@ -504,12 +922,25 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
     state=json.loads(state_path.read_text()) if state_path.exists() else {
         'version':VERSION,'ticker':ticker,'ledger':[],'stages':{},'sources':[], 'gaps':[],
         'iteration':0,'review_history':[],'quality_status':'in_progress','complete':False}
+    marker=json.loads((folder/'run-identity.json').read_text())
+    if marker.get('legacy_stage_system_sha256'):
+        state['legacy_stage_system_sha256']=marker['legacy_stage_system_sha256']
     def checkpoint():
         core.save(state_path,state)
         core.save(folder/'usage.json',state['ledger'])
         core.save(folder/'cost-summary.json',cost_summary(state['ledger']))
         core.save(folder/'sources.json',state['sources'])
-    changed_forecast = forecast_plan is not None and _digest(forecast_plan) != state.get('provided_forecast_digest')
+    integrity_error=_verify_completed_artifacts(folder,state)
+    if integrity_error:
+        checkpoint()
+        state['artifact_blocked_observed_hashes']=_delivered_artifact_hashes(folder,state)
+        checkpoint()
+        raise integrity_error
+    _refresh_workflow_contract(folder,state)
+    _recover_supplied_evidence(folder,state,evidence)
+    checkpoint()
+    changed_forecast = forecast_plan is not None and (_digest(forecast_plan) != state.get('provided_forecast_digest') or
+        not state.get('plan') or state['plan'].get('unavailable_due_to_coverage'))
     if changed_forecast:
         if state.get('complete'):
             state['iteration'] += 1
@@ -552,7 +983,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         state['review_invalidated']=True
         state.pop('pending_revision',None)
         checkpoint()
-    if draft is not None and _digest(draft)!=state.get('provided_draft_digest'):
+    if draft is not None and (_digest(draft)!=state.get('provided_draft_digest') or not state.get('current_memo')):
         if state.get('complete'):
             state['iteration']+=1
             notes_reopened=True
@@ -590,6 +1021,12 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         return folder
     if state['iteration'] > max_revisions:
         raise ValueError(f'Increase max_revisions to at least {state["iteration"]} to investigate the new review notes')
+    refresh_coverage=bool(state.get('coverage_preflight_failed') and source_snapshot is None and not extra_sources)
+    if refresh_coverage:
+        state['evidence_collected']=False
+        state.setdefault('collection_history',[]).append({'at':datetime.now(timezone.utc).isoformat(),
+            'reason':'Retry free collection after incomplete primary inputs',
+            'prior_source_ids':[s['id'] for s in state['sources']],'prior_gaps':state['gaps']})
     if not state.get('evidence_collected') and source_snapshot is not None:
         state['sources'] = []
         state['gaps'] = ['This run uses an explicitly supplied dated source snapshot. Evidence and quotes are not refreshed; source support and completeness still require review.']
@@ -606,44 +1043,64 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         checkpoint()
     if not state.get('evidence_collected'):
         progress('Collecting financial facts, primary filings and issuer releases')
-        sources,gaps=core.collect(ticker)
-        state['sources'],state['gaps']=[],gaps
+        sources,gaps=core.collect(ticker,include_archives=True)
+        state['sources'],state['gaps']=(state['sources'] if refresh_coverage else []),gaps
+        refreshed=[]
+        def ingest(source):
+            source=_prepare_source(source)
+            content_key=_digest(_rebind_companyfacts_data(source.get('data'),'self'))
+            if refresh_coverage and any(old.get('url')==source.get('url') and old.get('kind')==source.get('kind') and
+                    old.get('source_tier')==source.get('source_tier') and
+                    _digest(_rebind_companyfacts_data(old.get('data'),'self'))==content_key for old in state['sources']):
+                return
+            refreshed.append(_register(folder,state['sources'],source,_prepared=True)['id'])
         for source in sources:
-            _register(folder,state['sources'],source)
+            ingest(source)
         if not any(s.get('kind')=='financial_timeseries' for s in state['sources']):
             try:
                 url,data=yahoo_financials(ticker,core.request_json)
                 data['derived_metrics']=annual_metrics(data)
-                _register(folder,state['sources'],{'title':'Yahoo annual financial series (secondary)', 'url':url,
+                ingest({'title':'Yahoo annual financial series (secondary)', 'url':url,
                           'kind':'financial_timeseries','data':data,'source_tier':'secondary'})
             except (RuntimeError,ValueError,KeyError,TypeError):
                 state['gaps'].append('Supplemental annual financial series unavailable.')
         primary,gaps=gather_primary(ticker,core.request_json)
         state['gaps'].extend(gaps)
         for source in primary:
-            _register(folder,state['sources'],source)
+            ingest(source)
         calibration, calibration_gaps = gather_us_calibration(_fetch_calibration_bytes)
         for source in calibration:
-            _register(folder,state['sources'],source)
+            ingest(source)
         state['gaps'].extend(gap['reason'] for gap in calibration_gaps)
         beta_sources, beta_gaps = gather_weekly_beta(ticker,core.request_json,
             as_of=datetime.now(timezone.utc).date().isoformat())
         for source in beta_sources:
-            _register(folder,state['sources'],source)
+            ingest(source)
         state['gaps'].extend(gap['reason'] for gap in beta_gaps)
-        if evidence:
-            _register(folder,state['sources'],{'title':'Supplied evidence (verify provenance)','url':None,
-                                               'kind':'user_evidence','data':evidence,'source_tier':'unverified'})
+        if refresh_coverage and refreshed:
+            state.pop('pending_revision',None)
+            state['review_invalidated']=True
+            if draft is None:
+                state.pop('current_memo',None)
+            else:
+                state['current_memo']=draft
         state['evidence_collected']=True
+        checkpoint()
+    if evidence and not any(s.get('kind')=='user_evidence' and s.get('data')==evidence for s in state['sources']):
+        _register(folder,state['sources'],{'title':'Supplied evidence (verify provenance)','url':None,
+            'kind':'user_evidence','data':evidence,'source_tier':'unverified'})
         checkpoint()
     added=[]
     for source in extra_sources:
         source=_prepare_source(source)
         source['ingestion_method']='provided_archive'
-        if any(old.get('url')==source.get('url') and old.get('evidence_sha256')==_digest(source['data'])
+        content_key=_digest(_rebind_companyfacts_data(source.get('data'),'self'))
+        if any(old.get('url')==source.get('url') and old.get('kind')==source.get('kind') and
+               old.get('source_tier')==source.get('source_tier') and
+               _digest(_rebind_companyfacts_data(old.get('data'),'self'))==content_key
                for old in state['sources']):
             continue
-        added.append(_register(folder,state['sources'],source)['id'])
+        added.append(_register(folder,state['sources'],source,_prepared=True)['id'])
     if added:
         state.pop('pending_revision',None)
         old=folder/'revisions'/f'model-before-supplement-{len(state.get("supplement_history",[]))+1}'
@@ -677,11 +1134,98 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         return folder
     if state['iteration'] > max_revisions:
         raise ValueError('Increase max_revisions to review the supplemented research snapshot')
-    if not any(s.get('kind')!='market_snapshot' for s in state['sources']):
-        raise RuntimeError('No financial or primary evidence is available; supply --evidence or retry data access')
-    router=core.Router(key,budget,state['ledger'],checkpoint)
+    reported=canonical_reported_inputs(state['sources'],as_of=(forecast_plan or state.get('plan',{})).get('valuation_date'))
+    core.save(folder/'reported-inputs.json',reported)
+    coverage=reported['coverage']
+    if coverage.get('conflicts') or not coverage.get('complete'):
+        state['coverage_preflight_failed']=True
+        prior=folder/'revisions'/'model-before-incomplete-coverage'
+        prior.mkdir(parents=True,exist_ok=True)
+        for name in ('assumptions.json','valuation.json','cashflows.csv','sensitivity.csv'):
+            if (folder/name).exists():
+                if not (prior/name).exists():
+                    shutil.copyfile(folder/name,prior/name)
+                (folder/name).unlink()
+        state['plan']={'unavailable':True,'unavailable_due_to_coverage':True,
+            'missing_inputs':coverage.get('missing_fields',[]),
+            'reason':'Essential reported inputs lack complete unconflicted primary-source coverage'}
+        state.pop('valuation',None)
+        state['complete']=False
+        state['quality_status']='missing_valuation'
+        details='; '.join(coverage.get('conflicts',[])) or ', '.join(coverage.get('missing_fields',[]))
+        notes='; '.join(coverage.get('notes',[]))
+        message='Reported-input preflight stopped before paid research: '+details+'. '+notes
+        recovery=('Supply primary disclosures with --sources, or start a fresh non-snapshot run with --sec-contact'
+            if source_snapshot is not None else 'Supply primary disclosures with --sources or retry SEC access with --sec-contact')
+        (folder/'memo.md').write_text('# '+ticker+' — financial input coverage incomplete\n\n'+message+
+            '\n\n'+recovery+'. '
+            'No paid research was started for this attempt.\n',encoding='utf-8')
+        checkpoint()
+        error=RuntimeError(message+' '+recovery+'; no paid requests were started for this attempt')
+        error.folder=folder
+        raise error
+    if state.get('plan',{}).get('unavailable_due_to_coverage'):
+        state.pop('plan',None)
+    state.pop('coverage_preflight_failed',None)
+    if forecast_plan is not None and (changed_forecast or not state.get('plan')):
+        supplied,changes=_lock_plan(forecast_plan,state['sources'])
+        if 'requested_counterfactuals' in state:
+            supplied['counterfactuals']=copy.deepcopy(state['requested_counterfactuals'])
+        _validate_plan_sources(supplied,state['sources'])
+        state['valuation']=evaluate(supplied)
+        state['plan']=supplied
+        state['provided_forecast_digest']=_digest(forecast_plan)
+        state.setdefault('forecast_history',[]).append({'sha256':_digest(forecast_plan),
+            'origin':'provided_forecast','iteration':state['iteration']})
+        state.setdefault('actual_input_corrections',[]).extend(changes)
+        save_valuation(folder,supplied,state['valuation'])
+        checkpoint()
+    if state.get('current_memo'):
+        pending_report=_render(state['current_memo'],state['sources'],state['gaps'],
+            state.get('plan',{}),state.get('valuation'),state)
+        (folder/'memo.md').write_text(pending_report,encoding='utf-8')
+        core.save(folder/'source-ledger.json',claim_ledger(pending_report))
+        checkpoint()
+    try:
+        router=core.Router(key,budget,state['ledger'],checkpoint)
+        router.validate_models((easy,strong,reviewer))
+    except (ValueError,RuntimeError) as exc:
+        exc.folder=folder
+        checkpoint()
+        raise
+    if not state['ledger']:
+        preflight=_initial_budget_preflight(router,state,ticker=ticker,easy=easy,strong=strong,
+            reviewer=reviewer,forecast_plan=forecast_plan,draft=draft,max_revisions=max_revisions)
+        state['budget_preflight']=preflight
+        core.save(folder/'budget-preflight.json',preflight)
+        progress(f'Initial budget preflight: ${preflight["known_context_reservation_floor_usd"]:.2f} '
+                 f'known-context reservation floor; ${budget:.2f} total allowance. '
+                 'Future generated context, repairs and revisions can require more.')
+        if not preflight['passed']:
+            state['quality_status']='budget_paused'
+            checkpoint()
+            suggested=preflight['suggested_total_allowance_usd']
+            action=(f'Rerun the same settings with --budget {suggested:g} '
+                '(planning allowance, not a promised charge or completion), or choose --quick. '
+                if suggested is not None else
+                'This floor exceeds the CLI $100 allowance limit; choose --profile economy or --quick, or supply focused evidence. ')
+            error=core.BudgetExceeded('Initial budget preflight stopped before paid research: '
+                f'${budget:.2f} allowance is below the ${preflight["known_context_reservation_floor_usd"]:.2f} '
+                'known-context reservation floor for the first draft and review. '
+                +action+'No paid requests were started')
+            error.folder=folder
+            raise error
+        if state.get('quality_status')=='budget_paused':
+            state['quality_status']='in_progress'
+        checkpoint()
     def call(name,model,prompt,tokens=6000,web=False):
-        cache=name+':'+_digest([prompt,model,tokens,web])[:12]
+        cache=name+':'+_digest([prompt,model,tokens,web,core.SYSTEM])[:12]
+        legacy=name+':'+_digest([prompt,model,tokens,web])[:12]
+        # The old digest omitted SYSTEM. It is reusable only when the saved
+        # contract proves that its system instructions are still identical.
+        system_unchanged=state.get('legacy_stage_system_sha256')==_digest(core.SYSTEM)
+        if cache not in state['stages'] and legacy in state['stages'] and system_unchanged:
+            state['stages'][cache]=state['stages'][legacy]
         if cache in state['stages']:
             return state['stages'][cache]
         progress(name+': '+model)
@@ -689,16 +1233,21 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             value=router.complete(name,model,prompt,max_tokens=tokens,web=web)
             state['stages'][cache]=value
             return value
+        except core.BudgetExceeded as exc:
+            state['complete']=False
+            state['quality_status']='budget_paused'
+            exc.folder=folder
+            raise
         finally:
             checkpoint()
     # Searches broaden coverage beyond the issuer's own account. Each call has
     # an explicit plugin fee/context reservation; there is no external API key.
     if not state.get('web_research_complete'):
         for lane,question in [
-            ('business','latest annual filing business segments, competitive economics, revenue and margins; prefer primary filings and issuer releases'),
-            ('challenge','named outside bull and bear investment arguments, original fund letters/research notes, their dates, disclosed positions, forecast and valuation-method disagreements; dated primary and reputable independent sources'),
-            ('expectations','current fiscal-year consensus revenue and earnings, exact accounting basis, analyst counts/ranges and observation dates; distinguish existing Street expectations from a genuine house disagreement'),
-            ('claims','latest proxy incentives, insider transaction types and dates, capital allocation, equity awards, debt/lease/tax/purchase commitments; identify which facts change an operating driver or equity claim')]:
+            ('business','latest annual filing and official earnings releases: segments, revenue/margins, nonrecurring gross-profit benefits or refunds, inventory by type, operating working-capital cash movements and procurement commitments. Preserve exact passages, periods, definitions, reported amounts versus approximations, and which forecast driver each material item affects'),
+            ('challenge','strongest credible named outside bull and bear economic arguments, original fund letters/research notes or attributable public reporting, dates, disclosed positions and access scope. When available find a valuation on the other side of the saved quote '+str(reported.get('market_price','unavailable'))+' '+str(reported.get('currency',''))+'; preserve its causal demand/supply/price/mix/margin/capital-allocation case, not just a target. Do not reconstruct an inaccessible broker model'),
+            ('expectations','current fiscal-year consensus revenue, margins and earnings, exact fiscal/calendar and accounting basis, analyst counts/ranges and observation dates; compare like periods and definitions. Distinguish already-known costs from a genuine house disagreement, and allow the honest conclusion that no differentiated operating view is supported'),
+            ('claims','latest proxy incentives, insider transaction types/dates, equity awards, debt/lease/tax/purchase commitments and actual repurchase prices. Match repurchase dollars and shares within the same disclosure/period; distinguish cash-flow payments, share retirements and EPS accretion from value creation. Identify changed operating drivers or claims without deducting ordinary procurement costs twice')]:
             answer=call('web_'+lane,easy,
                         f'Research {ticker} as of {datetime.now(timezone.utc).date()}: {question}. '
                         'Use the web search results. Identify exact source passages, dates and definitions. '
@@ -734,37 +1283,16 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'Trace source IDs [S#]. Explain where management economics may differ from accounting; '
                 'prioritize questions that can change intrinsic value. Keep the synthesis to 800–1200 words; '
                 'select at most ten load-bearing facts, do not reproduce every raw time-series row. '
+                'For material margin one-offs/refunds, inventory/procurement and repurchases, preserve source, '
+                'period, definition, amount/approximation and the affected driver. Separate reported and '
+                'normalized baselines; trace each proposed house adjustment to a forecast assumption without '
+                'counting working capital or operating costs twice. Build comparable Street rows and the '
+                'strongest available opposing economic case, preferably across the saved quote. Connect '
+                'outside expectation -> house assumption -> evidence/counterevidence -> changed driver -> '
+                'a proposed counterfactual for Python to value. Do not invent the value before calculation. '
+                'If operating expectations are near consensus, say so and identify the actual rate, terminal '
+                'or capitalization disagreement instead of manufacturing contrarianism. '
                 'List the five highest-impact uncertainties.\nEvidence:\n'+context,tokens=6500)
-    reported=canonical_reported_inputs(state['sources'], as_of=(forecast_plan or state.get('plan',{})).get('valuation_date'))
-    core.save(folder/'reported-inputs.json',reported)
-    if reported['coverage'].get('conflicts'):
-        raise RuntimeError('Primary financial facts conflict; resolve the source snapshot before valuation')
-    if not reported['coverage'].get('complete'):
-        prior=folder/'revisions'/'model-before-incomplete-coverage'
-        prior.mkdir(parents=True,exist_ok=True)
-        for name in ['assumptions.json','valuation.json','cashflows.csv','sensitivity.csv']:
-            if (folder/name).exists():
-                if not (prior/name).exists():shutil.copyfile(folder/name,prior/name)
-                (folder/name).unlink()
-        state['plan']={'unavailable':True,'unavailable_due_to_coverage':True,'missing_inputs':reported['coverage'].get('missing_fields',[]),
-                       'reason':'Essential reported inputs lack complete primary-source coverage; no invented actuals or zero defaults'}
-        state.pop('valuation',None)
-    elif state.get('plan',{}).get('unavailable_due_to_coverage'):
-        state.pop('plan',None)
-    if changed_forecast:
-        supplied, changes = _lock_plan(forecast_plan,state['sources'])
-        if not supplied.get('reported_inputs',{}).get('coverage',{}).get('complete'):
-            raise ValueError('Provided forecast requires complete reported-input coverage')
-        _validate_plan_sources(supplied,state['sources'])
-        if 'requested_counterfactuals' in state:
-            supplied['counterfactuals'] = copy.deepcopy(state['requested_counterfactuals'])
-        state['valuation'] = evaluate(supplied)
-        state['plan'] = supplied
-        state['provided_forecast_digest'] = _digest(forecast_plan)
-        state.setdefault('forecast_history',[]).append({'sha256':_digest(forecast_plan),'origin':'provided_forecast','iteration':state['iteration']})
-        state.setdefault('actual_input_corrections',[]).extend(changes)
-        save_valuation(folder,supplied,state['valuation'])
-        checkpoint()
     if 'plan' not in state:
         prompt=('Build an investment valuation plan for '+ticker+'. Ground actuals in supplied evidence; '
                 'use primary reports where accessible, and reconcile secondary-series dates and definitions.\n'+
@@ -822,18 +1350,42 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'Tie category demand, pricing/mix, delivery costs and GAAP expenses to the computed operating forecast. '
             'Compare dated Street estimates on a matching basis and identify the true disagreement; known near-term '
             'headwinds are not automatically an analytical edge. Engage named outside arguments and disclosed conflicts. '
+            'Trace each load-bearing variant from outside expectation to house array, economic mechanism, '
+            'source/counterevidence, computed conditional value and observation that would change the choice. '
+            'If no differentiated operating view is supported, state that directly and defend the actual '
+            'rate, terminal-duration or capitalization disagreement. Answer the strongest available credible '
+            'opponent on the other side of the saved quote economically; a target panel or isolated rate '
+            'sensitivity does not reproduce an outside model. Missing full-model access does not erase '
+            'the sourced demand, supply, price/mix, margin or capital-allocation argument. '
+            'For material one-off margin benefits/refunds, distinguish reported and normalized baselines '
+            'and show how runoff, input costs, price/mix and expenses reach the forecast, with an explicit '
+            'house residual where components cannot be quantified. Link inventory composition, trade cash '
+            'movements and procurement commitments to margin timing and reinvestment without double counting '
+            'the composite working-capital baseline or ordinary purchase costs. '
             'Explain the dated discount-rate build, source/proxy limits and separate hurdle if present. '
             'Use the computed monitoring cases to show dated observation -> changed input -> conditional value, '
             'without adding correlated cases together. Do not replace missing research with repeated caveats. '
             'Do not invent transcripts, guidance, consensus, exact fiscal dates, buybacks, or model features. '
             'This is valuation research only: do not give buy/sell/underweight ratings, portfolio sizing, '
             'tax or cost-basis advice. State the valuation view and what must be true instead. '
+            'When computed entry_policy is meaningful, state its numerical conditional research entry price, '
+            'valuation basis, selected discount and rationale. This is a house research threshold, not a '
+            'personal trading instruction or promised return. Do not invent a 20% discount or hide the '
+            'entry discipline behind only "wait for a lower price". If the policy/value is unavailable, '
+            'explain that precise gap rather than inventing a threshold. '
             'Use plain analytical prose, without slogans, world-class superlatives, or rhetorical contrast formulas. '
             'Distinguish the house thesis from the competing market-pricing case; genuine falsifiers must '
             'undermine the house conclusion and change a named forecast or model assumption. '
             'State reverse-DCF growth as conditional on named fixed assumptions for its explicit forecast horizon, '
             'not as a unique observed market belief. Use computed_diagnostics for every numerical tax or WACC '
             'sensitivity and state which other assumptions are fixed. '
+            'Use computed_diagnostics.valuation_multiples to show market versus original exit multiples '
+            'with matched first/final forecast earnings definitions, alongside original-exit and unchanged-entry-'
+            'multiple return diagnostics. Explain the rerating embedded in any return claim; the debt/claims-'
+            'settled FCFF stream is not a forecast of actual common-share payouts. Assess sourced repurchase '
+            'prices against current house value. EPS accretion alone does not prove value creation. Use '
+            'computed repurchase_tests when supplied, distinguish retrospective conditional comparisons '
+            'from forward illustrations, and retire cash/shares once without also paying that cash out. '
             'The executable valuation table is appended separately; discuss its economics without duplicating '
             'a conflicting numeric table. Forecasts are house assumptions, not reported facts.\nEvidence:\n'+context+
             '\nSynthesis:\n'+thesis+'\nValuation:\n'+valuation_context+'\nGaps:\n'+gaps,tokens=14000)
@@ -863,6 +1415,12 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'Use computed_diagnostics for sensitivity statements; do not mentally invent tax or WACC ranges. '
             'All reverse-DCF statements are conditional on fixed named assumptions and explicit horizon. '
             'Retain the source-to-driver links, named outside challenge, rate build and computed monitoring table. '
+            'Preserve the genuine outside-to-house variant bridge or an honest admission of no operating '
+            'edge; normalized one-off margin, inventory/procurement cash and reinvestment links; and the '
+            'strongest sourced opponent across the saved quote. Explain computed market/exit multiple '
+            'and consistent return comparisons, the justified conditional entry threshold if meaningful, '
+            'and repurchase economics against current house value. Do not resolve a finding by inventing '
+            'a policy discount, nonrecurring adjustment, source passage or double-counted cash distribution. '
             'Return the full revised memo only, roughly 3000-4500 words plus exhibits.\nEvidence:\n'+context+
             '\nValuation:\n'+valuation_context+'\nMemo:\n'+memo+'\nFindings:\n'+json.dumps(combined)+'\nAdjudicated model response:\n'+json.dumps(candidate),tokens=14000)
         state['current_memo']=corrected
@@ -905,6 +1463,20 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'decision framing all matter. Recompute every quoted sensitivity against computed_diagnostics; '
                 'Also audit the research argument: company-specific economic drivers, dated Street comparison, '
                 'authentic named outside views, calibrated required returns and observation-to-value monitoring. '
+                'Verify outside expectation -> house adjustment -> named annual driver -> Python-computed '
+                'conditional effect. A near-consensus operating view must not be sold as an invented edge. '
+                'If a credible sourced opponent across the quote is available, check its economic case is '
+                'answered rather than replaced by a target or inaccessible-model caveat. Check material '
+                'nonrecurring gross-profit benefits/refunds and reported-versus-normalized baselines, plus '
+                'inventory/procurement and trade-cash links to margins and reinvestment without counting '
+                'working capital or operating purchases twice. '
+                'Reconcile market and DCF-exit multiples using consistent earnings periods and show how '
+                'original-exit versus unchanged-entry-multiple returns differ under one fixed ownership '
+                'convention. Check a meaningful computed entry policy becomes a numeric conditional research '
+                'threshold with its disclosed basis and justification, not an invented default discount. '
+                'Test repurchase prices against current house value, distinct from EPS accretion; match '
+                'historical dollars/shares/periods and distinguish retrospective conditional comparisons '
+                'from observed historical losses or future buyback forecasts. No cash may be counted twice. '
                 'A disclosed house assumption is not automatically well justified. Identify a material unsupported '
                 'load-bearing assumption or missing contrary evidence when it changes the conclusion, while avoiding '
                 'optional stylistic preferences or demands for unavailable proprietary data. '
@@ -923,7 +1495,10 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'that in a finding rather than issuing a false pass.\n'+REVIEW_SCHEMA+
                 '\nEvidence:\n'+context+'\nValuation:\n'+valuation_context+'\nDraft:\n'+visible+
                 '\nDeterministic diagnostics (not semantic proof):\n'+json.dumps(deterministic)+
-                '\nNew external notes for this draft only; verify against the CURRENT wording and omit resolved allegations:\n'+fresh_notes)
+                '\nNew external notes for this draft only; verify against the CURRENT wording and omit resolved allegations:\n'+fresh_notes+
+                ('\nArtifact integrity recheck record: '+state['artifact_review_record']+
+                 '. Original state-derived artifacts were reconstructed; deliberate edits require explicit supplied inputs. '
+                 'Reassess this frozen draft and model.' if state.get('artifact_review_record') else ''))
         prior_review=next((r for r in reversed(state['review_history']) if r['iteration']==iteration),None)
         reusable=(prior_review and not state.get('review_invalidated') and
                   prior_review.get('review_model',strong)==reviewer and
@@ -1014,9 +1589,12 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'accusations or suggested fixes instead of replacing one unsupported story with another. A valid '
             'prose-only finding may leave forecasts unchanged; label it memo_only rather than rejecting it. Include compact '
             'finding_dispositions mapping finding IDs to accepted/rejected/clarified with source-backed reasons. '
+            'Preserve or explicitly rejustify the entry policy and repurchase illustrations when forecasts change; '
+            'do not silently drop their scope or invent a discount to satisfy a review. '
             'Forecast changes must be explicit house assumptions and economically justified. '
             +FORECAST_SCHEMA+UNDERWRITING_GUIDANCE+'\nEvidence:\n'+context+'\nCurrent memo (verify allegations against this exact text):\n'+memo+'\nCurrent forecast proposal:\n'+json.dumps({k:plan[k] for k in
-                ('assumptions_label','scenario_rationales','scenarios','operating_model','discount_rate','monitoring','counterfactuals') if k in plan})+
+                ('assumptions_label','scenario_rationales','scenarios','operating_model','discount_rate','monitoring',
+                 'counterfactuals','calibration_comparisons','forecast_periods','entry_policy','repurchase_tests') if k in plan})+
             '\nLocked actuals (reference only; omit from your proposal):\n'+json.dumps(plan.get('actuals',{}))+
             '\nComputed diagnostics for verification:\n'+json.dumps((result or {}).get('computed_diagnostics',{}))+
             '\nComputed counterfactuals:\n'+json.dumps((result or {}).get('counterfactuals',{}))+
@@ -1081,5 +1659,17 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
     (folder/'memo.md').write_text(final_report,encoding='utf-8')
     core.save(folder/'source-ledger.json',claim_ledger(final_report))
     checkpoint()
+    if state.get('complete'):
+        hashes=_delivered_artifact_hashes(folder,state)
+        if _bad_archive_paths(folder,state,hashes):
+            # Evidence can change while a provider request is in flight. A
+            # fresh completion may never bless bytes that fail source checks.
+            integrity_error=_verify_completed_artifacts(folder,state)
+            checkpoint()
+            state['artifact_blocked_observed_hashes']=_delivered_artifact_hashes(folder,state)
+            checkpoint()
+            raise integrity_error
+        state['completed_artifact_hashes']=hashes
+        checkpoint()
     progress(f'{state["quality_status"]}: {folder / "memo.md"}')
     return folder

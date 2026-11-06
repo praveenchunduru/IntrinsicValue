@@ -43,6 +43,34 @@ probabilities or the house weighted value. Output records exact overrides,
 effective inputs, fixed-input basis and independently projected cash flows.
 Reverse-DCF output also records each solved growth rate's projected revenue and
 annual revenue increments, using that exact solution and the fixed base inputs.
+
+Computed ``valuation_multiples`` diagnostics show entry EV/first-forecast-year
+earnings, original DCF exit multiples and conditional returns at an unchanged
+entry multiple. They use the existing integer-year, debt/claims-settled FCFF
+convention, not a forecast of common-share payouts or trading multiples.
+
+Optional ``entry_policy`` is an explicit house decision rule, for example
+``{"basis":"base", "margin_of_safety":0.15, "label":"House entry rule",
+"rationale":"Explicitly selected valuation discount"}``. Basis may be base or
+weighted; no discount is supplied by default. Its conditional entry price is
+reference value * (1 - margin_of_safety), not a return or execution guarantee.
+
+Optional ``repurchase_tests`` is a list of at most eight independent one-period
+cash-funded illustrations. Each requires name, amount, price, source_refs, label
+and interpretation (historical_retrospective_conditional or
+forward_conditional_illustration). They require a reconciled net_debt_bridge with
+debt and selected_cash_and_nonoperating_investments; spending cannot exceed that
+cash. Each case reduces cash and shares once, leaving operating values unchanged.
+Historical prices are compared with current house values, not historical fair
+values; forward illustrations are not future repurchase forecasts.
+
+When net_debt_bridge.finance_leases_included_in_net_debt is true, its debt is a
+combined total. Same-date rate inputs split that total using separately reported
+finance leases. If that split is unavailable, financial_debt must declare
+allocation="combined_debt_including_finance_leases" and finance_lease_debt must
+declare allocation="included_in_financial_debt" with value zero. Their labels
+must describe the combined total and zero allocation. Zero then allocates a
+combined amount once; it does not assert that finance lease liabilities are zero.
 """
 from __future__ import annotations
 
@@ -368,6 +396,209 @@ def _fixed_exit_return(actuals, projection, price):
     return solved
 
 
+def _positive_multiple(numerator, denominator):
+    """A conventional positive EV/earnings multiple, with explicit limits."""
+    result = {'numerator': numerator, 'denominator': denominator, 'value': None}
+    if numerator is None or denominator is None:
+        return dict(result, status='unavailable', reason='A comparable numerator or denominator is unavailable.')
+    if not math.isfinite(numerator) or not math.isfinite(denominator):
+        return dict(result, status='not_calculated', reason='Inputs exceed finite numeric bounds.')
+    if numerator <= 0 or denominator <= 0:
+        return dict(result, status='not_meaningful', reason='A conventional EV/earnings multiple requires positive enterprise value and positive earnings; signed amounts are retained.')
+    value = _finite_or_none(numerator / denominator)
+    if value is None:
+        return dict(result, status='not_calculated', reason='The ratio exceeds finite numeric bounds.')
+    return dict(result, status='calculated', value=value)
+
+
+def _forecast_period(plan, index):
+    result = {'model_year': index + 1, 'discount_time_years': index + 1}
+    periods = plan.get('forecast_periods')
+    if isinstance(periods, list) and index < len(periods) and isinstance(periods[index], dict):
+        result['supplied_period_metadata'] = copy.deepcopy(periods[index])
+    return result
+
+
+def _unchanged_multiple_return(actuals, projection, price, metric, multiple):
+    """Keep operations fixed and apply a like-period entry multiple at exit."""
+    final_earnings = projection['cashflows'][-1][metric]
+    result = {'entry_multiple': copy.deepcopy(multiple), 'earnings_metric': metric,
+              'entry_earnings_period': 'first_explicit_forecast_year',
+              'exit_earnings_period': 'last_explicit_forecast_year',
+              'final_forecast_earnings': final_earnings,
+              'original_dcf_terminal_enterprise_value': projection['terminal_enterprise_value'],
+              'conditional_exit_enterprise_value': None}
+    if multiple['status'] != 'calculated':
+        return dict(result, status=multiple['status'], reason=multiple['reason'])
+    if final_earnings <= 0:
+        return dict(result, status='not_meaningful', reason='Applying a conventional positive entry multiple requires positive final-year earnings.')
+    exit_value = _finite_or_none(multiple['value'] * final_earnings)
+    if exit_value is None:
+        return dict(result, status='not_calculated', reason='Conditional exit arithmetic exceeds finite numeric bounds.')
+    alternative = dict(projection, terminal_enterprise_value=exit_value)
+    solved = _fixed_exit_return(actuals, alternative, price)
+    solved['basis'] = (
+        'Conditional debt/claims-settled owner stream at the saved market price: the signed opening '
+        'net-debt/other-claims bridge is settled immediately, all unlevered FCFF is distributed at '
+        'integer model years 1 through N, and enterprise value is sold at year N. The exit equals '
+        'entry market EV / first-forecast-year earnings times the same scenario final-forecast-year '
+        'earnings, using the named EBIT or NOPAT metric consistently. Operating cash flows, taxes, '
+        'reinvestment, current shares and opening financing stay fixed; no ongoing debt or buyback '
+        'schedule is assumed. Supplied fiscal-calendar metadata does not change discount timing. '
+        'This alternative exit replaces the original terminal formula only in this return diagnostic; '
+        'it is not a common-share payout, refinancing or trading-price forecast.')
+    return dict(result, **solved, conditional_exit_enterprise_value=exit_value)
+
+
+def _valuation_multiples(plan, actuals, scenarios, market):
+    shares = actuals['shares_outstanding']
+    equity = _finite_or_none(market * shares) if market is not None else None
+    enterprise = (_finite_or_none(equity + actuals['net_debt'] + actuals['other_equity_claims'])
+                  if equity is not None else None)
+    market_bridge = {
+        'status': 'unavailable' if market is None else 'calculated' if enterprise is not None else 'not_calculated',
+        'market_price': market, 'shares_outstanding': shares,
+        'market_equity_value': equity, 'net_debt': actuals['net_debt'],
+        'other_equity_claims': actuals['other_equity_claims'], 'enterprise_value': enterprise,
+        'source_refs': {key: copy.deepcopy(plan['source_refs'][key]) for key in
+                        ('net_debt', 'other_equity_claims', 'shares_outstanding')},
+        'basis': 'Saved quote times dated ordinary shares, plus signed net debt and other noncommon claims. Selected cash is already deducted in net debt; it is not deducted twice.',
+    }
+    if market is not None:
+        market_bridge['source_refs']['market_price'] = copy.deepcopy(plan['source_refs']['market_price'])
+    if isinstance(plan.get('input_dates'), dict):
+        market_bridge['input_dates'] = copy.deepcopy(plan['input_dates'])
+    output = {}
+    for name, projection in scenarios.items():
+        first, last = projection['cashflows'][0], projection['cashflows'][-1]
+        entry = {metric: _positive_multiple(enterprise, first[metric]) for metric in ('ebit', 'nopat')}
+        output[name] = {
+            'forecast_year1': {'period': _forecast_period(plan, 0), 'ebit': first['ebit'],
+                               'nopat': first['nopat'], 'market_ev_to_ebit': entry['ebit'],
+                               'market_ev_to_nopat': entry['nopat']},
+            'original_dcf_exit': {
+                'period': _forecast_period(plan, len(projection['cashflows']) - 1),
+                'enterprise_value': projection['terminal_enterprise_value'],
+                'final_forecast_ebit': last['ebit'], 'final_forecast_nopat': last['nopat'],
+                'terminal_year_nopat': projection['terminal_nopat'],
+                'ev_to_final_forecast_ebit': _positive_multiple(projection['terminal_enterprise_value'], last['ebit']),
+                'ev_to_final_forecast_nopat': _positive_multiple(projection['terminal_enterprise_value'], last['nopat']),
+                'ev_to_terminal_year_nopat': _positive_multiple(projection['terminal_enterprise_value'], projection['terminal_nopat']),
+                'basis': 'Original scenario terminal formula, received at the end of its last explicit model year. Final-forecast-year earnings and next terminal-year NOPAT are separate denominators.',
+            },
+            'unchanged_entry_multiple_exit_returns': {
+                metric: _unchanged_multiple_return(actuals, projection, market, metric, entry[metric])
+                for metric in ('ebit', 'nopat')},
+        }
+    return {
+        'market': market_bridge, 'scenarios': output,
+        'basis': 'Computed valuation exhibits. Entry multiples use first-explicit-forecast-year earnings, not historical or trailing earnings. Negative or zero EV/earnings are retained as amounts but do not produce conventional multiples. Exit alternatives have no probability weight and do not change the DCF.',
+        'discount_timing': 'Existing model convention: annual FCFF at integer years 1..N, exit at year N, opening financing bridge at time zero; no stub or midyear adjustment.',
+    }
+
+
+def _entry_policy(plan, scenarios, weighted, market):
+    policy = plan['entry_policy']
+    fields = {'basis', 'margin_of_safety', 'label', 'rationale'}
+    if not isinstance(policy, dict) or set(policy) != fields:
+        raise ValueError('entry_policy requires exactly basis, margin_of_safety, label and rationale')
+    if policy['basis'] not in ('base', 'weighted'):
+        raise ValueError('entry_policy.basis must be base or weighted')
+    for field in ('label', 'rationale'):
+        if not isinstance(policy[field], str) or not policy[field].strip():
+            raise ValueError(f'entry_policy.{field} must explicitly describe the house rule')
+    margin = _number(policy['margin_of_safety'], 'entry_policy.margin_of_safety')
+    if not 0 <= margin < 1:
+        raise ValueError('entry_policy.margin_of_safety must be at least zero and below one')
+    reference = scenarios['base']['per_share_value'] if policy['basis'] == 'base' else weighted
+    entry = _finite_or_none(reference * (1 - margin)) if reference > 0 else None
+    return {
+        'policy': copy.deepcopy(policy), 'reference_per_share_value': reference,
+        'status': 'calculated' if entry is not None else 'not_meaningful',
+        'conditional_entry_price': entry, 'market_price': market,
+        'entry_price_vs_market_percent': ((entry / market - 1) * 100
+                                          if entry is not None and market is not None else None),
+        'basis': 'Explicit house valuation policy: reference model value per share times (1 - selected margin of safety). No margin is supplied by the engine. Weighted basis uses disclosed scenario probabilities. A positive reference value is required for a meaningful entry price. This is a conditional valuation threshold, not a promised return, trading recommendation or execution guarantee.',
+    }
+
+
+def _repurchase_tests(plan, actuals, scenarios, weighted):
+    requested = plan['repurchase_tests']
+    if not isinstance(requested, list) or len(requested) > 8:
+        raise ValueError('repurchase_tests must contain at most eight independent cases')
+    if not requested:
+        return []
+    bridge = plan.get('net_debt_bridge')
+    if not isinstance(bridge, dict):
+        raise ValueError('repurchase_tests require an explicit reconciled nonoperating cash bridge')
+    if (('currency' in bridge and bridge['currency'] != plan['currency']) or
+            ('amount_unit' in bridge and bridge['amount_unit'] != 'currency_units')):
+        raise ValueError('Repurchase funding bridge currency and amount units must match the valuation plan')
+    cash = _number(_required(bridge, 'selected_cash_and_nonoperating_investments', 'net_debt_bridge'),
+                   'net_debt_bridge.selected_cash_and_nonoperating_investments')
+    debt = _number(_required(bridge, 'debt', 'net_debt_bridge'), 'net_debt_bridge.debt')
+    if cash < 0 or debt < 0 or not math.isclose(debt - cash, actuals['net_debt'], rel_tol=1e-8, abs_tol=1e-6):
+        raise ValueError('repurchase_tests require nonnegative cash/debt reconciled to actuals.net_debt')
+    if ('net_debt' in bridge and not math.isclose(_number(bridge['net_debt'], 'net_debt_bridge.net_debt'),
+                                                  actuals['net_debt'], rel_tol=1e-8, abs_tol=1e-6)):
+        raise ValueError('repurchase_tests net_debt_bridge.net_debt conflicts with actuals.net_debt')
+    shares, names, output = actuals['shares_outstanding'], set(), []
+    fields = {'name', 'amount', 'price', 'source_refs', 'label', 'interpretation'}
+    for item in requested:
+        if not isinstance(item, dict) or set(item) != fields:
+            raise ValueError('Each repurchase test requires exactly name, amount, price, source_refs, label and interpretation')
+        name = item['name']
+        if (not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}', name)
+                or name in names):
+            raise ValueError('Repurchase test names must be unique 1–64 character identifiers')
+        names.add(name)
+        if not isinstance(item['label'], str) or not item['label'].strip() or not _reference(item['source_refs']):
+            raise ValueError('Repurchase tests require an explicit label and source_refs')
+        if item['interpretation'] not in ('historical_retrospective_conditional', 'forward_conditional_illustration'):
+            raise ValueError('Repurchase interpretation must distinguish historical_retrospective_conditional from forward_conditional_illustration')
+        amount = _number(item['amount'], 'repurchase.amount')
+        price = _number(item['price'], 'repurchase.price')
+        if amount <= 0 or price <= 0 or amount > cash:
+            raise ValueError('Repurchase amount and price must be positive; cash-funded amount cannot exceed modeled nonoperating cash')
+        retired = amount / price
+        remaining = shares - retired
+        if not math.isfinite(retired) or remaining <= 0:
+            raise ValueError('Repurchase must leave a positive ordinary-share count')
+        post_net_debt = actuals['net_debt'] + amount
+        cases = {}
+        for scenario, projection in scenarios.items():
+            equity = projection['enterprise_value'] - post_net_debt - actuals['other_equity_claims']
+            per_share = equity / remaining
+            transfer = retired * (price - projection['per_share_value'])
+            if not all(math.isfinite(value) for value in (post_net_debt, equity, per_share, transfer)):
+                raise ValueError('Repurchase arithmetic exceeds finite numeric bounds')
+            cases[scenario] = {
+                'enterprise_value': projection['enterprise_value'],
+                'original_equity_value': projection['equity_value'], 'post_repurchase_equity_value': equity,
+                'original_per_share_value': projection['per_share_value'], 'post_repurchase_per_share_value': per_share,
+                'value_change': _value_change(per_share, projection['per_share_value']),
+                'value_transferred_to_selling_holders_vs_original_house_value': transfer,
+            }
+        post_weighted = sum(cases[name]['post_repurchase_per_share_value'] * scenarios[name]['probability']
+                            for name in SCENARIOS)
+        if not math.isfinite(post_weighted):
+            raise ValueError('Weighted repurchase arithmetic exceeds finite numeric bounds')
+        output.append({
+            'name': name, 'label': item['label'], 'source_refs': copy.deepcopy(item['source_refs']),
+            'interpretation': item['interpretation'], 'amount': amount, 'price': price,
+            'shares_repurchased': retired, 'original_shares': shares, 'post_repurchase_shares': remaining,
+            'original_nonoperating_cash': cash, 'post_repurchase_nonoperating_cash': cash - amount,
+            'debt_unchanged': debt, 'original_net_debt': actuals['net_debt'], 'post_repurchase_net_debt': post_net_debt,
+            'other_equity_claims_unchanged': actuals['other_equity_claims'],
+            'funding_bridge': copy.deepcopy(bridge), 'funding_source_refs': copy.deepcopy(plan['source_refs']['net_debt']),
+            'scenarios': cases, 'original_weighted_per_share_value': weighted,
+            'post_repurchase_weighted_per_share_value': post_weighted,
+            'weighted_value_change': _value_change(post_weighted, weighted),
+            'basis': 'Independent contemporaneous one-period cash-funded illustration at current house values: cash falls by the amount spent, net debt increases by that same amount, and shares fall by amount / price exactly once. Enterprise operating value, forecast cash flows, discount rates, other claims and scenario weights stay fixed. Each test starts from the original snapshot; tests are not cumulative. No future FCFF, financing, dividend or SBC offset funds this purchase. A historical price is a retrospective conditional comparison with current underwriting, not observed historical value destruction; a forward illustration is not a forecast of actual repurchases or shareholder returns.',
+        })
+    return output
+
+
 def _counterfactuals(plan, actuals, definitions):
     """Validate and project optional base overrides without changing house cases."""
     requested = plan.get('counterfactuals', {})
@@ -602,22 +833,98 @@ def _measurement_day(record):
 
 def _calibration_reconciliations(plan, spec):
     checks = []
-    for field, bridge_name, amount_name in (
-            ('financial_debt', 'net_debt_bridge', 'debt'),
-            ('finance_lease_debt', 'other_claims_bridge', 'reported_finance_lease_liabilities')):
-        record, bridge = spec[field], plan.get(bridge_name, {})
-        reported = bridge.get(amount_name) if isinstance(bridge, dict) else None
-        same_date = _measurement_day(record) == _measurement_day(bridge) and _measurement_day(record) is not None
-        comparable = record.get('measurement', 'book_value_proxy') == 'book_value_proxy'
-        status = 'not_comparable_dates_or_measurement'
-        if reported is not None and same_date and comparable:
-            reported = _number(reported, bridge_name + '.' + amount_name)
-            if not math.isclose(record['value'], reported, rel_tol=1e-8, abs_tol=1e-6):
-                raise ValueError(f'discount_rate.{field} conflicts with the same-date reported equity bridge')
-            status = 'reconciled'
-        checks.append({'field': field, 'status': status, 'rate_input': record['value'],
-                       'bridge_input': reported, 'rate_date': _measurement_day(record),
-                       'bridge_date': _measurement_day(bridge)})
+    debt_bridge, claims_bridge = plan.get('net_debt_bridge', {}), plan.get('other_claims_bridge', {})
+    for bridge_name, bridge in (('net_debt_bridge', debt_bridge), ('other_claims_bridge', claims_bridge)):
+        if isinstance(bridge, dict):
+            if (bridge.get('currency', spec['currency']) != spec['currency'] or
+                    bridge.get('amount_unit', 'currency_units') != 'currency_units'):
+                raise ValueError(f'{bridge_name} currency and amount units must match the discount-rate inputs')
+            if ('finance_leases_included_in_net_debt' in bridge and
+                    not isinstance(bridge['finance_leases_included_in_net_debt'], bool)):
+                raise ValueError(f'{bridge_name}.finance_leases_included_in_net_debt must be an explicit boolean')
+    combined = isinstance(debt_bridge, dict) and debt_bridge.get('finance_leases_included_in_net_debt', False)
+    if (isinstance(claims_bridge, dict) and 'finance_leases_included_in_net_debt' in claims_bridge and
+            claims_bridge['finance_leases_included_in_net_debt'] != combined):
+        raise ValueError('Debt and other-claims bridges conflict on finance-lease inclusion')
+    if combined:
+        if not isinstance(claims_bridge, dict):
+            raise ValueError('A combined debt bridge requires an explicit other-claims allocation record')
+        total = _number(_required(debt_bridge, 'debt', 'net_debt_bridge'), 'net_debt_bridge.debt')
+        if total < 0:
+            raise ValueError('Combined debt and finance leases cannot be negative')
+        bridge_date = _measurement_day(debt_bridge)
+        measurement = debt_bridge.get('measurement', 'book_value_proxy')
+        for field in ('financial_debt', 'finance_lease_debt'):
+            record = spec[field]
+            if (bridge_date is None or _measurement_day(record) != bridge_date or
+                    record.get('measurement', 'book_value_proxy') != measurement):
+                raise ValueError('Combined debt reconciliation requires matching rate/bridge dates and measurement bases')
+        lease = claims_bridge.get('reported_finance_lease_liabilities')
+        if lease is not None:
+            if (_measurement_day(claims_bridge) != bridge_date or
+                    claims_bridge.get('measurement', 'book_value_proxy') != measurement):
+                raise ValueError('A finance-lease split requires the same date and measurement as combined debt')
+            lease = _number(lease, 'other_claims_bridge.reported_finance_lease_liabilities')
+            if not 0 <= lease <= total:
+                raise ValueError('Reported finance leases must be nonnegative and cannot exceed combined debt')
+            expected_financial, expected_lease = total - lease, lease
+            if any('allocation' in spec[field] for field in ('financial_debt', 'finance_lease_debt')):
+                raise ValueError('A known separate finance-lease amount must be split explicitly, not assigned an unknown-split allocation')
+            scope = 'separately_reported_finance_leases_split_from_combined_debt'
+        else:
+            expected_financial, expected_lease = total, 0.
+            expected_allocations = {'financial_debt': 'combined_debt_including_finance_leases',
+                                    'finance_lease_debt': 'included_in_financial_debt'}
+            for field, allocation in expected_allocations.items():
+                record = spec[field]
+                if record.get('allocation') != allocation:
+                    raise ValueError('Unknown finance-lease split requires explicit combined-debt and zero-allocation declarations')
+                label = record.get('label', '').lower()
+                if ((field == 'financial_debt' and not ('combined' in label and 'lease' in label)) or
+                        (field == 'finance_lease_debt' and 'allocation' not in label)):
+                    raise ValueError('Unknown-split rate labels must identify combined debt and the finance-lease zero allocation')
+            if spec['finance_lease_debt']['value'] != 0:
+                raise ValueError('Unknown-split finance_lease_debt must be exactly zero as an allocation')
+            scope = 'unknown_finance_lease_split_combined_amount_allocated_once'
+        for field, expected in (('financial_debt', expected_financial), ('finance_lease_debt', expected_lease)):
+            record = spec[field]
+            if not math.isclose(record['value'], expected, rel_tol=1e-8, abs_tol=1e-6):
+                raise ValueError(f'discount_rate.{field} conflicts with the combined debt/finance-lease allocation')
+            checks.append({'field': field, 'status': 'reconciled_combined_debt_allocation',
+                           'rate_input': record['value'], 'bridge_input': expected,
+                           'combined_debt': total, 'reported_finance_lease_liabilities': lease,
+                           'rate_date': _measurement_day(record), 'bridge_date': bridge_date,
+                           'scope': scope, 'allocation': record.get('allocation'),
+                           'zero_finance_lease_input_is_allocation_not_reported_absence': lease is None})
+        included = spec['financial_debt']['value'] + spec['finance_lease_debt']['value']
+        if not math.isclose(included, total, rel_tol=1e-8, abs_tol=1e-6):
+            raise ValueError('Included rate debt must equal combined debt and finance leases exactly once')
+        checks.append({'field': 'included_debt', 'status': 'reconciled_combined_debt_once',
+                       'rate_input': included, 'bridge_input': total, 'scope': scope})
+        # A supplied claims allocation is an accounting identity, not a new zero default.
+        allocated_claims = claims_bridge.get('other_equity_claims')
+        if allocated_claims is not None and not math.isclose(
+                _number(allocated_claims, 'other_claims_bridge.other_equity_claims'),
+                _number(plan['actuals']['other_equity_claims'], 'actuals.other_equity_claims'),
+                rel_tol=1e-8, abs_tol=1e-6):
+            raise ValueError('Other equity claims conflict with the finance-leases-already-in-debt allocation')
+    else:
+        for field, bridge_name, amount_name in (
+                ('financial_debt', 'net_debt_bridge', 'debt'),
+                ('finance_lease_debt', 'other_claims_bridge', 'reported_finance_lease_liabilities')):
+            record, bridge = spec[field], plan.get(bridge_name, {})
+            reported = bridge.get(amount_name) if isinstance(bridge, dict) else None
+            same_date = _measurement_day(record) == _measurement_day(bridge) and _measurement_day(record) is not None
+            comparable = record.get('measurement', 'book_value_proxy') == 'book_value_proxy'
+            status = 'not_comparable_dates_or_measurement'
+            if reported is not None and same_date and comparable:
+                reported = _number(reported, bridge_name + '.' + amount_name)
+                if not math.isclose(record['value'], reported, rel_tol=1e-8, abs_tol=1e-6):
+                    raise ValueError(f'discount_rate.{field} conflicts with the same-date reported equity bridge')
+                status = 'reconciled'
+            checks.append({'field': field, 'status': status, 'rate_input': record['value'],
+                           'bridge_input': reported, 'rate_date': _measurement_day(record),
+                           'bridge_date': _measurement_day(bridge)})
     record = spec['market_equity']
     dates = plan.get('input_dates', {})
     quote_date = _measurement_day(dates.get('market_price'))
@@ -678,6 +985,14 @@ def materialize(plan):
             beta_record['calculation_snapshot_date'] = spec.get('as_of')
         calibration = calculate_discount_rate(spec, as_of=prepared.get('valuation_date'))
         calibration['valuation_input_reconciliations'] = _calibration_reconciliations(prepared, spec)
+        if (isinstance(prepared.get('net_debt_bridge'), dict) and
+                prepared['net_debt_bridge'].get('finance_leases_included_in_net_debt')):
+            unknown_split = prepared.get('other_claims_bridge', {}).get('reported_finance_lease_liabilities') is None
+            calibration['conventions']['financial_debt_input'] = (
+                'Combined financial debt and finance leases allocated entirely to financial_debt; '
+                'finance_lease_debt zero is an allocation, not reported absence. The separate lease amount is unknown.'
+                if unknown_split else
+                'Financial debt excludes separately reported finance leases: combined bridge debt minus the same-date lease amount; finance leases are included once through finance_lease_debt.')
         for name in SCENARIOS:
             scenario = prepared['scenarios'][name]
             rate = calibration['applied_wacc']
@@ -776,6 +1091,11 @@ def evaluate(plan):
         result['weighted_upside_percent'] = (weighted / market - 1) * 100
         result['reverse_dcf'] = _reverse_growth(actuals, definitions['base'], market)
         result['reverse_dcf']['discount_rate'] = _reverse_wacc(actuals, definitions['base'], market, calibration)
+    result['computed_diagnostics']['valuation_multiples'] = _valuation_multiples(plan, actuals, scenarios, market)
+    if 'entry_policy' in plan:
+        result['computed_diagnostics']['entry_policy'] = _entry_policy(plan, scenarios, weighted, market)
+    if 'repurchase_tests' in plan:
+        result['computed_diagnostics']['repurchase_tests'] = _repurchase_tests(plan, actuals, scenarios, weighted)
     return result
 
 

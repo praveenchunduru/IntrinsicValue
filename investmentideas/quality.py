@@ -88,6 +88,71 @@ def parse_json(text):
         raise ValueError('Invalid structured JSON; provide exactly one complete JSON value') from None
 
 
+def _strip_quote_emphasis(text, delimiter):
+    """Remove matching emphasis with monotonic opening/closing scans."""
+    width, size = len(delimiter), len(text)
+    parts, start, opening, closing = [], 0, 0, 0
+    underscore = delimiter[0] == '_'
+
+    def word(char):
+        return char == '_' or char.isalnum()
+
+    while opening + width < size:
+        previous = text[opening - 1] if opening else ''
+        excluded = (word(previous) or previous == '\\') if underscore else previous in {'\\', '*'}
+        if (not text.startswith(delimiter, opening) or excluded or
+                text[opening + width].isspace()):
+            opening += 1
+            continue
+        closing = max(closing, opening + width + 1)
+        while closing + width <= size:
+            following = text[closing + width] if closing + width < size else ''
+            excluded = word(following) if underscore else following == '*'
+            if (text.startswith(delimiter, closing) and not excluded and
+                    not text[closing - 1].isspace()):
+                break
+            closing += 1
+        else:
+            # No later opening can have a closing delimiter either.
+            break
+        parts.extend((text[start:opening], text[opening + width:closing]))
+        start = opening = closing + width
+    parts.append(text[start:])
+    return ''.join(parts)
+
+
+def _strip_quote_backticks(text):
+    """Pair equal maximal backtick runs without rescanning unmatched spans."""
+    runs, position = [], 0
+    while position < len(text):
+        if text[position] != '`':
+            position += 1
+            continue
+        end = position + 1
+        while end < len(text) and text[end] == '`':
+            end += 1
+        runs.append((position, end))
+        position = end
+    next_run, latest = [None] * len(runs), {}
+    for index in range(len(runs) - 1, -1, -1):
+        opening, end = runs[index]
+        width = end - opening
+        next_run[index] = latest.get(width)
+        latest[width] = index
+    parts, start, index = [], 0, 0
+    while index < len(runs):
+        match = next_run[index]
+        if match is None:
+            index += 1
+            continue
+        opening, end = runs[index]
+        closing, close_end = runs[match]
+        parts.extend((text[start:opening], text[end:closing]))
+        start, index = close_end, match + 1
+    parts.append(text[start:])
+    return ''.join(parts)
+
+
 def _render_normalized_quote(text):
     """Normalize only balanced inline Markdown and whitespace, not wording.
 
@@ -96,11 +161,8 @@ def _render_normalized_quote(text):
     markers are never removed or treated as wildcards.
     """
     for delimiter in ('**', '__', '*', '_'):
-        before = r'(?<![\w\x5c])' if '_' in delimiter else r'(?<![\x5c*])'
-        after = r'(?!\w)' if '_' in delimiter else r'(?!\*)'
-        text = re.sub(before + re.escape(delimiter) + r'(?=\S)(.+?)(?<=\S)'
-                      + re.escape(delimiter) + after, r'\1', text, flags=re.S)
-    text = re.sub(r'(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)', r'\2', text, flags=re.S)
+        text = _strip_quote_emphasis(text, delimiter)
+    text = _strip_quote_backticks(text)
     return ' '.join(text.split())
 
 

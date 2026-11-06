@@ -15,17 +15,40 @@ Use three-letter `currency`, `amount_unit="currency_units"` and
 `share_unit="shares"`: money is in whole currency units and shares are whole
 shares, not millions. Each actual needs a `source_refs` entry. The full pipeline
 pins supported annual revenue, outstanding shares and the debt/cash/claims bridge
-to primary inline-XBRL facts. It rejects essential coverage gaps rather than
+to primary inline-XBRL or normalized SEC Companyfacts records. It rejects essential coverage gaps rather than
 letting a forecast replace a reported number. A supplied forecast passes through
 the same input lock and source-reference checks.
 
-The net-debt bridge deducts selected cash and marketable securities exactly once.
-Classifying all selected cash as nonoperating is an explicit house policy, not a
-reported assertion that it is surplus. Financial debt excludes finance leases;
-identified finance leases are deducted once as other equity claims. Any zero for
-additional unidentified claims is a disclosed assumption. With GAAP operating
-EBIT, operating rent remains an expense and operating-lease liabilities are not
-added to debt. Missing bridge components never become zero.
+The net-debt bridge deducts selected directly reported cash, marketable securities
+and short-term investments exactly once. Inclusive subtotals replace their parts.
+Absent optional investment categories are excluded under the disclosed selected-asset
+policy, rather than asserted to be zero. Unclassified long-term investments are
+excluded. Classifying selected assets as nonoperating is a house policy, not a
+reported assertion that all cash is surplus.
+
+Debt can use a complete financial-debt total or reconciled, disjoint short- and
+long-term components. Commercial paper alone does not establish all short-term
+financing. A narrow long-term tag is not promoted to whole-company debt just
+because a table says "Total debt": automatic classification requires same-filing
+inline facts, aligned dates/columns/values and positive evidence of financing scope.
+Ambiguous or unsupported disclosures remain incomplete. Recorded Microsoft and
+CoreWeave fixtures test real disclosure shapes; they do not demonstrate complete
+live coverage for those issuers.
+
+Finance leases are deducted once: separately as other equity claims when financial
+debt excludes them, or within a selected combined debt-and-finance-lease subtotal.
+`net_debt_bridge.finance_leases_included_in_net_debt` records that choice. A missing
+separate lease amount stays null if a combined subtotal already covers it; zero
+other claims then means no second deduction. Any zero for additional unidentified
+claims is a disclosed house assumption. With GAAP operating EBIT, operating rent
+remains an expense and operating-lease liabilities are not added to debt. Missing
+liability categories never become zero.
+
+Companyfacts records retain their actual API origin, filing/accession dates,
+units and raw values. They are not labeled as inline context facts. The financial
+context table preserves annual operating cash flow, capex, inventory, repurchases,
+taxes and other recognized observations when available. Conflicting observations
+remain visible; weighted-average shares never replace outstanding shares.
 
 ## Build a company-specific operating bridge
 
@@ -85,8 +108,8 @@ shape, not an observed market input:
 | `risk_free_rate`, `equity_risk_premium` | Same exact observation date; preserve the paired Treasury/ERP method |
 | `unlevered_beta` | Explicit operating-asset beta choice and method; a sector proxy is not a measured issuer beta |
 | `market_equity` | Positive market equity; book equity cannot set capital weights |
-| `financial_debt` | Gross debt excluding separately entered finance leases; `measurement` is `book_value_proxy` unless explicitly `market_value` |
-| `finance_lease_debt` | Separate gross finance-lease amount; a zero must be explicit |
+| `financial_debt` | Gross debt excluding separately entered finance leases, or an explicitly allocated combined total; `measurement` is `book_value_proxy` unless explicitly `market_value` |
+| `finance_lease_debt` | Separate gross finance-lease amount, or explicit zero allocation when already included in a combined total |
 | `pretax_cost_of_debt` | Forward borrowing-cost estimate or labeled yield proxy, not a coupon substitution |
 | `marginal_tax_rate` | Normalized marginal tax for the debt shield, separate from the operating effective-tax assumption |
 
@@ -96,6 +119,14 @@ Included debt counts finance leases once. Cash is not netted from debt for
 relevering or capital weights. One supplied debt cost applies to included debt.
 An optional dated `house_hurdle` record is a separate policy choice and applies
 only with `basis="house_hurdle"`; it is never relabeled market WACC.
+
+When the reported bridge includes finance leases in debt, use the separately
+reported lease amount to split comparable rate inputs where known. If that split
+is unavailable, `financial_debt` must declare
+`allocation="combined_debt_including_finance_leases"` and `finance_lease_debt`
+must declare `allocation="included_in_financial_debt"` with value zero. Labels
+must identify the combined total and zero allocation. This allocates the combined
+amount once; it is not a claim that finance leases are absent.
 
 No observation or supplied publication date may follow the valuation date.
 Different dates remain visible with input ages. Only `unlevered_beta` may use
@@ -197,13 +228,38 @@ algebraically implied beta is not a measured issuer beta or a unique market
 belief. A solved WACC that recapitalizes terminal value differs from a cash-return
 calculation that holds the original terminal exit value fixed.
 
+## Explain multiples, entry rules and repurchase economics
+
+`computed_diagnostics.valuation_multiples` compares market enterprise value with
+first-forecast-year EBIT and NOPAT, shows the original DCF exit multiples, and
+computes conditional cash-flow returns at an unchanged entry multiple. All use
+the existing integer-year FCFF convention with debt/claims settled at entry;
+they are not common-share payout forecasts. Nonpositive profit produces a
+not-meaningful multiple, rather than an apparently useful ratio. A return using
+the original DCF exit value must disclose its implied multiple change.
+
+Optional `entry_policy` requires exactly `basis` (`base` or `weighted`),
+`margin_of_safety` (at least zero and below one), `label` and `rationale`.
+The conditional entry price equals the selected reference value times
+`1 - margin_of_safety`. No discount is chosen by the engine. This is an explicit
+house decision rule, not a promise of returns.
+
+Optional `repurchase_tests` contains up to eight independent cash-funded cases.
+Each requires `name`, `amount`, `price`, `source_refs`, `label` and
+`interpretation` (`historical_retrospective_conditional` or
+`forward_conditional_illustration`). Spending cannot exceed the reconciled modeled
+nonoperating cash. The calculator reduces cash and shares once while holding
+operating value fixed. Comparing historical repurchase prices with today's house
+value is a retrospective conditional comparison, not a measured historical loss.
+Forward cases are illustrations, not forecasts of future repurchase policy.
+
 ## Replay evidence and review a supplied plan
 
 The CLI flags map to Python's `pipeline.run(source_snapshot=..., forecast_plan=...)`:
 
 ```bash
 python -m investmentideas AAPL --snapshot sources.json \
-  --forecast-plan assumptions.json --draft memo-body.md --budget 3
+  --forecast-plan assumptions.json --draft memo-body.md --budget 10
 ```
 
 `--snapshot` accepts a JSON list of 1–80 records, at most 3 MB, with consecutive

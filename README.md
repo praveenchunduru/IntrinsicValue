@@ -26,7 +26,9 @@ If you prefer not to install Git, use **Code → Download ZIP** on this reposito
 unpack it, and run `python -m investmentideas` from the extracted folder.
 
 Open **http://127.0.0.1:8765**, enter your [OpenRouter key](https://openrouter.ai/settings/keys),
-choose a ticker, profile and budget, and generate a full memo. Choose **economy**
+enter a real SEC requester contact email, choose a ticker, profile and spending allowance,
+and generate a full memo. The email identifies requests to SEC; it is not another paid
+API key. It stays in memory and is sent only to SEC. Choose **economy**
 for open-weight analysis or **balanced** for Claude analysis with open-weight research. Use `python3` or Windows
 `py` if that is your Python command. A dedicated key with a provider credit limit
 is recommended. The key is held in process memory; it is not stored in the browser,
@@ -53,9 +55,12 @@ supported issuer releases. Bounded OpenRouter web searches broaden the evidence
 without a separate search key. Unavailable sources, excerpt limits, secondary
 financial data and issuer-directory mapping fallbacks are disclosed.
 
-Primary inline-XBRL facts lock supported balances, shares and the financial-debt,
-cash and finance-lease bridge. Conflicting or incomplete essential primary coverage
-produces no price target; unknown facts never become zero. Cash classification and
+Primary inline-XBRL and normalized SEC Companyfacts records lock supported annual
+revenue, shares and the financial-debt, cash and finance-lease bridge. Alternative
+reported totals and disjoint components are reconciled; similar tag names alone
+do not establish accounting scope. Conflicting or incomplete essential primary coverage
+stops before paid research and produces no price target; unknown facts never become zero.
+The saved input-coverage report identifies the missing disclosures. Cash classification and
 unidentified additional claims remain explicit house policies, not reported facts.
 
 The workflow synthesizes evidence, builds a source-referenced forecast plan,
@@ -83,28 +88,34 @@ NOL or lease-adjustment schedule.
 read -rs OPENROUTER_API_KEY
 export OPENROUTER_API_KEY
 
+# Replace with your real requester email for SEC access; this is not a paid key
+export SEC_CONTACT_EMAIL='your-real-email@example.com'
+
 # Full memo: open-weight extraction/research; Claude analysis and review
-python -m investmentideas AAPL --profile balanced --budget 2
+python -m investmentideas AAPL --profile balanced --budget 10
 
 # Cheaper full analysis, or a four-call financial overview
-python -m investmentideas AAPL --profile economy --budget 2
-python -m investmentideas AAPL --quick --profile economy --budget 1
+python -m investmentideas AAPL --profile economy --budget 10
+python -m investmentideas AAPL --quick --profile economy --budget 2
 
 # Replay dated sources and review a supplied company-specific forecast
-python -m investmentideas AAPL --snapshot sources.json --forecast-plan assumptions.json --budget 3
+python -m investmentideas AAPL --snapshot sources.json --forecast-plan assumptions.json --budget 10
 
 # Investigate independent review notes in the same day's saved full run
-python -m investmentideas AAPL --review-notes findings.txt --max-revisions 6 --budget 3
+python -m investmentideas AAPL --review-notes findings.txt --max-revisions 6 --budget 10
 
 # Choose an independent final reviewer without repeating completed research
-python -m investmentideas AAPL --review-model openai/gpt-5.4 --budget 3
+python -m investmentideas AAPL --review-model openai/gpt-5.4 --budget 10
 
 ```
 
 Use `--evidence` for focused text, `--sources` for supplemental source records,
 `--counterfactuals` for computed base-case overrides, and `--draft` for an edited
 author body. `--easy-model` and `--strong-model` select explicit model IDs; unavailable
-IDs fail. See `--help` and the [underwriting guide](docs/underwriting.md).
+IDs and unsupported pricing fail before paid research. `--sec-contact your-real-email@example.com`
+sets SEC requester identity for one run without saving it. `SEC_CONTACT_EMAIL` or a
+contact-bearing `SEC_USER_AGENT` can supply it instead. See `--help` and the
+[underwriting guide](docs/underwriting.md).
 
 On PowerShell use your preferred local secret mechanism to set
 `$env:OPENROUTER_API_KEY`, or use the browser form. [portable environment example](investmentideas/.env.example) documents the
@@ -146,7 +157,8 @@ reapprove a previous memo. Generate/review a revised memo when inputs change.
 | `balanced` (default) | Qwen3 30B A3B Instruct, open-weight | Claude Sonnet 4.6 |
 | `economy` | Qwen3 30B A3B Instruct, open-weight | DeepSeek V3.2, open-weight |
 
-Prices and model availability are checked against the live OpenRouter catalog.
+All selected models and their supported token pricing are checked against the live
+OpenRouter catalog before paid work.
 Provider fallback can use another provider **for the same model** under the same
 price caps. There are no automatic client retries or silent switches to expensive
 models. A separate explicit `--review-model` override is saved with the run and
@@ -167,8 +179,18 @@ or a promised full-run price. Full-memo cost depends on evidence and revisions.
 
 Local budgets use conservative input-byte and maximum-output estimates before each
 request. They are **not provider-enforced total spending caps**. Limit a dedicated
-OpenRouter key too. The initial full run budget defaults to $2 in the local app;
-increase the cumulative allowance explicitly if more research or review is needed.
+OpenRouter key too. Full research defaults to a **$10 total planning allowance** in
+the CLI and local app; quick research retains $2. This is not a promised charge or
+guaranteed completion. An explicit allowance is never raised automatically; prior
+charges and uncertain reservations still count when resuming the same settings.
+
+Free evidence collection precedes primary-input and budget preflights. An insufficient
+initial allowance stops before paid research and saves `budget-preflight.json` with
+an actionable resume instruction. Its known-context reservation floor covers the first
+draft and one review; unknown future search results, generated forecasts, valuation
+context, memo text, repairs and revisions can require more. Complete actual prompts
+are reserved again before each request. If primary evidence is missing, retry free
+collection with a SEC contact or supply primary disclosures; dated snapshots remain frozen.
 A run can stop with unresolved findings when its budget or revision limit is reached;
 that status is preserved rather than treated as approval.
 
@@ -225,8 +247,8 @@ Those primarily mocked tests missed material live-data and workflow failures
 identified by the external audit. A fresh end-to-end baseline is required before
 claiming the automated workflow works in practice. Financial facts, forecasts and
 source support still require careful inspection.
-The canonical input adapter currently recognizes a bounded set of US-GAAP/DEI
-inline-XBRL concepts; unsupported taxonomies or missing bridge components require
+The canonical input adapter recognizes a bounded set of US-GAAP/DEI concepts from
+inline filings and SEC Companyfacts; unsupported taxonomies or missing bridge components require
 additional primary coverage rather than a model-generated substitute.
 
 This public edition is a standalone local research application. It does not

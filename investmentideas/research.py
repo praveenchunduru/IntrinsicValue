@@ -14,13 +14,15 @@ import re
 import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import Request
 from xml.etree import ElementTree as ET
 
 from .sec_directory import load_directory, snapshot_metadata
+from .sec_http import MAX_SOURCE_BYTES, open_http as urlopen, user_agent
+from .inputs import PRIMARY_INPUT_CONCEPTS
+from .companyfacts import FINANCIAL_CONTEXT_CONCEPTS
 
-USER_AGENT = 'InvestmentIdeas/0.1 (https://github.com/praveenchunduru/InvestmentIdeas)'
-MAX_DOCUMENT_BYTES = 3_000_000
+MAX_DOCUMENT_BYTES = MAX_SOURCE_BYTES
 MAX_EXCERPT_CHARS = 16_000
 SEC_HOST = 'www.sec.gov'
 APPLE_FEED = 'https://www.apple.com/newsroom/rss-feed.rss'
@@ -77,15 +79,15 @@ def fetch_official_text(url):
     if (parsed.scheme != 'https' or parsed.hostname not in ALLOWED_TEXT_HOSTS or
             parsed.username or parsed.password or parsed.port not in {None, 443}):
         raise ValueError('Only known HTTPS regulator/issuer documents are supported')
-    request = Request(url, headers={'User-Agent': USER_AGENT, 'Accept': 'text/html,application/xhtml+xml,application/xml,text/plain'})
+    request = Request(url, headers={'User-Agent': user_agent(url), 'Accept': 'text/html,application/xhtml+xml,application/xml,text/plain'})
     try:
-        with urlopen(request, timeout=35) as response:
+        with urlopen(request, timeout=35, allowed_hosts=ALLOWED_TEXT_HOSTS) as response:
             final = urlparse(response.geturl())
             if final.scheme != 'https' or final.hostname not in ALLOWED_TEXT_HOSTS:
                 raise RuntimeError('Official document redirected outside its allowed hosts')
             raw = response.read(MAX_DOCUMENT_BYTES + 1)
             if len(raw) > MAX_DOCUMENT_BYTES:
-                raise RuntimeError('Official document exceeds the 3 MB retrieval limit')
+                raise RuntimeError('Official document exceeds the 20 MB retrieval limit')
             content_type = response.headers.get_content_type()
             if content_type not in {'text/html', 'application/xhtml+xml', 'application/xml', 'text/xml', 'text/plain', 'application/rss+xml'}:
                 raise RuntimeError('Official document is not an HTML, XML or text source')
@@ -108,6 +110,47 @@ _EXCERPT_HEADINGS = (
 )
 
 
+def _heading_lines(text):
+    """Yield original line offsets and normalized heading candidates once.
+
+    Matching whole documents with leading whitespace lets it cross line breaks
+    and repeatedly reconsider the same blank lines. Collapse internal spacing
+    and omit empty candidates before applying the bounded heading patterns.
+    Keep offsets in the original cleaned text, never in the normalized copy.
+    """
+    start = 0
+    for line in text.split('\n'):
+        normalized = ' '.join(line.split())
+        if normalized:
+            yield start, start + len(line), normalized
+        start += len(line) + 1
+
+
+def _matched_headings(headings, pattern):
+    """Match lines, allowing a bounded heading split by HTML block breaks."""
+    beginning = {'business', 'risk', "management's", 'management’s', 'management',
+                 'segment', 'consolidated', 'note', 'research', 'r', 'r&',
+                 'provision', 'income', 'taxation'}
+    expression = re.compile(pattern)
+    for index, (start, end, line) in enumerate(headings):
+        if expression.fullmatch(line):
+            yield start, end, line
+            continue
+        first = line.split(' ', 1)[0].lower()
+        if len(line) > 256 or (first not in beginning and not first.startswith('item')):
+            continue
+        # SEC HTML may put each heading word on its own line. Limit joining to
+        # a short heading, never an arbitrarily long paragraph or blank run.
+        candidate = line
+        for _, next_end, following in headings[index + 1:index + 16]:
+            if len(candidate) + len(following) + 1 > 256:
+                break
+            candidate += '\n' + following
+            if expression.fullmatch(candidate):
+                yield start, next_end, candidate
+                break
+
+
 def select_excerpts(text, max_chars=MAX_EXCERPT_CHARS):
     """Exact text windows; selection is not a claim of complete filing coverage."""
     if not isinstance(text, str) or not text.strip():
@@ -119,11 +162,12 @@ def select_excerpts(text, max_chars=MAX_EXCERPT_CHARS):
     widths = {'business': 2400, 'risks': 1800, 'management discussion': 2400,
               'segment disclosure': 1600, 'operating results': 2200,
               'balance sheet': 2200, 'cash flow': 2200}
+    headings = list(_heading_lines(text))
     for label, pattern in _EXCERPT_HEADINGS:
-        matches = list(re.finditer(pattern, text))
+        matches = [start for start, _, _ in _matched_headings(headings, pattern)]
         if matches:
             # Filings often repeat headings in the contents before the section.
-            position = next((m.start() for m in matches if m.start() > 6000), matches[-1].start())
+            position = next((start for start in matches if start > 6000), matches[-1])
             start = max(0, position - 120)
             windows.append((label, start, min(len(text), start + widths[label])))
     # Long documents without conventional SEC headings still get disclosed,
@@ -158,6 +202,30 @@ _FOCUS_HEADINGS = (
 )
 
 
+def _has_prose_sentence(text):
+    """Recognize eight consecutive prose words before sentence punctuation.
+
+    Tokens and the gaps between them are scanned once. Do not use a repeated
+    word-group regex followed by a broad tail: a punctuation-free paragraph
+    makes that expression try overlapping partitions of the same words.
+    Numbers/table separators break a word run; line breaks end a sentence.
+    """
+    for line in text.split('\n'):
+        last_stop = max(line.rfind('.'), line.rfind('!'), line.rfind('?'))
+        if last_stop < 0:
+            continue
+        count, previous_end = 0, 0
+        for word in re.finditer(r"\b[A-Za-z][A-Za-z\u2019'\-]*", line):
+            if word.end() > last_stop:
+                break
+            gap = line[previous_end:word.start()]
+            count = count + 1 if all(char in ' ,;:' for char in gap) else 1
+            if count >= 8:
+                return True
+            previous_end = word.end()
+    return False
+
+
 def archive_focus_excerpts(document):
     """Select exact R&D/tax windows from an already archived public document.
 
@@ -176,15 +244,15 @@ def archive_focus_excerpts(document):
         return []
 
     windows = []
+    headings = list(_heading_lines(cleaned))
     for label, width, count, pattern in _FOCUS_HEADINGS:
         candidates = []
-        for match in re.finditer(pattern, cleaned):
-            following = cleaned[match.end():match.end() + width]
+        for start, heading_end, heading in _matched_headings(headings, pattern):
+            following = cleaned[heading_end:heading_end + width]
             # A contents row or table of figures alone is not a disclosure.
             # Require a prose sentence rather than rewarding a heading merely
             # because it occurs late in a long document.
-            prose = re.search(r'(?:\b[A-Za-z][A-Za-z\u2019\'\-]*[ ,;:]*){8,}[^\n]*[.!?]', following)
-            if not prose:
+            if not _has_prose_sentence(following):
                 continue
             score = 0
             nearby = following[:800]
@@ -194,10 +262,10 @@ def archive_focus_excerpts(document):
                 score += bool(re.search(r'\b(?:increased?|decreased?|higher|lower|compared)\b', nearby, re.I))
             else:
                 score += 3 * bool(re.search(r'\b(?:effective tax rate|one.time|tax charge|tax provision|deferred tax|valuation allowance)\b', following, re.I))
-                score += 2 * bool(re.match(r'[ \t]*note\s+\d+', match.group(), re.I))
+                score += 2 * bool(re.match(r'[ \t]*note\s+\d+', heading, re.I))
             # Earlier equally substantive matches are stable; no issuer or
             # fiscal date is preferred or inferred by this selector.
-            candidates.append((score, match.start(), min(len(cleaned), match.start() + width)))
+            candidates.append((score, start, min(len(cleaned), start + width)))
         selected = []
         for _, start, end in sorted(candidates, key=lambda item: (-item[0], item[1])):
             if any(start < old_end and end > old_start for old_start, old_end in selected):
@@ -304,8 +372,9 @@ def _apple_feed_entries(feed):
 def gather_primary(ticker, fetch_json, fetch_text=None):
     """Return public primary source records and specific unresolved retrieval gaps.
 
-    At most two SEC filings are retrieved. AAPL additionally has a discovered
-    official issuer-release fallback; no fabricated per-company URLs are used.
+    At most two SEC filings are retrieved. AAPL additionally has discovered
+    recent issuer releases, retaining up to three results periods for comparison;
+    no fabricated per-company URLs are used.
     The caller assigns final source IDs, archives ``raw_document`` outside model
     context, and may request supplementary research for gaps reported here.
     """
@@ -347,11 +416,17 @@ def gather_primary(ticker, fetch_json, fetch_text=None):
     if ticker == 'AAPL':
         try:
             entries = _apple_feed_entries(fetch_text(APPLE_FEED))
-            financial = next((entry for entry in entries if re.search(r'\breports?\b.*\bresults\b', entry['title'], re.I)), None)
+            financial = []
+            for entry in entries:
+                if (re.search(r'\breports?\b.*\bresults\b', entry['title'], re.I) and
+                        not any(prior['url']==entry['url'] for prior in financial)):
+                    financial.append(entry)
+                if len(financial)==3:
+                    break
             operating = next((entry for entry in entries if re.search(r'\b(unveils|introduces|launches)\b', entry['title'], re.I)), None)
-            if financial is None:
+            if not financial:
                 gaps.append('The current Apple feed contained no discoverable financial-results release.')
-            for entry in (financial, operating):
+            for entry in [*financial, operating]:
                 if entry is None:
                     continue
                 try:
@@ -361,7 +436,7 @@ def gather_primary(ticker, fetch_json, fetch_text=None):
                                 'interpretation': 'Issuer statements, including forward-looking and promotional statements, require attribution; they are not independent evidence of adoption or economic returns.'}
                     sources.append(_source(entry['title'], entry['url'], document,
                                            kind='issuer_release', source_tier='issuer_primary', metadata=metadata,
-                                           max_chars=16000 if entry is financial else 10000))
+                                           max_chars=16000 if entry in financial else 10000))
                 except (RuntimeError, ValueError, OSError, TypeError):
                     gaps.append(f'Official Apple release "{entry["title"]}" was discovered but unavailable; it was not reviewed.')
         except (RuntimeError, ValueError, OSError, TypeError):
@@ -393,6 +468,7 @@ _INLINE_CONCEPTS = {
     'EntityCommonStockSharesOutstanding',
     'WeightedAverageNumberOfDilutedSharesOutstanding', 'WeightedAverageNumberOfSharesOutstandingBasic',
 }
+_INLINE_CONCEPTS.update(concept.split(':', 1)[1] for concept in PRIMARY_INPUT_CONCEPTS | FINANCIAL_CONTEXT_CONCEPTS)
 
 
 def _inline_number(token, attrs):

@@ -97,6 +97,38 @@ class PrimaryFocusTests(unittest.TestCase):
         self.assertEqual(archive_focus_excerpts('<h1>Contents</h1><div>Research and Development</div><div>12</div><div>Income Taxes</div><div>43</div>'), [])
         self.assertEqual(archive_focus_excerpts(''), [])
 
+    def test_punctuation_free_audit_input_is_not_a_prose_disclosure(self):
+        document = '<h2>Income Taxes</h2>' + paragraph('a ' * 800)
+        self.assertEqual(archive_focus_excerpts(document), [])
+
+    def test_heading_split_across_html_blocks_keeps_original_offsets(self):
+        sentence = 'The effective tax rate increased primarily due to a valuation allowance during the year.'
+        document = '<h2>Note 12 — Income<br>Taxes</h2>' + paragraph(sentence)
+        excerpts = archive_focus_excerpts(document)
+        self.assertEqual(len(excerpts), 1)
+        self.assertTrue(excerpts[0]['text'].startswith('Note 12 — Income\nTaxes\n'))
+        self.assert_exact(document, excerpts)
+
+    def test_large_repeated_punctuation_free_sections_do_not_create_disclosures(self):
+        # Repeated headers and long word runs formerly forced the prose regex
+        # to rescan overlapping partitions for each absent sentence ending.
+        section = '<h2>Income Taxes</h2>' + paragraph('a ' * 800)
+        document = section * 1000
+        self.assertLess(len(document.encode()), MAX_DOCUMENT_BYTES)
+        self.assertEqual(archive_focus_excerpts(document), [])
+
+    def test_prose_word_runs_reject_tables_and_do_not_cross_lines(self):
+        for text in ('one two three four five six seven.',
+                     'one two three four\nfive six seven eight.',
+                     'one 10 two 20 three 30 four 40 five 50 six 60 seven 70 eight 80.'):
+            with self.subTest(text=text):
+                self.assertEqual(archive_focus_excerpts('<h2>Income Taxes</h2>' + paragraph(text)), [])
+        document = '<h2>Income Taxes</h2>' + paragraph(
+            "The company's current-year tax provision reflects higher earnings and a valuation allowance.")
+        excerpts = archive_focus_excerpts(document)
+        self.assertEqual(len(excerpts), 1)
+        self.assert_exact(document, excerpts)
+
     def test_invalid_or_oversize_archives_are_rejected(self):
         with self.assertRaises(ValueError):
             archive_focus_excerpts(None)

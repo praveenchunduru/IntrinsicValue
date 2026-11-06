@@ -1,7 +1,7 @@
 import json
 import unittest
 
-from investmentideas.quality import claim_ledger, inspect_memo, parse_json, parse_review
+from investmentideas.quality import _render_normalized_quote, claim_ledger, inspect_memo, parse_json, parse_review
 
 SOURCE = {'id':'S1','kind':'financial_timeseries','data':{'revenue':100}}
 MEMO = '''# Equity memo
@@ -133,6 +133,38 @@ class StructuredReviewTests(unittest.TestCase):
                 row=finding(); row['current_excerpt']=excerpt
                 with self.assertRaisesRegex(ValueError,'current_excerpt'):
                     parse_review(json.dumps({'verdict':'revise','findings':[row]}), memo=memo)
+
+    def test_quote_normalization_preserves_balancing_boundaries_and_code_runs(self):
+        examples = [
+            ('**bold** __bold__ *italic* _italic_', 'bold bold italic italic'),
+            ('***nested*** ___nested___', 'nested nested'),
+            ('word_case word__case__ word_case_ _case_word_',
+             'word_case word__case__ word_case_ case_word'),
+            ('\\*literal* \\_literal_ 2 * 3 * 4', '\\*literal* \\_literal_ 2 * 3 * 4'),
+            ('* spaced*', '* spaced*'),
+            ('*spaced *', '*spaced *'),
+            ('unmatched* _unmatched', 'unmatched* _unmatched'),
+            ('`code` ``code with `tick` inside``', 'code code with `tick` inside'),
+            ('`unmatched ``different width```', '`unmatched ``different width```'),
+            ('**$12.912**\n\tper share ... **unchanged**', '$12.912 per share ... unchanged'),
+        ]
+        for memo, expected in examples:
+            with self.subTest(memo=memo):
+                self.assertEqual(_render_normalized_quote(memo), expected)
+
+    def test_quote_normalization_preserves_150kb_unmatched_emphasis(self):
+        memo = '*a ' * 50000
+        self.assertEqual(len(memo.encode()), 150000)
+        self.assertEqual(_render_normalized_quote(memo), memo.rstrip())
+        self.assertEqual(parse_review('{"verdict":"pass","findings":[]}', memo=memo),
+                         {'verdict':'pass','findings':[]})
+
+    def test_quote_normalization_preserves_150kb_unmatched_backtick_runs(self):
+        # Every run has a different width, so none can form a code span.
+        memo = ''.join('`' * width + ' x ' for width in range(1, 541))
+        memo += 'x' * (150000 - len(memo))
+        self.assertEqual(len(memo.encode()), 150000)
+        self.assertEqual(_render_normalized_quote(memo), memo)
 
     def test_unmatched_optional_minor_excerpt_is_preserved_as_unverified(self):
         row=finding('minor'); row['current_excerpt']='This wording comes from the prompt, not the memo.'

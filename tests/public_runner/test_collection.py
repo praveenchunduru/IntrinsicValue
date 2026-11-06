@@ -15,12 +15,17 @@ class CollectionTests(unittest.TestCase):
         self.assertTrue(any('SEC facts unavailable' in g for g in gaps))
 
     def test_live_primary_financials_take_precedence(self):
-        facts={'facts':{'us-gaap':{'Revenues':{'units':{'USD':[{'val':100,'end':'2025-12-31','filed':'2026-02-01'}]}}}}}
+        facts={'cik':320193,'entityName':'APPLE INC','facts':{'us-gaap':{'Revenues':{'units':{'USD':[
+            {'val':100,'start':'2025-01-01','end':'2025-12-31','filed':'2026-02-01',
+             'form':'10-K','accn':'0000320193-26-000001'}]}}}}}
         with patch.object(core,'request_json',side_effect=[{'chart':{'result':[{'meta':{'symbol':'AAPL'}}]}},facts]), \
                 patch.object(core,'load_directory',return_value=({'0':{'ticker':'AAPL','title':'APPLE INC','cik_str':320193}},False)), \
                 patch.object(core,'yahoo_financials') as fallback:
             sources,gaps=core.collect('AAPL')
         self.assertEqual(sources[1]['kind'],'sec_facts')
+        self.assertEqual(sources[1]['source_tier'],'regulatory_primary')
+        self.assertEqual(sources[1]['data']['reported_facts'][0]['fact_origin'],'sec_companyfacts')
+        self.assertNotIn('inline_facts',sources[1]['data'])
         self.assertEqual(gaps,[])
         fallback.assert_not_called()
 
