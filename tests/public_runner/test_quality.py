@@ -98,6 +98,22 @@ class StructuredReviewTests(unittest.TestCase):
         review=parse_review(json.dumps({'verdict':'revise','findings':[row]}), memo=MEMO)
         self.assertEqual(review['findings'][0]['current_excerpt_match'],'render-normalized')
 
+    def test_smart_quotes_match_without_repairing_words_numbers_or_omissions(self):
+        memo='**Apple’s policy:** “Revenue is 100.” The decision is “do not initiate.”'
+        row=finding()
+        row['current_excerpt']='Apple\'s policy: "Revenue is 100."'
+        review=parse_review(json.dumps({'verdict':'revise','findings':[row]}),memo=memo)
+        self.assertEqual(review['verdict'],'revise')
+        self.assertEqual(review['findings'][0]['severity'],'major')
+        self.assertEqual(review['findings'][0]['current_excerpt_match'],'typography-normalized')
+        self.assertEqual(review['findings'][0]['current_excerpt'],row['current_excerpt'])
+        for excerpt in ['Apples policy: "Revenue is 100."','Apple\'s policy: "Revenue is 99."',
+                        'Apple\'s policy: "Revenue was 100."','Apple\'s policy ... "do not initiate."']:
+            with self.subTest(excerpt=excerpt):
+                row['current_excerpt']=excerpt
+                with self.assertRaisesRegex(ValueError,'current_excerpt'):
+                    parse_review(json.dumps({'verdict':'revise','findings':[row]}),memo=memo)
+
     def test_rendered_quote_rejects_changed_words_numbers_and_noncontiguous_text(self):
         memo='- **Operating leases:** The **$12.912 billion** liability is approximately `$0.89` per share.'
         excerpts=['Operating leases: The $12.921 billion liability is approximately $0.89 per share.',

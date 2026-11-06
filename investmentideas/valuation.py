@@ -706,21 +706,31 @@ def _calibration_comparisons(plan, actuals, base, baseline):
             raise ValueError('Calibration comparisons may change only explicit risk/return input records')
         if ('risk_free_rate' in overrides)!=('equity_risk_premium' in overrides):
             raise ValueError('A comparison must replace the matched Treasury/ERP pair together')
-        spec=copy.deepcopy(plan['discount_rate']);spec.update(copy.deepcopy(overrides))
-        calculation=calculate_discount_rate(spec,as_of=plan.get('valuation_date'))
+        trial=copy.deepcopy(plan)
+        trial['discount_rate'].update(copy.deepcopy(overrides))
+        beta=trial['discount_rate'].get('unlevered_beta',{})
+        if ('unlevered_beta' not in overrides and isinstance(beta,dict)
+                and beta.get('calculation')=='historical_issuer_cash_corrected'):
+            # The house already validated this duplicate. Its conditional
+            # value must be rederived when a dependency such as tax changes.
+            beta.pop('value',None)
+        for scenario in trial['scenarios'].values():
+            scenario.pop('wacc',None)
+        _,_,calculation=materialize(trial)
         projection=_project(actuals,dict(base,wacc=calculation['applied_wacc']))
         output.append({'name':case['name'],'label':case['label'],'overrides':copy.deepcopy(overrides),
                        'discount_rate_calculation':calculation,'wacc':calculation['applied_wacc'],
                        'per_share_value':projection['per_share_value'],
                        'terminal_value_fraction':projection['terminal_value_fraction'],
                        'value_change':_value_change(projection['per_share_value'],baseline),
-                       'fixed_assumptions':'Only the listed rate-input records and resulting constant WACC change. Base operating cash flows, terminal growth/ROIC, equity bridge and house scenarios/weights stay fixed. Historical-fit alternatives are not forward confidence intervals.'})
+                       'fixed_assumptions':'Only the listed rate-input records and their dependent calculations, including resulting constant WACC, change. Base operating cash flows, terminal growth/ROIC, equity bridge and house scenarios/weights stay fixed. Historical-fit alternatives are not forward confidence intervals.'})
     return output
 
 
 def evaluate(plan):
     """Recompute all scenarios, bridge enterprise to equity, and return results."""
-    plan, operating, calibration = materialize(plan)
+    canonical_plan=copy.deepcopy(plan)
+    plan, operating, calibration = materialize(canonical_plan)
     actuals, definitions, market = _validated(plan)
     counterfactuals = _counterfactuals(plan, actuals, definitions)
     scenarios = {}
@@ -758,7 +768,7 @@ def evaluate(plan):
     if calibration is not None:
         result['discount_rate_calculation'] = calibration
     if 'calibration_comparisons' in plan:
-        result['calibration_comparisons'] = _calibration_comparisons(plan,actuals,definitions['base'],scenarios['base']['per_share_value'])
+        result['calibration_comparisons'] = _calibration_comparisons(canonical_plan,actuals,definitions['base'],scenarios['base']['per_share_value'])
     if 'monitoring' in plan:
         result['monitoring'] = _monitoring(plan,counterfactuals,scenarios['base']['per_share_value'],result.get('calibration_comparisons',[]))
     if market is not None:

@@ -104,12 +104,22 @@ def _render_normalized_quote(text):
     return ' '.join(text.split())
 
 
+def _quote_typography(text):
+    """Treat typographic and straight quotation marks as presentation only.
+
+    No words, digits, dashes, omission markers or other punctuation change.
+    This does not repair paraphrases or join disjoint passages.
+    """
+    return text.translate(str.maketrans({'‘': "'", '’': "'", '“': '"', '”': '"'}))
+
+
 def parse_review(text, memo=None):
     """Validate unresolved findings and their logically matching verdict.
 
     When a frozen memo is supplied, material findings must quote bounded wording
     from that version, allowing only Markdown emphasis/backticks and whitespace
-    differences. Match provenance is retained; unmatched optional minor excerpts
+    differences, or explicitly recorded smart/straight quote substitutions.
+    Match provenance is retained; unmatched optional minor excerpts
     remain explicitly unverified. Location does not establish an allegation's
     truth. Explicitly withdrawn material findings invalidate the review rather
     than being silently dropped, downgraded or converted into approval.
@@ -117,6 +127,7 @@ def parse_review(text, memo=None):
     if memo is not None and not isinstance(memo, str):
         raise ValueError('Frozen review memo must be text')
     rendered_memo = _render_normalized_quote(memo) if memo is not None else None
+    typography_memo = _quote_typography(rendered_memo) if rendered_memo is not None else None
     review = parse_json(text)
     if not isinstance(review, dict) or not isinstance(review.get('findings'), list):
         raise ValueError('Review must be an object with a findings list')
@@ -154,6 +165,8 @@ def parse_review(text, memo=None):
                 excerpt_match = 'literal'
             elif normalized_excerpt and normalized_excerpt in rendered_memo:
                 excerpt_match = 'render-normalized'
+            elif normalized_excerpt and _quote_typography(normalized_excerpt) in typography_memo:
+                excerpt_match = 'typography-normalized'
             else:
                 excerpt_match = 'not_matched'
             if material and excerpt_match == 'not_matched':

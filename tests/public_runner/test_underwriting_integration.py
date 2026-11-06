@@ -116,6 +116,65 @@ class UnderwritingIntegrationTests(unittest.TestCase):
         plan['calibration_comparisons'][0]['overrides']={'risk_free_rate':plan['discount_rate']['risk_free_rate']}
         with self.assertRaisesRegex(ValueError,'pair together'):evaluate(plan)
 
+    def test_issuer_beta_tax_comparison_rederives_beta_from_canonical_inputs(self):
+        plan=inputs()
+        beta=plan['discount_rate']['unlevered_beta']
+        beta.pop('value')
+        beta.update(calculation='historical_issuer_cash_corrected',historical_equity_beta=1.2)
+        baseline=evaluate(plan)
+        # Valid duplicate house rates must not constrain the conditional rate.
+        for scenario in plan['scenarios'].values():
+            scenario['wacc']=baseline['discount_rate_calculation']['applied_wacc']
+        tax=copy.deepcopy(plan['discount_rate']['marginal_tax_rate'])
+        tax.update(value=.17,label='Conditional marginal tax assumption')
+        plan['calibration_comparisons']=[{'name':'lower_tax','label':'Conditional debt shield',
+                                          'overrides':{'marginal_tax_rate':tax}}]
+        original=copy.deepcopy(plan)
+        result=evaluate(plan)
+        house=result['discount_rate_calculation']
+        changed=result['calibration_comparisons'][0]['discount_rate_calculation']
+        expected_beta=(1.2/(1+.83*.09))/(1-30/1090)
+        self.assertAlmostEqual(changed['provenance']['unlevered_beta']['value'],expected_beta)
+        self.assertNotEqual(changed['provenance']['unlevered_beta']['value'],
+                            house['provenance']['unlevered_beta']['value'])
+        derived=changed['provenance']['unlevered_beta']['derived_calculation']
+        self.assertEqual(derived['inputs']['marginal_tax_rate'],.17)
+        self.assertEqual(derived['inputs']['nonoperating_cash'],30)
+        self.assertAlmostEqual(changed['relevered_beta'],house['relevered_beta'])
+        self.assertAlmostEqual(changed['cost_of_equity'],house['cost_of_equity'])
+        self.assertAlmostEqual(changed['applied_wacc']-house['applied_wacc'],
+                               (90/1090)*.06*(.25-.17))
+        self.assertEqual(changed['provenance']['marginal_tax_rate'],tax)
+        self.assertEqual(changed['valuation_input_reconciliations'],
+                         house['valuation_input_reconciliations'])
+        self.assertEqual(result['scenarios'],baseline['scenarios'])
+        self.assertEqual(result['weighted_per_share_value'],baseline['weighted_per_share_value'])
+        self.assertEqual(plan,original)
+        # An inherited duplicate beta is checked for the house, then rederived
+        # for a comparison with different financing assumptions.
+        plan['discount_rate']['unlevered_beta']['value']=house['provenance']['unlevered_beta']['value']
+        duplicate_original=copy.deepcopy(plan)
+        self.assertEqual(evaluate(plan)['calibration_comparisons'],result['calibration_comparisons'])
+        self.assertEqual(plan,duplicate_original)
+
+    def test_rate_comparison_materializes_typed_beta_override_and_checks_duplicates(self):
+        plan=inputs()
+        beta=copy.deepcopy(plan['discount_rate']['unlevered_beta'])
+        beta.pop('value')
+        beta.update(calculation='historical_issuer_cash_corrected',historical_equity_beta=1.2)
+        plan['calibration_comparisons']=[{'name':'issuer_history','label':'Conditional issuer history',
+                                          'overrides':{'unlevered_beta':beta}}]
+        original=copy.deepcopy(plan)
+        result=evaluate(plan)
+        changed=result['calibration_comparisons'][0]['discount_rate_calculation']
+        self.assertAlmostEqual(changed['provenance']['unlevered_beta']['value'],
+                               (1.2/(1+.75*.09))/(1-30/1090))
+        self.assertIn('derived_calculation',changed['provenance']['unlevered_beta'])
+        self.assertEqual(plan,original)
+        beta['value']=99
+        with self.assertRaisesRegex(ValueError,'unlevered_beta.value conflicts'):
+            evaluate(plan)
+
     def test_discount_rate_solve_recovers_base_without_calling_it_an_observed_beta(self):
         plan=inputs(); value=evaluate(plan)['scenarios']['base']['per_share_value']
         plan['market_price']=value
