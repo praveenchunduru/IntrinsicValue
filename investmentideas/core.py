@@ -215,6 +215,10 @@ class Router:
         parameters = catalog_model.get('supported_parameters')
         if not isinstance(parameters, list) or 'temperature' in parameters:
             payload['temperature'] = 0.2
+        if (isinstance(parameters,list) and 'response_format' in parameters and
+                stage.startswith(('valuation_plan','model_response','review_'))):
+            payload['response_format'] = {'type':'json_object'}
+            row['response_format'] = 'json_object'
         if web:
             payload['plugins'] = [{'id':'web','engine':'exa','mode':'auto','max_results':5}]
         try:

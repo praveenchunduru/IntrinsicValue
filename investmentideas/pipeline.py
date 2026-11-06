@@ -6,7 +6,7 @@ recorded assessments, never the original system's signed publication authority.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import hashlib
 import copy
 import json
@@ -15,16 +15,21 @@ from pathlib import Path
 import re
 import shutil
 import time
+from urllib.request import Request, urlopen
 
 from . import core
+from .costs import cost_summary
 from .analytics import annual_metrics
 from .fundamentals import yahoo_financials
 from .inputs import canonical_reported_inputs, pin_reported_inputs
 from .quality import DIAGNOSTIC_SCOPE, claim_ledger, inspect_memo, parse_json, parse_review
 from .research import gather_primary, inline_facts, archive_focus_excerpts
-from .valuation import evaluate, save_valuation
+from .macro import gather_us_calibration
+from .market_beta import gather_weekly_beta
+from .prompt_context import valuation_context as render_valuation_context
+from .valuation import evaluate, materialize, save_valuation
 
-VERSION = 'full-1'
+VERSION = 'full-2'
 SECTIONS = '''Executive valuation conclusion; variant thesis and what the market price implies;
 business economics and industry/competition; management and capital allocation; historical
 financial quality; operating forecast and valuation; bear/base/bull scenarios; catalysts;
@@ -60,6 +65,45 @@ value before calculation. Never invent calculated sensitivities absent the compu
 For banks, insurers, funds or liquidation cases, return {"unavailable":true,
 "missing_inputs":["appropriate sector model"],"reason":"..."} instead of forcing FCFF.
 """
+UNDERWRITING_GUIDANCE = '''When reliable category revenue is supplied, build a company-specific
+operating_model instead of guessing consolidated growth/margins. Its shape is
+{"currency":"USD","amount_unit":"currency_units","assumptions_label":"Forward arrays are house assumptions",
+"earnings_mode":"gross_profit_less_expenses","components":[{"name":"products","base_revenue":700,
+"source_refs":["S1"]},{"name":"services","base_revenue":300,"source_refs":["S1"]}],
+"scenarios":{"bear":{"components":{"products":{"growth_rates":[0.02,0.02,0.02,0.02,0.02],
+"gross_margins":[0.4,0.4,0.4,0.4,0.4]},"services":{"growth_rates":[0.08,0.08,0.08,0.08,0.08],
+"gross_margins":[0.7,0.7,0.7,0.7,0.7]}},"expenses":{"research_and_development":[80,85,90,95,100],
+"selling_general_administrative":[40,42,44,46,48]}},"base":"same complete object structure",
+"bull":"same complete object structure"}}. Example amounts are not issuer forecasts.
+Starting category revenue must reconcile exactly to reported total revenue. Gross margin arrays
+are forward assumptions; never call unreported individual category margins observed facts.
+Use aggregate_ebit_margins mode without gross margins/expenses if only category revenues are supported.
+Omit main scenario growth_rates and, in gross mode, ebit_margins: Python derives them.
+If complete dated market inputs are available, provide discount_rate using the documented
+rates.py schema: matched risk_free_rate/equity_risk_premium observations, explicit unlevered_beta,
+market_equity, financial_debt, finance_lease_debt, pretax_cost_of_debt, marginal_tax_rate.
+Every record needs value, observed_at, source_refs and label; currency/amount_unit match the plan,
+as_of is the valuation date, lease_convention is gaap_operating. Omit main WACC when this
+calculation governs. Label sector/yield proxies and differing dates; do not invent a calibration.
+If completed-week issuer/benchmark evidence supports a historical equity beta, the unlevered_beta
+record may instead omit value and include calculation:"historical_issuer_cash_corrected" and
+historical_equity_beta:<measured value>, with observed_at, source_refs and label retained.
+Python uses the explicit nonoperating cash bridge and dated financing inputs to derive the
+operating-asset proxy. Adopting it for future risk is a house judgment, not a future measurement.
+Adjudicate issuer-history window, sector mapping and normalization alternatives when rate choice
+drives the conclusion; an exact formula alone does not justify the selected forward-risk input.
+Optional calibration_comparisons is a list of name, label and overrides, with each override a
+complete dated discount-rate input record. At most eight cases; replace Treasury and ERP together.
+These keep base operating cash flows fixed and are not probability-weighted scenarios.
+Without supported category/rate data retain an explicit consolidated house model and identify the gap.
+Optional counterfactuals may use operating_overrides with existing component growth_rates/gross_margins
+or existing expense arrays. Never mix these with aggregate growth/EBIT overrides. Maximum eight cases.
+Optional monitoring is a list of name, observation, review_by(YYYY-MM-DD), threshold,
+source_refs and exactly one of counterfactual(name) or calibration_comparison(name).
+Python supplies each conditional value and change.
+These are analyst-selected decision thresholds, not company guidance or automatic forecasts.
+Justify reinvestment and terminal returns; avoid a hidden terminal cash discontinuity.
+'''
 REVIEW_SCHEMA = '''Return ONLY {"verdict":"pass"|"revise","findings":[{"id":"F1",
 "severity":"blocker"|"major"|"minor","issue":"precise defect and location",
 "source_refs":["S1"],"current_excerpt":"exact quote from the CURRENT draft, at most 1200 characters","fix":"specific correction or evidence needed"}]}.
@@ -155,7 +199,10 @@ def _register(folder, sources, source):
         raw = raw.encode() if isinstance(raw, str) else raw
         archive = folder / 'sources_raw'
         archive.mkdir(exist_ok=True)
-        target = archive / f'{source["id"]}.html'
+        suffix = source.get('archive_extension', '.html')
+        if suffix not in {'.html','.txt','.csv','.json','.xlsx','.pdf'}:
+            raise ValueError('Unsupported source archive extension')
+        target = archive / f'{source["id"]}{suffix}'
         target.write_bytes(raw)
         source['archive'] = str(target.relative_to(folder))
         source['archive_sha256'] = hashlib.sha256(raw).hexdigest()
@@ -197,7 +244,7 @@ def _evidence_context(sources):
     for source in sources:
         row = {key: source[key] for key in ('id','title','url','kind','source_tier','retrieved_at','primary_focus_excerpts') if key in source}
         data = source.get('data')
-        if isinstance(data, dict) and (source.get('kind') in {'financial_timeseries','sec_facts'} or 'excerpts' in data or 'inline_facts' in data):
+        if isinstance(data, dict) and (source.get('kind') in {'financial_timeseries','sec_facts','macro_calibration'} or 'excerpts' in data or 'inline_facts' in data):
             # Preserve all structured financial rows; do not truncate JSON midway.
             row['data'] = copy.deepcopy(data)
             if 'inline_facts' in row['data']:
@@ -213,10 +260,26 @@ def _evidence_context(sources):
     return json.dumps(packed, ensure_ascii=False)
 
 
+def _fetch_calibration_bytes(url):
+    # Only the collector's fixed public URLs reach this helper. Provider keys
+    # are never attached to evidence requests.
+    request = Request(url, headers={'User-Agent':'IntrinsicValue research (github.com/praveenchunduru/IntrinsicValue)'})
+    with urlopen(request, timeout=25) as response:
+        raw = response.read(3000001)
+    if len(raw) > 3000000:
+        raise ValueError('Calibration source exceeds 3 MB')
+    return raw
+
+
 def _lock_plan(plan, sources):
     if not isinstance(plan,dict):
         raise ValueError('Forecast plan must be an object')
-    reported=canonical_reported_inputs(sources)
+    valuation_day = plan.get('valuation_date', datetime.now(timezone.utc).date().isoformat())
+    if not isinstance(valuation_day, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', valuation_day):
+        raise ValueError('valuation_date must be YYYY-MM-DD')
+    if date.fromisoformat(valuation_day) > datetime.now(timezone.utc).date():
+        raise ValueError('valuation_date cannot be in the future')
+    reported=canonical_reported_inputs(sources, as_of=valuation_day)
     if not reported['coverage'].get('complete'):
         raise ValueError('Essential reported inputs lack complete primary coverage')
     proposal=copy.deepcopy(plan)
@@ -226,7 +289,7 @@ def _lock_plan(plan, sources):
     proposal['currency']=reported['currency']
     proposal['amount_unit']='currency_units'
     proposal['share_unit']='shares'
-    proposal['valuation_date']=datetime.now(timezone.utc).date().isoformat()
+    proposal['valuation_date']=valuation_day
     locked,changes=pin_reported_inputs(proposal,sources)
     if 'market_price' not in locked['reported_inputs']:
         locked.pop('market_price',None)
@@ -261,6 +324,24 @@ def _validate_plan_sources(plan, sources):
                 continue
             if ref not in known:
                 raise ValueError(f'Unknown source reference for {field}')
+    def nested_refs(value, path):
+        if isinstance(value, dict):
+            for key, entry in value.items():
+                if key == 'source_refs':
+                    refs = [entry] if isinstance(entry, str) else entry
+                    if not isinstance(refs, list) or not refs:
+                        raise ValueError(f'Explicit source references required for {path}')
+                    for ref in refs:
+                        if not isinstance(ref, str) or ref.strip().strip('[]') not in known:
+                            raise ValueError(f'Unknown source reference for {path}')
+                else:
+                    nested_refs(entry, path + '.' + str(key))
+        elif isinstance(value, list):
+            for index, entry in enumerate(value):
+                nested_refs(entry, path + '.' + str(index))
+    for field in ('operating_model', 'discount_rate', 'monitoring', 'calibration_comparisons'):
+        if field in plan:
+            nested_refs(plan[field], field)
     bridge = plan.get('net_debt_bridge')
     if isinstance(bridge, dict):
         debt, cash = bridge.get('debt'), bridge.get('selected_cash_and_nonoperating_investments')
@@ -273,6 +354,9 @@ def _validate_plan_sources(plan, sources):
 def valuation_section(plan, result):
     if not result:
         return '\n## Executable valuation\n\nNo value target is calculated: essential valuation inputs are unresolved.\n'
+    # Reader values use the calculated view; saved assumptions retain the editable
+    # component/rate inputs without introducing duplicate derived paths.
+    plan, _, _ = materialize(plan)
     currency = result.get('currency', plan['currency'])
     lines = ['\n## Executable valuation', '',
              'The following values are recomputed by Python from the editable assumptions; forecasts are house assumptions.', '',
@@ -309,6 +393,40 @@ def valuation_section(plan, result):
             share=f'{fraction:.1%}' if isinstance(fraction,(int,float)) else 'undefined'
             lines.append(f'| {name.replace("_"," ")} | {currency} {case["per_share_value"]:,.2f} | {share} |')
         lines += ['', 'Exact forecast overrides and fixed-input bases are recorded in assumptions.json and valuation.json.']
+    operating=result.get('operating_forecasts')
+    if operating:
+        lines += ['', '### Calculated operating bridge — base case', '',
+                  'Whole currency units. GAAP expense paths retain rent and stock compensation; component margins are forward assumptions.', '',
+                  '| Forecast year | Revenue | Gross profit | Operating expenses | EBIT | EBIT margin |',
+                  '|---|---:|---:|---:|---:|---:|']
+        for row in operating['scenarios']['base']['cashflows']:
+            gross=f'{row["gross_profit"]:,.0f}' if row['gross_profit'] is not None else 'not modeled'
+            expenses=f'{row["operating_expenses"]:,.0f}' if row['operating_expenses'] is not None else 'not modeled'
+            lines.append(f'| {row["year"]} | {row["revenue"]:,.0f} | {gross} | {expenses} | {row["ebit"]:,.0f} | {row["ebit_margin"]:.2%} |')
+    calibration=result.get('discount_rate_calculation')
+    if calibration:
+        lines += ['', '### Dated required-return calculation', '',
+                  f'Applied WACC: {calibration["applied_wacc"]:.2%}; cost of equity: {calibration["cost_of_equity"]:.2%}; '
+                  f'relevered beta: {calibration["relevered_beta"]:.4f}; debt weight: {calibration["debt_weight"]:.2%}. '
+                  'These are calculations from the disclosed dated inputs and proxy choices, not observed issuer required returns.']
+    comparisons=result.get('calibration_comparisons',[])
+    if comparisons:
+        lines += ['', '| Conditional rate method | WACC | Base value/share | Change from base |',
+                  '|---|---:|---:|---:|']
+        for row in comparisons:
+            lines.append(f'| {row["name"].replace("_"," ")} | {row["wacc"]:.2%} | {row["per_share_value"]:,.2f} | {row["value_change"]["dollar_delta"]:+,.2f} |')
+        lines += ['', 'Only the named rate inputs change. Historical-fit endpoints are not valuation confidence intervals.']
+    monitoring=result.get('monitoring',[])
+    if monitoring:
+        lines += ['', '### Recomputed observation tests', '',
+                  'Deadlines and thresholds are house decision rules, not issuer guidance. A result is conditional on adopting its exact changed inputs; correlated cases are not additive.', '',
+                  '| Observation / review deadline | Threshold and conditional input change | Value/share / change from base |',
+                  '|---|---|---:|']
+        for row in monitoring:
+            clean=lambda value:str(value).replace('|','\\|').replace('\n',' ')
+            refs=', '.join(row['source_refs']) if isinstance(row['source_refs'],list) else row['source_refs']
+            lines.append(f'| {clean(row["name"])} / {row["review_by"]} | {clean(row["threshold"])} [{refs}] | '
+                         f'{row["conditional_per_share_value"]:,.2f} / {row["value_change"]["dollar_delta"]:+,.2f} |')
     return '\n'.join(lines)+'\n'
 
 
@@ -321,17 +439,34 @@ def _render(memo, sources, gaps, plan, result, state):
     if state.get('review_history'):
         unresolved = state['review_history'][-1].get('findings',[])
     note = '\n'.join(f'- {f["severity"]}: {f["issue"]}' for f in unresolved)
+    if not note:
+        note = ('No currently recorded material finding. This is a model assessment, not certification.'
+                if state.get('complete') else 'Review is incomplete; unresolved issues have not been determined.')
     return (memo.rstrip() + '\n' + valuation_section(plan,result) + '\n## Source register\n'+refs+
             '\n\n## Evidence limitations\n'+ ('\n'.join('- '+g for g in gaps) or 'No retrieval gap recorded; source completeness still requires review.')+
             '\n\n## Review status\n'+state.get('quality_status','in_progress')+
-            '\n\n'+(note or 'No currently recorded material finding. This is a model assessment, not certification.')+
+            '\n\n'+note+
             '\n\nThis portable research draft is separate from the OAuth system’s signed publications. '
             'Software checks and model reviews do not establish investment truth or forecast accuracy.\n')
 
 
 def run(ticker, key, *, profile='balanced', budget=2.0, directory='research-output', evidence='',
-        easy_model=None, strong_model=None, progress=lambda message: None, max_revisions=3, review_notes='', extra_sources=None, counterfactuals=None, draft=None, review_model=None):
+        easy_model=None, strong_model=None, progress=lambda message: None, max_revisions=3, review_notes='', extra_sources=None, counterfactuals=None, draft=None, review_model=None,
+        source_snapshot=None, forecast_plan=None):
     ticker = core.symbol(ticker)
+    if source_snapshot is not None:
+        if (not isinstance(source_snapshot, list) or not 1 <= len(source_snapshot) <= 80 or
+                len(json.dumps(source_snapshot).encode()) > 3000000):
+            raise ValueError('Source snapshot must contain 1–80 source records within 3 MB')
+        for index, source in enumerate(source_snapshot, 1):
+            if (not isinstance(source, dict) or source.get('id') != f'S{index}' or
+                    not all(field in source for field in ('title','kind','data'))):
+                raise ValueError('Source snapshot records require consecutive S1… IDs, title, kind and data')
+        parse_json(json.dumps(source_snapshot))
+    if forecast_plan is not None:
+        if not isinstance(forecast_plan, dict) or len(json.dumps(forecast_plan).encode()) > 150000:
+            raise ValueError('Provided forecast plan must be a JSON object within 150 KB')
+        parse_json(json.dumps(forecast_plan))
     if review_model is not None and (not isinstance(review_model,str) or not review_model.strip() or len(review_model)>200):
         raise ValueError('Review model must be a nonempty OpenRouter model ID of at most 200 characters')
     if draft is not None and (not isinstance(draft,str) or not draft.strip() or len(draft.encode())>150000):
@@ -356,14 +491,14 @@ def run(ticker, key, *, profile='balanced', budget=2.0, directory='research-outp
         raise ValueError('Evidence must be text of at most 100 KB')
     easy,strong=core.MODELS[profile]
     easy,strong=easy_model or easy,strong_model or strong
-    identity=_digest([VERSION,ticker,profile,easy,strong,evidence,datetime.now(timezone.utc).date().isoformat(),core.SYSTEM])[:16]
+    identity=_digest([VERSION,ticker,profile,easy,strong,evidence,source_snapshot,datetime.now(timezone.utc).date().isoformat(),core.SYSTEM])[:16]
     folder=Path(directory)/ticker/('full-'+identity)
     folder.mkdir(parents=True,exist_ok=True)
     with _lock(folder):
-        return _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,review_notes,extra_sources or [],counterfactuals,draft,review_model)
+        return _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,review_notes,extra_sources or [],counterfactuals,draft,review_model,source_snapshot,forecast_plan)
 
 
-def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,review_notes,extra_sources,counterfactuals,draft,review_model):
+def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,review_notes,extra_sources,counterfactuals,draft,review_model,source_snapshot=None,forecast_plan=None):
     notes_reopened=False
     state_path=folder/'state.json'
     state=json.loads(state_path.read_text()) if state_path.exists() else {
@@ -372,7 +507,24 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
     def checkpoint():
         core.save(state_path,state)
         core.save(folder/'usage.json',state['ledger'])
+        core.save(folder/'cost-summary.json',cost_summary(state['ledger']))
         core.save(folder/'sources.json',state['sources'])
+    changed_forecast = forecast_plan is not None and _digest(forecast_plan) != state.get('provided_forecast_digest')
+    if changed_forecast:
+        if state.get('complete'):
+            state['iteration'] += 1
+            notes_reopened = True
+        archive = folder/'revisions'/f'model-before-provided-{len(state.get("forecast_history",[]))+1}'
+        archive.mkdir(parents=True, exist_ok=True)
+        for name in ('assumptions.json','valuation.json','cashflows.csv','sensitivity.csv'):
+            if (folder/name).exists():
+                shutil.copyfile(folder/name,archive/name)
+        state['complete'] = False
+        state['quality_status'] = 'needs_review'
+        state['review_invalidated'] = True
+        state.pop('pending_revision',None)
+        if draft is None:
+            state.pop('current_memo',None)
     previous_reviewer=state.get('review_model')
     reviewer=review_model or previous_reviewer or strong
     if reviewer!=state.get('review_model',strong):
@@ -438,6 +590,20 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         return folder
     if state['iteration'] > max_revisions:
         raise ValueError(f'Increase max_revisions to at least {state["iteration"]} to investigate the new review notes')
+    if not state.get('evidence_collected') and source_snapshot is not None:
+        state['sources'] = []
+        state['gaps'] = ['This run uses an explicitly supplied dated source snapshot. Evidence and quotes are not refreshed; source support and completeness still require review.']
+        for item in source_snapshot:
+            item = copy.deepcopy(item)
+            # A manifest's original path is not a file available in this new run.
+            # Exact excerpts/hashes remain; supplied raw bytes are archived anew.
+            if 'raw_document' not in item:
+                item.pop('archive',None)
+            item['ingestion_method'] = 'provided_dated_snapshot'
+            _register(folder,state['sources'],item)
+        state['evidence_collected'] = True
+        state['web_research_complete'] = True
+        checkpoint()
     if not state.get('evidence_collected'):
         progress('Collecting financial facts, primary filings and issuer releases')
         sources,gaps=core.collect(ticker)
@@ -456,6 +622,15 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         state['gaps'].extend(gaps)
         for source in primary:
             _register(folder,state['sources'],source)
+        calibration, calibration_gaps = gather_us_calibration(_fetch_calibration_bytes)
+        for source in calibration:
+            _register(folder,state['sources'],source)
+        state['gaps'].extend(gap['reason'] for gap in calibration_gaps)
+        beta_sources, beta_gaps = gather_weekly_beta(ticker,core.request_json,
+            as_of=datetime.now(timezone.utc).date().isoformat())
+        for source in beta_sources:
+            _register(folder,state['sources'],source)
+        state['gaps'].extend(gap['reason'] for gap in beta_gaps)
         if evidence:
             _register(folder,state['sources'],{'title':'Supplied evidence (verify provenance)','url':None,
                                                'kind':'user_evidence','data':evidence,'source_tier':'unverified'})
@@ -521,7 +696,9 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
     if not state.get('web_research_complete'):
         for lane,question in [
             ('business','latest annual filing business segments, competitive economics, revenue and margins; prefer primary filings and issuer releases'),
-            ('challenge','strongest disconfirming evidence: competition, regulation, product-cycle and capital allocation risks; dated primary and reputable independent sources')]:
+            ('challenge','named outside bull and bear investment arguments, original fund letters/research notes, their dates, disclosed positions, forecast and valuation-method disagreements; dated primary and reputable independent sources'),
+            ('expectations','current fiscal-year consensus revenue and earnings, exact accounting basis, analyst counts/ranges and observation dates; distinguish existing Street expectations from a genuine house disagreement'),
+            ('claims','latest proxy incentives, insider transaction types and dates, capital allocation, equity awards, debt/lease/tax/purchase commitments; identify which facts change an operating driver or equity claim')]:
             answer=call('web_'+lane,easy,
                         f'Research {ticker} as of {datetime.now(timezone.utc).date()}: {question}. '
                         'Use the web search results. Identify exact source passages, dates and definitions. '
@@ -551,14 +728,14 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
     # The pending prose phase already has its sources, findings and adjudicated
     # model. Re-synthesizing newly added targeted evidence would repay completed
     # work before resuming the saved revision.
-    thesis='' if resume_revision or (draft is not None and state.get('plan')) else call('evidence_synthesis',easy,
+    thesis='' if resume_revision or (draft is not None and (state.get('plan') or forecast_plan is not None)) else call('evidence_synthesis',easy,
                 'Build a dated evidence table and a decision-focused issue tree for this equity valuation. '
                 'Separate reported facts, house assumptions, competing explanations, and missing evidence. '
                 'Trace source IDs [S#]. Explain where management economics may differ from accounting; '
                 'prioritize questions that can change intrinsic value. Keep the synthesis to 800–1200 words; '
                 'select at most ten load-bearing facts, do not reproduce every raw time-series row. '
                 'List the five highest-impact uncertainties.\nEvidence:\n'+context,tokens=6500)
-    reported=canonical_reported_inputs(state['sources'])
+    reported=canonical_reported_inputs(state['sources'], as_of=(forecast_plan or state.get('plan',{})).get('valuation_date'))
     core.save(folder/'reported-inputs.json',reported)
     if reported['coverage'].get('conflicts'):
         raise RuntimeError('Primary financial facts conflict; resolve the source snapshot before valuation')
@@ -574,10 +751,24 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         state.pop('valuation',None)
     elif state.get('plan',{}).get('unavailable_due_to_coverage'):
         state.pop('plan',None)
+    if changed_forecast:
+        supplied, changes = _lock_plan(forecast_plan,state['sources'])
+        if not supplied.get('reported_inputs',{}).get('coverage',{}).get('complete'):
+            raise ValueError('Provided forecast requires complete reported-input coverage')
+        _validate_plan_sources(supplied,state['sources'])
+        if 'requested_counterfactuals' in state:
+            supplied['counterfactuals'] = copy.deepcopy(state['requested_counterfactuals'])
+        state['valuation'] = evaluate(supplied)
+        state['plan'] = supplied
+        state['provided_forecast_digest'] = _digest(forecast_plan)
+        state.setdefault('forecast_history',[]).append({'sha256':_digest(forecast_plan),'origin':'provided_forecast','iteration':state['iteration']})
+        state.setdefault('actual_input_corrections',[]).extend(changes)
+        save_valuation(folder,supplied,state['valuation'])
+        checkpoint()
     if 'plan' not in state:
         prompt=('Build an investment valuation plan for '+ticker+'. Ground actuals in supplied evidence; '
                 'use primary reports where accessible, and reconcile secondary-series dates and definitions.\n'+
-                FORECAST_SCHEMA+'\nIMMUTABLE reported inputs (copy these values exactly; forecast judgments only):\n'+json.dumps(reported)+'\nEvidence:\n'+context+'\nDiligence synthesis:\n'+thesis+'\nRetrieval gaps:\n'+gaps)
+                FORECAST_SCHEMA+UNDERWRITING_GUIDANCE+'\nIMMUTABLE reported inputs (copy these values exactly; forecast judgments only):\n'+json.dumps(reported)+'\nEvidence:\n'+context+'\nDiligence synthesis:\n'+thesis+'\nRetrieval gaps:\n'+gaps)
         text=call('valuation_plan',strong,prompt,tokens=12000)
         for repair in range(2):
             try:
@@ -613,16 +804,27 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         state['valuation']=evaluate(state['plan'])
         save_valuation(folder,state['plan'],state['valuation'])
     plan,result=state['plan'],state.get('valuation')
-    valuation_context=json.dumps({'assumptions':plan,'computed':result},ensure_ascii=False)
+    valuation_context=(render_valuation_context(plan,result) if result is not None else
+                       json.dumps({'assumptions':plan,'computed':None},ensure_ascii=False))
+    state['prompt_context_metrics'] = {
+        'full_json_utf8_bytes':len(json.dumps({'assumptions':plan,'computed':result},ensure_ascii=False).encode()),
+        'presentation_utf8_bytes':len(valuation_context.encode()),
+        'basis':'Deterministic presentation size, not a token count or a promised cost saving. Full saved math remains authoritative.'}
     if not state.get('current_memo'):
         draft=call('full_draft',strong,
             'Write a complete investment-committee equity research draft for '+ticker+
-            ', roughly 2200-3200 words, with an argument-led executive view and clear headings. '+SECTIONS+
+            ', roughly 3000-4500 words plus useful exhibits, with a concise decision-first opening and clear headings. '+SECTIONS+
             '\nSupport material factual claims with [S#] references. Use the archived evidence and actual '
             'computed valuation and computed_diagnostics, not model mental arithmetic. Explain what must be true for the market price '
             'and what invalidates the thesis. Address management, governance, economic reinvestment, SBC/dilution, '
             'competitive-return fade, taxes, debt/cash/claims, tail risks and decision-changing sensitivities '
             'to the extent evidence supports them. Missing evidence must narrow the conclusion. '
+            'Tie category demand, pricing/mix, delivery costs and GAAP expenses to the computed operating forecast. '
+            'Compare dated Street estimates on a matching basis and identify the true disagreement; known near-term '
+            'headwinds are not automatically an analytical edge. Engage named outside arguments and disclosed conflicts. '
+            'Explain the dated discount-rate build, source/proxy limits and separate hurdle if present. '
+            'Use the computed monitoring cases to show dated observation -> changed input -> conditional value, '
+            'without adding correlated cases together. Do not replace missing research with repeated caveats. '
             'Do not invent transcripts, guidance, consensus, exact fiscal dates, buybacks, or model features. '
             'This is valuation research only: do not give buy/sell/underweight ratings, portfolio sizing, '
             'tax or cost-basis advice. State the valuation view and what must be true instead. '
@@ -660,7 +862,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'valuation conclusion from evidence that falsifies a competing bullish/bearish case. '
             'Use computed_diagnostics for sensitivity statements; do not mentally invent tax or WACC ranges. '
             'All reverse-DCF statements are conditional on fixed named assumptions and explicit horizon. '
-            'Return the full revised memo only, roughly 2200-3200 words.\nEvidence:\n'+context+
+            'Retain the source-to-driver links, named outside challenge, rate build and computed monitoring table. '
+            'Return the full revised memo only, roughly 3000-4500 words plus exhibits.\nEvidence:\n'+context+
             '\nValuation:\n'+valuation_context+'\nMemo:\n'+memo+'\nFindings:\n'+json.dumps(combined)+'\nAdjudicated model response:\n'+json.dumps(candidate),tokens=14000)
         state['current_memo']=corrected
         state['iteration']=iteration+1
@@ -700,6 +903,11 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'buybacks/liquidity, net debt/cash/claims, WACC/tax/terminal reinvestment, scenario plausibility, '
                 'market-implied economics, thesis direction and genuine falsifiers, strongest contrary explanation and '
                 'decision framing all matter. Recompute every quoted sensitivity against computed_diagnostics; '
+                'Also audit the research argument: company-specific economic drivers, dated Street comparison, '
+                'authentic named outside views, calibrated required returns and observation-to-value monitoring. '
+                'A disclosed house assumption is not automatically well justified. Identify a material unsupported '
+                'load-bearing assumption or missing contrary evidence when it changes the conclusion, while avoiding '
+                'optional stylistic preferences or demands for unavailable proprietary data. '
                 'a correct base valuation does not make surrounding sensitivity prose correct. '
                 'Treat invented source assertions or unsupported valuation inputs as major; distinguish legitimate '
                 'disclosed forecasts from factual errors. If primary reports conflict with a secondary series, '
@@ -733,8 +941,21 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 review_value,normalized=_response_json(raw)
                 review=parse_review(json.dumps(review_value),memo=visible)
             except ValueError as exc:
-                raw=call(f'review_format_{iteration}',reviewer,prompt+'\nReformat this actual review, preserving every '
-                         'UNRESOLVED substantive finding, as the exact schema. Omit findings that explicitly say no correction is needed or are already resolved. Copy exact current_excerpt from the draft for each major/blocker. Format error: '+str(exc)+'\nReview:\n'+raw,tokens=12000)
+                (reviews/f'review-{iteration}-unparsed.txt').write_text(raw,encoding='utf-8')
+                # This call repairs presentation only. Repeating the full source
+                # packet and valuation wastes context and invites a new audit.
+                repair=('Reformat the recorded review below; do not conduct a new audit, add findings, '
+                        'or discard unresolved substantive findings. Preserve IDs, severities and meaning. '
+                        'For each finding copy ONE short contiguous verbatim excerpt, preferably 50–300 '
+                        'characters, from the CURRENT FROZEN MEMO. Do not join passages, use ellipses, '
+                        'wrap the excerpt in extra quotation marks, or write literal backslash-n text. '
+                        'For an omission quote the adjacent actual wording and describe the omission in issue. '
+                        'Omit only accusations explicitly withdrawn or described as already resolved in '
+                        'the recorded review. Return exactly the schema.\n'+REVIEW_SCHEMA+
+                        '\nFormat error: '+str(exc)+'\nCURRENT FROZEN MEMO:\n'+visible+
+                        '\nRECORDED REVIEW:\n'+raw)
+                raw=call(f'review_format_{iteration}',reviewer,repair,tokens=12000)
+                (reviews/f'review-{iteration}-reformatted.txt').write_text(raw,encoding='utf-8')
                 review_value,normalized=_response_json(raw)
                 review=parse_review(json.dumps(review_value),memo=visible)
             if normalized:
@@ -794,8 +1015,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'prose-only finding may leave forecasts unchanged; label it memo_only rather than rejecting it. Include compact '
             'finding_dispositions mapping finding IDs to accepted/rejected/clarified with source-backed reasons. '
             'Forecast changes must be explicit house assumptions and economically justified. '
-            +FORECAST_SCHEMA+'\nEvidence:\n'+context+'\nCurrent memo (verify allegations against this exact text):\n'+memo+'\nCurrent forecast proposal:\n'+json.dumps({k:plan[k] for k in
-                ('assumptions_label','scenario_rationales','scenarios') if k in plan})+
+            +FORECAST_SCHEMA+UNDERWRITING_GUIDANCE+'\nEvidence:\n'+context+'\nCurrent memo (verify allegations against this exact text):\n'+memo+'\nCurrent forecast proposal:\n'+json.dumps({k:plan[k] for k in
+                ('assumptions_label','scenario_rationales','scenarios','operating_model','discount_rate','monitoring','counterfactuals') if k in plan})+
             '\nLocked actuals (reference only; omit from your proposal):\n'+json.dumps(plan.get('actuals',{}))+
             '\nComputed diagnostics for verification:\n'+json.dumps((result or {}).get('computed_diagnostics',{}))+
             '\nComputed counterfactuals:\n'+json.dumps((result or {}).get('counterfactuals',{}))+
@@ -843,7 +1064,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 save_valuation(folder,plan,result)
                 state['valuation']=result
             state['plan']=plan
-            valuation_context=json.dumps({'assumptions':plan,'computed':result},ensure_ascii=False)
+            valuation_context=(render_valuation_context(plan,result) if result is not None else
+                               json.dumps({'assumptions':plan,'computed':None},ensure_ascii=False))
         core.save(reviews/f'model-response-{iteration+1}.json',adjudication)
         state['pending_revision']={
             'iteration':iteration,

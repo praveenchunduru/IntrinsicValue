@@ -22,6 +22,8 @@ def main():
     parser.add_argument('--strong-model', help='Override writing/review model with an OpenRouter model ID')
     parser.add_argument('--max-revisions',type=int,default=3,help='Full memo correction limit, 0–8 (default: 3)')
     parser.add_argument('--sources',type=Path,help='Append a JSON list of supplemental archived sources to the same full run (at most 3 MB)')
+    parser.add_argument('--snapshot',type=Path,help='Replay a dated S1… source manifest without refreshing evidence or quotes (at most 3 MB)')
+    parser.add_argument('--forecast-plan',type=Path,help='Review an explicit forecast JSON against pinned reported inputs; never bypasses review (at most 150 KB)')
     parser.add_argument('--draft',type=Path,help='Review an edited memo body in the same saved full run (UTF-8, at most 150 KB)')
     parser.add_argument('--counterfactuals',type=Path,help='Optional JSON object of named base-scenario forecast overrides (up to 64 KB)')
     parser.add_argument('--review-notes',type=Path,help='Reopen the same full run with additional independent review notes (UTF-8, at most 30 KB)')
@@ -30,7 +32,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.revalue:
-            if args.ticker or args.quick or args.evidence or args.counterfactuals or args.draft:
+            if args.ticker or args.quick or args.evidence or args.counterfactuals or args.draft or args.snapshot or args.forecast_plan:
                 parser.error('--revalue cannot be combined with a ticker, --quick or --evidence')
             if args.revalue.stat().st_size > 1_000_000:
                 raise ValueError('Assumptions file must be at most 1 MB')
@@ -62,6 +64,11 @@ def main():
                 raise ValueError('Supplemental source JSON must be at most 3 MB')
             sources=json.loads(args.sources.read_text(encoding='utf-8')) if args.sources else None
             extra={'max_revisions':args.max_revisions,'review_notes':notes,'extra_sources':sources}
+            for path, limit, field in ((args.snapshot,3000000,'source_snapshot'),(args.forecast_plan,150000,'forecast_plan')):
+                if path:
+                    if path.stat().st_size > limit:
+                        raise ValueError(f'{field} file exceeds its size limit')
+                    extra[field] = json.loads(path.read_text(encoding='utf-8'))
             if args.review_model:
                 extra['review_model']=args.review_model
             if args.draft:
@@ -72,8 +79,8 @@ def main():
                 if args.counterfactuals.stat().st_size>64000:
                     raise ValueError('Counterfactual JSON must be at most 64 KB')
                 extra['counterfactuals']=json.loads(args.counterfactuals.read_text(encoding='utf-8'))
-        elif args.review_notes or args.counterfactuals or args.draft:
-            raise ValueError('--review-notes, --counterfactuals and --draft apply only to full research')
+        elif args.review_notes or args.counterfactuals or args.draft or args.snapshot or args.forecast_plan:
+            raise ValueError('--review-notes, --counterfactuals, --draft, --snapshot and --forecast-plan apply only to full research')
         folder = runner(args.ticker, os.environ.get('OPENROUTER_API_KEY', ''), profile=args.profile,
                         budget=args.budget, directory=args.output, evidence=evidence,
                         easy_model=args.easy_model, strong_model=args.strong_model, progress=print, **extra)

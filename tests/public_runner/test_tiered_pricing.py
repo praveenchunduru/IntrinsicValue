@@ -43,6 +43,16 @@ class TieredPricingTests(unittest.TestCase):
         self.assertAlmostEqual(ledger[0]['charged_or_reserved_usd'], expected)
         self.assertNotIn('synthetic-key', repr(ledger))
 
+    def test_structured_stage_uses_json_mode_only_when_advertised(self):
+        for stage,parameters,expected in [('review_0',['response_format'],True),
+                ('valuation_plan',['response_format'],True),('full_draft',['response_format'],False),
+                ('review_0',[],False)]:
+            with self.subTest(stage=stage,parameters=parameters), patch.object(core,'request_json',
+                    side_effect=[catalog(supported_parameters=parameters),copy.deepcopy(RESULT)]) as request:
+                core.Router('synthetic-key',2,[]).complete(stage,MODEL,'Synthetic request')
+                payload=request.call_args.kwargs['payload']
+                self.assertEqual(payload.get('response_format'),{'type':'json_object'} if expected else None)
+
     def test_upper_tier_can_stop_a_request_that_base_prices_would_allow(self):
         with patch.object(core, 'request_json', return_value=catalog()) as request:
             ledger = []

@@ -16,6 +16,7 @@ DOWNLOADS = {
     'sources.json': 'application/json',
     'source-ledger.json': 'application/json',
     'usage.json': 'application/json',
+    'cost-summary.json': 'application/json',
     'cashflows.csv': 'text/csv; charset=utf-8',
     'sensitivity.csv': 'text/csv; charset=utf-8',
     'reported-inputs.json': 'application/json',

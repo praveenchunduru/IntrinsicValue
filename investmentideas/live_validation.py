@@ -49,6 +49,47 @@ def read_repository_json(name,max_bytes):
     return json.loads(selected.read_text(encoding='utf-8'))
 
 
+def validation_sources(value):
+    """Route a legacy supplement list or a complete dated research snapshot.
+
+    The v2 envelope preserves archived source IDs and the supplied forecast plan;
+    neither form carries review state or changes the pipeline's review gate.
+    """
+    snapshot=isinstance(value,dict)
+    if snapshot:
+        if value.get('format')!='intrinsicvalue_research_snapshot_v2':
+            raise ValueError('Source snapshot format must be intrinsicvalue_research_snapshot_v2')
+        sources=value.get('sources')
+        forecast=value.get('forecast_plan')
+        if not isinstance(forecast,dict):
+            raise ValueError('Source snapshot forecast_plan must be a JSON object within 150 KB')
+        try:
+            if len(json.dumps(forecast,allow_nan=False).encode())>150000:
+                raise ValueError('Source snapshot forecast_plan must be a JSON object within 150 KB')
+        except (TypeError,ValueError):
+            raise ValueError('Source snapshot forecast_plan must be a finite JSON object within 150 KB') from None
+    else:
+        sources=value
+    maximum=80 if snapshot else 20
+    minimum=1 if snapshot else 0
+    if not isinstance(sources,list) or not minimum<=len(sources)<=maximum:
+        raise ValueError('Source snapshot requires 1–80 sources' if snapshot else
+                         'Supplemental sources must be a JSON list of at most 20 sources / 3 MB')
+    try:
+        if len(json.dumps(sources,allow_nan=False).encode())>3000000:
+            raise ValueError('Sources exceed 3 MB')
+    except (TypeError,ValueError):
+        raise ValueError('Validation sources must be finite JSON within 3 MB') from None
+    for index,source in enumerate(sources,1):
+        if not isinstance(source,dict) or not all(field in source for field in ('title','kind','data')):
+            raise ValueError('Each validation source requires title, kind and data')
+        if snapshot and source.get('id')!=f'S{index}':
+            raise ValueError('Source snapshot records require consecutive S1… IDs')
+    if snapshot:
+        return {'source_snapshot':sources,'forecast_plan':forecast}
+    return {'extra_sources':sources}
+
+
 def main():
     mode = os.environ.get('VALIDATION_MODE', 'credentials')
     if mode not in {'credentials', 'economy', 'balanced', 'full', 'full_economy'}:
@@ -67,9 +108,9 @@ def main():
             limit=int(os.environ.get('VALIDATION_MAX_REVISIONS','3'))
             notes=os.environ.get('VALIDATION_REVIEW_NOTES','')
             source_file=os.environ.get('VALIDATION_SOURCE_FILE','')
-            sources=None
+            source_inputs={}
             if source_file:
-                sources=read_repository_json(source_file,3000000)
+                source_inputs=validation_sources(read_repository_json(source_file,3000000))
             counterfactual_file=os.environ.get('VALIDATION_COUNTERFACTUALS_FILE','')
             counterfactuals=read_repository_json(counterfactual_file,64000) if counterfactual_file else None
             budget=validation_budget(os.environ.get('VALIDATION_BUDGET','8'))
@@ -82,7 +123,8 @@ def main():
                 draft=selected.read_text(encoding='utf-8')
             folder=full_run(ticker,key,profile='balanced' if mode=='full' else 'economy',budget=budget,
                             directory='research-output',progress=lambda text:print(text,flush=True),
-                            max_revisions=limit,review_notes=notes,extra_sources=sources,counterfactuals=counterfactuals,draft=draft,review_model=os.environ.get('VALIDATION_REVIEW_MODEL') or None)
+                            max_revisions=limit,review_notes=notes,counterfactuals=counterfactuals,draft=draft,review_model=os.environ.get('VALIDATION_REVIEW_MODEL') or None,
+                            **source_inputs)
         else:
             folder = run(ticker, key, profile=mode, budget=1.0, directory='research-output', progress=lambda text:print(text,flush=True))
     finally:

@@ -270,6 +270,64 @@ class ValuationTests(unittest.TestCase):
             self.assertIsNone(row['percent_delta'])
         json.dumps(result,allow_nan=False)
 
+    def test_overflowing_capital_alternative_preserves_valid_house_values(self):
+        inputs=plan()
+        inputs['actuals'].update(revenue=3e307,net_debt=0,other_equity_claims=0,
+                                shares_outstanding=1e308)
+        for case in inputs['scenarios'].values():
+            case.update(growth_rates=[3,-.9],ebit_margins=[-1,.01],tax_rate=0,
+                        sales_to_capital=12,wacc=.1,terminal_growth=.02,terminal_roic=.15)
+        original=json.loads(json.dumps(inputs))
+        result=evaluate(inputs)
+        self.assertAlmostEqual(result['scenarios']['base']['per_share_value'],-1.0727603305785123)
+        changes=result['computed_diagnostics']['base_capital_efficiency']['changes']
+        unavailable=next(row for row in changes if row['sales_to_capital']==1)
+        self.assertEqual(unavailable['status'],'not_calculated')
+        self.assertIsNone(unavailable['per_share_value'])
+        self.assertIsNone(unavailable['dollar_delta'])
+        self.assertIsNone(unavailable['percent_delta'])
+        self.assertIn('finite numeric bounds',unavailable['reason'])
+        self.assertTrue(all(row['status']=='calculated' for row in changes if row['sales_to_capital']!=1))
+        self.assertEqual(inputs,original)
+        json.dumps(result,allow_nan=False)
+        # Overflow in a required house scenario remains a hard failure.
+        inputs['scenarios']['base']['sales_to_capital']=1
+        with self.assertRaisesRegex(ValueError,'Valuation arithmetic overflowed'):
+            evaluate(inputs)
+
+    def test_overflowing_terminal_return_alternative_preserves_valid_house_values(self):
+        inputs=plan()
+        inputs['actuals'].update(revenue=1e308,net_debt=0,other_equity_claims=0,
+                                shares_outstanding=1e308)
+        for case in inputs['scenarios'].values():
+            case.update(growth_rates=[0],ebit_margins=[.1],tax_rate=0,
+                        sales_to_capital=2,wacc=.01,terminal_growth=-.1,terminal_roic=1)
+        result=evaluate(inputs)
+        self.assertAlmostEqual(result['scenarios']['base']['per_share_value'],.9900990099009902)
+        alternative=result['computed_diagnostics']['base_terminal_return_at_wacc']
+        self.assertEqual(alternative['terminal_roic'],.01)
+        self.assertEqual(alternative['status'],'not_calculated')
+        self.assertIsNone(alternative['per_share_value'])
+        self.assertIsNone(alternative['dollar_delta'])
+        self.assertIsNone(alternative['percent_delta'])
+        self.assertIn('finite numeric bounds',alternative['reason'])
+        json.dumps(result,allow_nan=False)
+
+    def test_zero_forecast_investment_diagnostic_overflow_is_explicit(self):
+        inputs=plan()
+        inputs['actuals'].update(revenue=1e308,net_debt=0,other_equity_claims=0,
+                                shares_outstanding=1e308)
+        for case in inputs['scenarios'].values():
+            case.update(growth_rates=[.5],ebit_margins=[.92],tax_rate=0,
+                        sales_to_capital=1,wacc=.7,terminal_growth=-.1,terminal_roic=1)
+        result=evaluate(inputs)
+        self.assertAlmostEqual(result['scenarios']['base']['per_share_value'],1.5222058823529412)
+        capital=result['computed_diagnostics']['base_capital_efficiency']
+        self.assertIsNone(capital['zero_explicit_forecast_net_investment_per_share_value'])
+        self.assertEqual(capital['zero_explicit_forecast_net_investment_status'],'not_calculated')
+        self.assertTrue(all(row['status']=='calculated' for row in capital['changes']))
+        json.dumps(result,allow_nan=False)
+
 
     def test_saving_keeps_assumptions_editable_and_results_recomputable(self):
         inputs=plan(); result=evaluate(inputs)

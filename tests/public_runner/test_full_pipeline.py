@@ -78,7 +78,7 @@ class FakeRouter:
 class FullPipelineTests(unittest.TestCase):
     def setUp(self):
         FakeRouter.calls=[];FakeRouter.fail_revision=False;FakeRouter.fail_model=False;FakeRouter.malformed_model=False;FakeRouter.prefaced_model=False;FakeRouter.prefaced_review=False;FakeRouter.fail_review=False;FakeRouter.revise=False;FakeRouter.fail_draft=False;FakeRouter.unavailable=False;FakeRouter.withdraw=False;FakeRouter.forecasts_only=False
-        def canonical(sources):
+        def canonical(sources, **kwargs):
             inputs=plan()
             return {'actuals':inputs['actuals'],'currency':'USD','source_refs':inputs['source_refs'],
                     'input_dates':{},'coverage':{'complete':True,'status':'complete','conflicts':[],'missing_fields':[]}}
@@ -91,6 +91,8 @@ class FullPipelineTests(unittest.TestCase):
                 result['reported_inputs']=fixed
             return result,[]
         self.patches=[patch.object(pipeline.core,'collect',return_value=([SOURCE],[])),
+                      patch.object(pipeline,'gather_us_calibration',return_value=([],[])),
+                      patch.object(pipeline,'gather_weekly_beta',return_value=([],[])),
                       patch.object(pipeline,'gather_primary',return_value=([{'title':'Primary filing','url':'https://example.com/filing',
                          'kind':'filing','data':{'excerpt':'Revenue 1000000000'},'raw_document':'<html>public filing</html>'}],[])),
                       patch.object(pipeline.core,'Router',FakeRouter),patch.object(pipeline,'inspect_memo',return_value=[]),
@@ -100,15 +102,92 @@ class FullPipelineTests(unittest.TestCase):
     def tearDown(self):
         for p in reversed(self.patches):p.stop()
 
+    def test_quote_repair_preserves_substance_and_uses_only_frozen_text(self):
+        original=FakeRouter.complete
+        prompts={}
+        def malformed(router,stage,model,prompt,**kwargs):
+            result=original(router,stage,model,prompt,**kwargs)
+            prompts[stage]=prompt
+            if stage in ('review_0','review_format_0'):
+                finding={'id':'F1','severity':'major','issue':'Synthetic unresolved economics',
+                         'source_refs':['S1'],'fix':'Investigate the forecast',
+                         'current_excerpt':('Synthetic ... research' if stage=='review_0' else
+                                            'Synthetic financial research [S1].')}
+                return json.dumps({'verdict':'revise','findings':[finding]})
+            return result
+        with tempfile.TemporaryDirectory() as directory,patch.object(FakeRouter,'complete',malformed):
+            folder=pipeline.run('AAPL','synthetic',directory=directory,max_revisions=0)
+            state=json.loads((folder/'state.json').read_text())
+            self.assertFalse(state['complete'])
+            self.assertEqual(state['review_history'][0]['findings'][0]['severity'],'major')
+            self.assertTrue((folder/'reviews/review-0-unparsed.txt').exists())
+            self.assertTrue((folder/'reviews/review-0-reformatted.txt').exists())
+            self.assertIn('CURRENT FROZEN MEMO:',prompts['review_format_0'])
+            self.assertIn('RECORDED REVIEW:',prompts['review_format_0'])
+            self.assertNotIn('Deterministic diagnostics (not semantic proof)',prompts['review_format_0'])
+
+    def test_invalid_repaired_quote_still_blocks_completion_and_keeps_raw_attempts(self):
+        original=FakeRouter.complete
+        def malformed(router,stage,*args,**kwargs):
+            result=original(router,stage,*args,**kwargs)
+            if stage.startswith('review_'):
+                return json.dumps({'verdict':'revise','findings':[{'id':'F1','severity':'major',
+                    'issue':'Unresolved economics','source_refs':['S1'],'fix':'Investigate',
+                    'current_excerpt':'An invented excerpt absent from the memo'}]})
+            return result
+        with tempfile.TemporaryDirectory() as directory,patch.object(FakeRouter,'complete',malformed):
+            with self.assertRaisesRegex(ValueError,'contiguous wording'):
+                pipeline.run('AAPL','synthetic',directory=directory)
+            folder=next(Path(directory).glob('AAPL/full-*'))
+            state=json.loads((folder/'state.json').read_text())
+            self.assertFalse(state['complete'])
+            self.assertEqual(state['review_history'],[])
+            self.assertTrue((folder/'reviews/review-0-unparsed.txt').exists())
+            self.assertTrue((folder/'reviews/review-0-reformatted.txt').exists())
+
+    def test_provided_snapshot_forecast_and_body_require_only_fresh_review(self):
+        snapshot=[copy.deepcopy(SOURCE)]
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(pipeline.core,'collect',side_effect=AssertionError('snapshot must not refresh quotes')), \
+                 patch.object(pipeline,'gather_us_calibration',side_effect=AssertionError('snapshot must not refresh rates')):
+                folder=pipeline.run('AAPL','synthetic-key',directory=directory,
+                    source_snapshot=snapshot,forecast_plan=plan(),draft=MEMO)
+            self.assertEqual(FakeRouter.calls,['review_0'])
+            saved=json.loads((folder/'state.json').read_text())
+            self.assertTrue(saved['complete'])
+            self.assertEqual(saved['sources'][0]['id'],'S1')
+            self.assertIn('not refreshed',' '.join(saved['gaps']))
+            costs=json.loads((folder/'cost-summary.json').read_text())
+            self.assertEqual(costs['totals']['request_count'],1)
+            changed=plan();changed['scenarios']['base']['ebit_margins']=[.25]*5
+            pipeline.run('AAPL','synthetic-key',directory=directory,max_revisions=1,
+                source_snapshot=snapshot,forecast_plan=changed,draft=MEMO)
+            updated=json.loads((folder/'state.json').read_text())
+            self.assertTrue(updated['complete'])
+            self.assertEqual(FakeRouter.calls,['review_0','review_1'])
+            self.assertEqual(len(updated['ledger']),2)
+            self.assertTrue((folder/'revisions/model-before-provided-2/assumptions.json').exists())
+
+    def test_snapshot_and_provided_forecast_reject_invalid_inputs_before_paid_calls(self):
+        invalid_snapshot=[dict(SOURCE,id='S404')]
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError,'consecutive'):
+                pipeline.run('AAPL','synthetic-key',directory=directory,source_snapshot=invalid_snapshot)
+            proposal=plan();proposal['source_refs']['revenue']=['S404']
+            with self.assertRaisesRegex(ValueError,'Unknown source'):
+                pipeline.run('AAPL','synthetic-key',directory=directory,source_snapshot=[SOURCE],
+                             forecast_plan=proposal,draft=MEMO)
+            self.assertEqual(FakeRouter.calls,[])
+
     def test_complete_archives_recomputes_and_reuses_without_key_on_disk(self):
         with tempfile.TemporaryDirectory() as directory:
             folder=pipeline.run('AAPL','secret-synthetic-key',directory=directory)
-            self.assertEqual(len(FakeRouter.calls),6)
+            self.assertEqual(len(FakeRouter.calls),8)
             self.assertTrue((folder/'sources_raw'/'S2.html').exists())
             self.assertTrue((folder/'cashflows.csv').exists())
             self.assertIn('Weighted intrinsic value per share',(folder/'memo.md').read_text())
             self.assertEqual(pipeline.run('AAPL','secret-synthetic-key',directory=directory),folder)
-            self.assertEqual(len(FakeRouter.calls),6)
+            self.assertEqual(len(FakeRouter.calls),8)
             for p in folder.rglob('*'):
                 if p.is_file() and p.suffix in ['.md','.json','.html']:
                     self.assertNotIn('secret-synthetic-key',p.read_text())
@@ -151,6 +230,7 @@ class FullPipelineTests(unittest.TestCase):
             self.assertIn(state['current_memo'].rstrip(),visible)
             self.assertIn('Weighted intrinsic value per share',visible)
             self.assertIn('needs_review',visible)
+            self.assertIn('Review is incomplete',visible)
             self.assertFalse(state['complete'])
             self.assertTrue((folder/'source-ledger.json').exists())
 

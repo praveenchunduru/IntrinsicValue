@@ -54,6 +54,10 @@ import math
 from pathlib import Path
 import re
 
+from .operating import apply as apply_operating, derive_counterfactual
+from .rates import calculate_discount_rate
+from .market_beta import operating_asset_beta
+
 SCENARIOS = ('bear', 'base', 'bull')
 ACTUAL_FIELDS = ('revenue', 'net_debt', 'other_equity_claims', 'shares_outstanding')
 FORECAST_FIELDS = ('growth_rates', 'ebit_margins', 'tax_rate', 'sales_to_capital',
@@ -268,6 +272,102 @@ def _revenue_path(actuals, cashflows):
     return rows
 
 
+def _reverse_wacc(actuals, base, target, calibration=None):
+    """Conditional rate solves, not an observation of investor expectations."""
+    low, high = max(.0001, base['terminal_growth'] + .0001), .50
+    def residual(rate):
+        return _project(actuals, dict(base, wacc=rate))['per_share_value'] - target
+    samples = [(low + (high-low)*index/100, None) for index in range(101)]
+    samples = [(rate, residual(rate)) for rate, _ in samples]
+    tolerance = max(1, abs(target))*1e-10
+    roots = []
+    for rate, error in samples:
+        if abs(error) <= tolerance:
+            roots.append(rate)
+    for (left, fl), (right, fr) in zip(samples, samples[1:]):
+        if fl*fr >= 0:
+            continue
+        for _ in range(70):
+            middle = (left+right)/2
+            fm = residual(middle)
+            if abs(fm) <= tolerance:
+                left = right = middle
+                break
+            if fl*fm <= 0:
+                right = middle
+            else:
+                left, fl = middle, fm
+        rate = (left+right)/2
+        if not any(abs(rate-found)<1e-9 for found in roots):
+            roots.append(rate)
+    solutions = []
+    for rate in sorted(roots):
+        projection = _project(actuals, dict(base, wacc=rate))
+        row = {'wacc':rate, 'per_share_value':projection['per_share_value'],
+               'terminal_value_fraction':projection['terminal_value_fraction']}
+        if calibration is not None:
+            values = calibration['provenance']
+            premium = values['equity_risk_premium']['value']
+            equity_weight = calibration['equity_weight']
+            if premium and equity_weight:
+                equity_cost = (rate-calibration['debt_weight']*calibration['after_tax_cost_of_debt'])/equity_weight
+                beta = (equity_cost-values['risk_free_rate']['value'])/premium
+                row['conditional_equity_beta'] = beta
+                row['conditional_unlevered_beta'] = beta/(1+(1-values['marginal_tax_rate']['value'])*
+                    calibration['included_debt']/calibration['market_equity'])
+        solutions.append(row)
+    return {'status':'solved' if solutions else 'not_bracketed', 'search_range':[low,high],
+            'target_market_price':target, 'solutions':solutions,
+            'fixed_assumptions':'All base operating, tax, reinvestment, terminal growth/ROIC and equity-bridge inputs stay fixed. Only a constant WACC changes.',
+            'interpretation':'Conditional discount-rate solutions and, where available, algebraically equivalent betas using the supplied financing weights and rate/ERP inputs. They are not measured issuer betas, a unique market belief or an approved discount-rate calibration.'}
+
+
+def _cashflow_irr(cashflows):
+    low, high = -.95, 1.0
+    def npv(rate):
+        try:
+            value = math.fsum(amount/(1+rate)**year for year,amount in enumerate(cashflows))
+            return value if math.isfinite(value) else None
+        except (OverflowError, ZeroDivisionError, ValueError):
+            return None
+    samples = [(low+(high-low)*index/200,None) for index in range(201)]
+    samples = [(rate,npv(rate)) for rate,_ in samples]
+    tolerance = max(1,abs(cashflows[0]))*1e-10
+    roots = [rate for rate,error in samples if error is not None and abs(error)<=tolerance]
+    for (left,fl),(right,fr) in zip(samples,samples[1:]):
+        if fl is None or fr is None or fl*fr>=0:
+            continue
+        for _ in range(70):
+            middle=(left+right)/2; fm=npv(middle)
+            if fm is None:
+                break
+            if abs(fm)<=tolerance:
+                left=right=middle;break
+            if fl*fm<=0:
+                right=middle
+            else:
+                left,fl=middle,fm
+        root=(left+right)/2
+        if not any(abs(root-prior)<1e-8 for prior in roots):
+            roots.append(root)
+    return {'status':'solved' if roots else 'not_bracketed',
+            'annual_return_solutions':sorted(roots),'search_range':[low,high],
+            'nonfinite_grid_points_skipped':sum(error is None for _,error in samples)}
+
+
+def _fixed_exit_return(actuals, projection, price):
+    shares=actuals['shares_outstanding']
+    opening=-(actuals['net_debt']+actuals['other_equity_claims'])/shares
+    cashflows=[-price+opening]+[row['fcff']/shares for row in projection['cashflows']]
+    exit_value=projection['terminal_enterprise_value']/shares
+    cashflows[-1]+=exit_value
+    solved=_cashflow_irr(cashflows)
+    solved.update({'entry_price':price,'opening_bridge_distribution_per_share':opening,
+                   'terminal_enterprise_value_per_share':exit_value,'cashflows_per_share':cashflows,
+                   'basis':'Illustrative debt/claims-settled cash stream: the signed opening net-asset bridge is distributed (or funded) immediately; all unlevered FCFF is paid annually; enterprise value is sold in the last explicit year at the ORIGINAL scenario terminal formula. Exit value is fixed while solving the return. No actual payout, refinancing, tax or stock-price-return forecast is established.'})
+    return solved
+
+
 def _counterfactuals(plan, actuals, definitions):
     """Validate and project optional base overrides without changing house cases."""
     requested = plan.get('counterfactuals', {})
@@ -279,7 +379,7 @@ def _counterfactuals(plan, actuals, definitions):
         if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}', name):
             raise ValueError('counterfactual names must be 1–64 letters, digits, underscores, dots or hyphens, starting with a letter or digit')
         if (not isinstance(overrides, dict) or not overrides or
-                any(key not in FORECAST_FIELDS for key in overrides)):
+                any(key not in (*FORECAST_FIELDS, 'operating_overrides') for key in overrides)):
             raise ValueError(f'counterfactual {name}: provide only nonempty forecast overrides from {", ".join(FORECAST_FIELDS)}; actuals and probabilities cannot change')
         for field in ('growth_rates', 'ebit_margins'):
             if field in overrides and (not isinstance(overrides[field], list) or
@@ -287,10 +387,18 @@ def _counterfactuals(plan, actuals, definitions):
                 raise ValueError(f'counterfactual {name}: {field} must retain the base forecast horizon')
         # Reuse the same financial validation as house scenarios. No evaluate()
         # recursion or probability substitution is involved.
-        changed = dict(base, **overrides)
+        operating_case = None
+        if 'operating_overrides' in overrides:
+            if any(field in overrides for field in ('growth_rates', 'ebit_margins')):
+                raise ValueError('A counterfactual cannot mix operating drivers with aggregate growth or EBIT overrides')
+            changed, operating_case = derive_counterfactual(plan, overrides['operating_overrides'])
+            changed.update({key:value for key,value in overrides.items() if key != 'operating_overrides'})
+        else:
+            changed = dict(base, **overrides)
         trial = dict(plan, scenarios=dict(definitions, base=changed))
         _, validated, _ = _validated(trial)
         effective = validated['base']
+        changed_fields = {field for field in FORECAST_FIELDS if effective[field] != base[field]}
         projection = _project(actuals, effective)
         projection.update(
             basis='Conditional base-scenario counterfactual, not an observed market input, forecast or replacement for the house scenarios.',
@@ -299,12 +407,61 @@ def _counterfactuals(plan, actuals, definitions):
             fixed_input_basis={
                 'reference_scenario': 'base',
                 'actuals': copy.deepcopy(actuals),
-                'unchanged_base_inputs': {field: copy.deepcopy(base[field]) for field in FORECAST_FIELDS if field not in overrides},
+                'unchanged_base_inputs': {field: copy.deepcopy(base[field]) for field in FORECAST_FIELDS if field not in changed_fields},
+                'changed_base_inputs': {field: copy.deepcopy(effective[field]) for field in FORECAST_FIELDS if field in changed_fields},
                 'house_scenarios_and_probabilities_unchanged': True,
                 'note': 'Only the listed forecast overrides change; actuals, the equity bridge, shares, currency and all unlisted base forecast inputs stay fixed. This case has no scenario probability and does not enter the weighted value.'},
             revenue_path=_revenue_path(actuals, projection['cashflows']))
         results[name] = projection
+        if operating_case is not None:
+            operating_case['additional_forecast_overrides'] = {
+                field:copy.deepcopy(value) for field,value in overrides.items() if field != 'operating_overrides'}
+            operating_case['valuation_case_basis'] = (
+                'The component schedule derives operating revenue and EBIT. This valuation also applies '
+                'the separately listed tax, capital, discount-rate or terminal overrides, if any; '
+                'its component schedule alone is not the complete counterfactual valuation.')
+            for field in operating_case['additional_forecast_overrides']:
+                operating_case['fixed_input_basis']['unchanged_base_inputs'].pop(field,None)
+            operating_case['fixed_input_basis']['additional_valuation_overrides'] = copy.deepcopy(operating_case['additional_forecast_overrides'])
+            operating_case['fixed_input_basis']['disclosure'] += (
+                ' The complete valuation additionally applies the separately listed additional_valuation_overrides.')
+            projection['operating_forecast'] = operating_case
     return results
+
+
+def _monitoring(plan, counterfactuals, baseline, calibration_comparisons=()):
+    """Bind disclosed observation thresholds to computed, conditional cases."""
+    requested = plan.get('monitoring', [])
+    if not isinstance(requested, list) or len(requested) > 16:
+        raise ValueError('monitoring must contain at most 16 observation records')
+    rows = []
+    for item in requested:
+        if not isinstance(item, dict):
+            raise ValueError('Each monitoring item must be an observation record')
+        for field in ('name', 'observation', 'review_by', 'threshold'):
+            if not isinstance(item.get(field), str) or not item[field].strip():
+                raise ValueError(f'Monitoring requires explicit {field}')
+        try:
+            date.fromisoformat(item['review_by'])
+        except ValueError:
+            raise ValueError('Monitoring review_by must be YYYY-MM-DD') from None
+        refs = item.get('source_refs')
+        if not _reference(refs):
+            raise ValueError('Monitoring source_refs must identify the evidence motivating the observation')
+        references=[field for field in ('counterfactual','calibration_comparison') if field in item]
+        if len(references)!=1 or not isinstance(item[references[0]],str):
+            raise ValueError('Monitoring must name exactly one computed counterfactual or calibration comparison')
+        if references[0]=='counterfactual':
+            case = counterfactuals.get(item['counterfactual'])
+        else:
+            case = next((case for case in calibration_comparisons if case['name']==item['calibration_comparison']),None)
+        if case is None:
+            raise ValueError('Monitoring counterfactual must name a computed conditional case')
+        rows.append({**copy.deepcopy(item), 'base_per_share_value': baseline,
+                     'conditional_per_share_value': case['per_share_value'],
+                     'value_change': _value_change(case['per_share_value'], baseline),
+                     'basis': 'Analyst-selected observation and decision threshold, not a reported outcome or an automatic forecast. The named counterfactual changes only its disclosed inputs; correlated cases are not additive.'})
+    return rows
 
 
 def _finite_or_none(value):
@@ -389,6 +546,29 @@ def _computed_diagnostics(actuals, definitions, scenarios, weighted):
             'reinvestment_step_vs_continuing_forecast_sales_to_capital': step,
             'alternative_per_share_value_if_forecast_sales_to_capital_continued': alternative_price,
             'alternative_value_basis': 'Only terminal reinvestment changes to incremental terminal revenue / forecast sales-to-capital; forecast cash flows, WACC, terminal growth, terminal NOPAT, net debt, claims and shares stay fixed.'}
+    capital_changes=[]
+    for ratio in sorted({1.0,2.0,base['sales_to_capital'],6.0,12.0}):
+        row = {'sales_to_capital': ratio, 'per_share_value': None,
+               'dollar_delta': None, 'percent_delta': None}
+        try:
+            value = _project(actuals, dict(base, sales_to_capital=ratio))['per_share_value']
+            row.update(status='calculated', per_share_value=value, **_value_change(value, baseline))
+        except (ValueError, ArithmeticError):
+            row.update(status='not_calculated', reason='Alternative arithmetic exceeded finite numeric bounds.')
+        capital_changes.append(row)
+    no_forecast_investment=_finite_or_none((scenarios['base']['enterprise_value']+
+        sum(row['net_reinvestment']*row['discount_factor'] for row in scenarios['base']['cashflows'])-
+        actuals['net_debt']-actuals['other_equity_claims'])/actuals['shares_outstanding'])
+    no_terminal_excess_return = {'terminal_roic': base['wacc'], 'per_share_value': None,
+                                 'dollar_delta': None, 'percent_delta': None,
+                                 'fixed_assumptions': 'Only the return on new terminal investment changes to WACC. Terminal operating margin and growth and every explicit-forecast and equity-bridge input stay fixed; existing asset rents are not separately erased.'}
+    try:
+        value = _project(actuals, dict(base, terminal_roic=base['wacc']))['per_share_value']
+        no_terminal_excess_return.update(status='calculated', per_share_value=value,
+                                        **_value_change(value, baseline))
+    except (ValueError, ArithmeticError):
+        no_terminal_excess_return.update(status='not_calculated',
+                                        reason='Alternative arithmetic exceeded finite numeric bounds.')
     return {
         'basis': 'Computed, conditional house-assumption diagnostics; these are not observed market inputs, forecasts or automatic assumption corrections.',
         'delta_unit': 'result currency units per share',
@@ -400,11 +580,147 @@ def _computed_diagnostics(actuals, definitions, scenarios, weighted):
                         'baseline_scenario_tax_rates': {name: definitions[name]['tax_rate'] for name in SCENARIOS},
                         'fixed_assumptions': 'Replace every scenario cash operating tax rate with the stated alternative; all other scenario inputs, probability weights, net debt, claims and shares stay fixed.',
                         'changes': tax_changes},
-        'terminal_transition': transition}
+        'terminal_transition': transition,
+        'base_capital_efficiency':{
+            'fixed_assumptions':'Only explicit-forecast sales-to-capital changes. Terminal reinvestment, operating margins/growth, taxes, discount rate and equity bridge stay fixed.',
+            'changes':capital_changes,
+            'zero_explicit_forecast_net_investment_per_share_value':no_forecast_investment,
+            'zero_explicit_forecast_net_investment_status':'calculated' if no_forecast_investment is not None else 'not_calculated',
+            'zero_investment_basis':'Set only explicit-forecast net reinvestment to zero, preserving terminal reinvestment. This is an illustration, not an achievable forecast or a universal value floor/ceiling.'},
+        'base_terminal_return_at_wacc':no_terminal_excess_return}
+
+
+def _measurement_day(record):
+    if not isinstance(record, dict):
+        return None
+    value = next((record.get(key) for key in ('as_of', 'instant', 'observed_at', 'end_date') if record.get(key)), None)
+    try:
+        return date.fromisoformat(value[:10]).isoformat() if isinstance(value, str) else None
+    except ValueError:
+        return None
+
+
+def _calibration_reconciliations(plan, spec):
+    checks = []
+    for field, bridge_name, amount_name in (
+            ('financial_debt', 'net_debt_bridge', 'debt'),
+            ('finance_lease_debt', 'other_claims_bridge', 'reported_finance_lease_liabilities')):
+        record, bridge = spec[field], plan.get(bridge_name, {})
+        reported = bridge.get(amount_name) if isinstance(bridge, dict) else None
+        same_date = _measurement_day(record) == _measurement_day(bridge) and _measurement_day(record) is not None
+        comparable = record.get('measurement', 'book_value_proxy') == 'book_value_proxy'
+        status = 'not_comparable_dates_or_measurement'
+        if reported is not None and same_date and comparable:
+            reported = _number(reported, bridge_name + '.' + amount_name)
+            if not math.isclose(record['value'], reported, rel_tol=1e-8, abs_tol=1e-6):
+                raise ValueError(f'discount_rate.{field} conflicts with the same-date reported equity bridge')
+            status = 'reconciled'
+        checks.append({'field': field, 'status': status, 'rate_input': record['value'],
+                       'bridge_input': reported, 'rate_date': _measurement_day(record),
+                       'bridge_date': _measurement_day(bridge)})
+    record = spec['market_equity']
+    dates = plan.get('input_dates', {})
+    quote_date = _measurement_day(dates.get('market_price'))
+    share_date = _measurement_day(dates.get('shares_outstanding'))
+    rate_date = _measurement_day(record)
+    comparable = rate_date is not None and rate_date == quote_date == share_date
+    construction = record.get('construction', record.get('measurement'))
+    explicit_quote_basis = construction == 'quote_times_reported_shares'
+    expected = None
+    status = 'not_comparable_dates_or_measurement'
+    if 'market_price' in plan and (comparable or explicit_quote_basis):
+        expected = _number(plan['market_price'], 'market_price') * _number(plan['actuals']['shares_outstanding'], 'shares_outstanding')
+        if not math.isclose(record['value'], expected, rel_tol=1e-8, abs_tol=1e-6):
+            explained = (construction == 'independent_market_cap' and
+                         isinstance(record.get('reconciliation'), str) and record['reconciliation'].strip())
+            if not explained:
+                raise ValueError('discount_rate.market_equity conflicts with the comparable quote and share count')
+            status = 'independent_market_cap_difference_disclosed'
+        else:
+            status = 'reconciled_quote_times_reported_shares'
+    checks.append({'field': 'market_equity', 'status': status, 'rate_input': record['value'],
+                   'quote_times_reported_shares': expected, 'rate_date': rate_date,
+                   'quote_date': quote_date, 'share_date': share_date,
+                   'reconciliation': record.get('reconciliation')})
+    return checks
+
+
+def materialize(plan):
+    """Derive optional operating schedules and sourced discount rates explicitly.
+
+    These are calculations, not model-selected replacements for actuals. Duplicate
+    aggregate paths/rates must agree; omit them when the detailed inputs govern.
+    """
+    prepared, operating = apply_operating(plan)
+    calibration = None
+    if 'discount_rate' in prepared:
+        spec = prepared['discount_rate']
+        if (not isinstance(spec, dict) or spec.get('currency') != prepared.get('currency')
+                or spec.get('amount_unit') != prepared.get('amount_unit')):
+            raise ValueError('discount_rate currency and amount_unit must match the valuation plan')
+        if spec.get('lease_convention') != 'gaap_operating':
+            raise ValueError('This FCFF model retains operating rent; discount_rate must use gaap_operating lease treatment')
+        beta_record = spec.get('unlevered_beta', {})
+        if isinstance(beta_record,dict) and beta_record.get('calculation') == 'historical_issuer_cash_corrected':
+            bridge = prepared.get('net_debt_bridge', {})
+            if not isinstance(bridge,dict) or 'selected_cash_and_nonoperating_investments' not in bridge:
+                raise ValueError('Issuer beta cash correction requires an explicit nonoperating cash bridge')
+            derived = operating_asset_beta(beta_record.get('historical_equity_beta'),
+                market_equity=spec['market_equity']['value'], financial_debt=spec['financial_debt']['value'],
+                finance_lease_debt=spec['finance_lease_debt']['value'],
+                nonoperating_cash=bridge['selected_cash_and_nonoperating_investments'],
+                marginal_tax_rate=spec['marginal_tax_rate']['value'])
+            beta_value = derived['cash_corrected_unlevered_beta']
+            if 'value' in beta_record and not math.isclose(_number(beta_record['value'],'unlevered_beta.value'),beta_value,rel_tol=1e-9,abs_tol=1e-12):
+                raise ValueError('unlevered_beta.value conflicts with its explicit issuer-history calculation; omit the duplicate value')
+            beta_record['value'] = beta_value
+            beta_record['derived_calculation'] = derived
+            beta_record['calculation_snapshot_date'] = spec.get('as_of')
+        calibration = calculate_discount_rate(spec, as_of=prepared.get('valuation_date'))
+        calibration['valuation_input_reconciliations'] = _calibration_reconciliations(prepared, spec)
+        for name in SCENARIOS:
+            scenario = prepared['scenarios'][name]
+            rate = calibration['applied_wacc']
+            if 'wacc' in scenario and not math.isclose(scenario['wacc'], rate, rel_tol=1e-9, abs_tol=1e-12):
+                raise ValueError(f'{name}.wacc conflicts with the dated discount_rate calculation; omit the duplicate rate')
+            scenario['wacc'] = rate
+    return prepared, operating, calibration
+
+
+def _calibration_comparisons(plan, actuals, base, baseline):
+    comparisons=plan.get('calibration_comparisons',[])
+    if not isinstance(comparisons,list) or len(comparisons)>8:
+        raise ValueError('calibration_comparisons must contain at most eight explicit rate cases')
+    if comparisons and 'discount_rate' not in plan:
+        raise ValueError('Calibration comparisons require a dated base discount_rate')
+    allowed={'risk_free_rate','equity_risk_premium','unlevered_beta','pretax_cost_of_debt','marginal_tax_rate'}
+    output=[]; names=set()
+    for case in comparisons:
+        if (not isinstance(case,dict) or not isinstance(case.get('name'),str) or
+                not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}',case['name']) or
+                case['name'] in names or not isinstance(case.get('label'),str) or not case['label'].strip()):
+            raise ValueError('Each calibration comparison requires a unique name and explicit label')
+        names.add(case['name'])
+        overrides=case.get('overrides')
+        if not isinstance(overrides,dict) or not overrides or overrides.keys()-allowed:
+            raise ValueError('Calibration comparisons may change only explicit risk/return input records')
+        if ('risk_free_rate' in overrides)!=('equity_risk_premium' in overrides):
+            raise ValueError('A comparison must replace the matched Treasury/ERP pair together')
+        spec=copy.deepcopy(plan['discount_rate']);spec.update(copy.deepcopy(overrides))
+        calculation=calculate_discount_rate(spec,as_of=plan.get('valuation_date'))
+        projection=_project(actuals,dict(base,wacc=calculation['applied_wacc']))
+        output.append({'name':case['name'],'label':case['label'],'overrides':copy.deepcopy(overrides),
+                       'discount_rate_calculation':calculation,'wacc':calculation['applied_wacc'],
+                       'per_share_value':projection['per_share_value'],
+                       'terminal_value_fraction':projection['terminal_value_fraction'],
+                       'value_change':_value_change(projection['per_share_value'],baseline),
+                       'fixed_assumptions':'Only the listed rate-input records and resulting constant WACC change. Base operating cash flows, terminal growth/ROIC, equity bridge and house scenarios/weights stay fixed. Historical-fit alternatives are not forward confidence intervals.'})
+    return output
 
 
 def evaluate(plan):
     """Recompute all scenarios, bridge enterprise to equity, and return results."""
+    plan, operating, calibration = materialize(plan)
     actuals, definitions, market = _validated(plan)
     counterfactuals = _counterfactuals(plan, actuals, definitions)
     scenarios = {}
@@ -413,6 +729,9 @@ def evaluate(plan):
         result['probability'] = definitions[name]['probability']
         if market is not None:
             result['upside_percent'] = (result['per_share_value'] / market - 1) * 100
+            result['fixed_exit_return_at_market_price'] = _fixed_exit_return(actuals,result,market)
+            if result['per_share_value']>0:
+                result['fixed_exit_return_at_model_value'] = _fixed_exit_return(actuals,result,result['per_share_value'])
         scenarios[name] = result
     weighted = sum(result['per_share_value'] * result['probability'] for result in scenarios.values())
     result = {'model': 'unlevered-fcff-incremental-sales-to-capital-v1',
@@ -434,10 +753,19 @@ def evaluate(plan):
         result['valuation_date'] = plan['valuation_date']
     if 'counterfactuals' in plan:
         result['counterfactuals'] = counterfactuals
+    if operating is not None:
+        result['operating_forecasts'] = operating
+    if calibration is not None:
+        result['discount_rate_calculation'] = calibration
+    if 'calibration_comparisons' in plan:
+        result['calibration_comparisons'] = _calibration_comparisons(plan,actuals,definitions['base'],scenarios['base']['per_share_value'])
+    if 'monitoring' in plan:
+        result['monitoring'] = _monitoring(plan,counterfactuals,scenarios['base']['per_share_value'],result.get('calibration_comparisons',[]))
     if market is not None:
         result['market_price'] = market
         result['weighted_upside_percent'] = (weighted / market - 1) * 100
         result['reverse_dcf'] = _reverse_growth(actuals, definitions['base'], market)
+        result['reverse_dcf']['discount_rate'] = _reverse_wacc(actuals, definitions['base'], market, calibration)
     return result
 
 
