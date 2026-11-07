@@ -12,6 +12,20 @@ from investmentideas import core, research, sec_http
 
 
 class SECHTTPTests(unittest.TestCase):
+    def test_user_agent_never_contains_github_for_sec_hosts(self):
+        # Regression, verified live 2026-11-07: SEC (data.sec.gov and
+        # www.sec.gov) returns HTTP 403 for any User-Agent containing
+        # "github" (case-insensitive), while the same request with that
+        # token removed returns 200. The product agent must therefore
+        # carry no github URL, even though the contact email still
+        # identifies the requester.
+        self.assertNotIn('github', sec_http.PRODUCT_USER_AGENT.lower())
+        with sec_http.sec_contact_scope('analyst@research.test'):
+            for url in ('https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json',
+                        'https://www.sec.gov/files/company_tickers.json'):
+                self.assertNotIn('github', sec_http.user_agent(url).lower())
+                self.assertIn('analyst@research.test', sec_http.user_agent(url))
+
     def test_contact_is_required_and_does_not_escape_to_other_hosts(self):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(sec_http.SECContactRequired):

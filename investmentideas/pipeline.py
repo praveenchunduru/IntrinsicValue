@@ -599,7 +599,9 @@ def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
 def _fetch_calibration_bytes(url):
     # Only the collector's fixed public URLs reach this helper. Provider keys
     # are never attached to evidence requests.
-    request = Request(url, headers={'User-Agent':'IntrinsicValue research (github.com/praveenchunduru/IntrinsicValue)'})
+    # No "github" in the User-Agent: SEC returns HTTP 403 for any UA
+    # containing that token (verified live 2026-11-07); keep this UA plain too.
+    request = Request(url, headers={'User-Agent':'IntrinsicValue research'})
     with urlopen(request, timeout=25) as response:
         raw = response.read(3000001)
     if len(raw) > 3000000:
@@ -610,7 +612,24 @@ def _fetch_calibration_bytes(url):
 def _lock_plan(plan, sources):
     if not isinstance(plan,dict):
         raise ValueError('Forecast plan must be an object')
-    valuation_day = plan.get('valuation_date', datetime.now(timezone.utc).date().isoformat())
+    # The forecast schema does not carry valuation_date, so a model-authored
+    # plan usually omits it. Defaulting to today then breaks the documented
+    # invariant "discount_rate.as_of is the valuation date" whenever the
+    # model's dated rate inputs are from an earlier day (e.g. a Nov 6
+    # showcase plan run on Nov 7). Derive the valuation day from the
+    # discount_rate's own as_of when no explicit valuation_date is supplied,
+    # so the dated inputs are preserved instead of silently re-dated.
+    # An explicit valuation_date still wins; a mismatch with
+    # discount_rate.as_of is left to calculate_discount_rate to reject,
+    # so the repair loop can ask the model to fix it.
+    rate_as_of = plan.get('discount_rate') if isinstance(plan.get('discount_rate'), dict) else {}
+    rate_as_of = rate_as_of.get('as_of') if isinstance(rate_as_of, dict) else None
+    if 'valuation_date' in plan:
+        valuation_day = plan.get('valuation_date')
+    elif isinstance(rate_as_of, str) and re.fullmatch(r'\d{4}-\d{2}-\d{2}', rate_as_of):
+        valuation_day = rate_as_of
+    else:
+        valuation_day = datetime.now(timezone.utc).date().isoformat()
     if not isinstance(valuation_day, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', valuation_day):
         raise ValueError('valuation_date must be YYYY-MM-DD')
     if date.fromisoformat(valuation_day) > datetime.now(timezone.utc).date():

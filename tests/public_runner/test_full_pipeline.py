@@ -994,3 +994,22 @@ class ComputedMemoExhibitTests(unittest.TestCase):
                 self.assertNotIn('outside the selected financial net-debt subtotal',label)
             else:
                 self.assertIn('outside the selected financial net-debt subtotal',label)
+
+    def test_lock_plan_without_valuation_date_follows_discount_rate_as_of(self):
+        # Regression: the forecast schema carries no valuation_date, so
+        # _lock_plan defaulted to today. A plan whose dated rate inputs
+        # were from an earlier day (e.g. a Nov 6 plan run on Nov 7) then
+        # failed with "as_of argument and discount_rate.as_of must match".
+        from tests.public_runner.test_inputs import sources as primary_sources
+        from tests.public_runner.test_memo_diagnostics import rate_plan
+        proposal = rate_plan()
+        proposal.pop('valuation_date')
+        self.assertEqual(proposal['discount_rate']['as_of'], '2026-11-06')
+        locked, _ = pipeline._lock_plan(proposal, primary_sources())
+        self.assertEqual(locked['valuation_date'], '2026-11-06')
+        self.assertEqual(locked['discount_rate']['as_of'], '2026-11-06')
+        # An explicit valuation_date still wins over the rate date.
+        proposal = rate_plan()
+        proposal['valuation_date'] = '2026-11-06'
+        locked, _ = pipeline._lock_plan(proposal, primary_sources())
+        self.assertEqual(locked['valuation_date'], '2026-11-06')

@@ -13,7 +13,12 @@ from . import __version__
 
 SEC_HOSTS = frozenset({'sec.gov', 'www.sec.gov', 'data.sec.gov'})
 MAX_SOURCE_BYTES = 20_000_000
-PRODUCT_USER_AGENT = f'IntrinsicValue/{__version__} (https://github.com/praveenchunduru/IntrinsicValue)'
+# No URL in the User-Agent: SEC (data.sec.gov / www.sec.gov) returns HTTP 403
+# for any User-Agent containing "github" (verified live 2026-11-07 with curl:
+# every UA variant containing github/github.com -> 403, the same request
+# with the github token removed -> 200). The contact email appended by
+# user_agent() for SEC hosts still identifies the requester, as SEC requires.
+PRODUCT_USER_AGENT = f'IntrinsicValue/{__version__}'
 _CONTACT = ContextVar('intrinsicvalue_sec_contact', default=None)
 _EMAIL = re.compile(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,63}\Z")
 _RATE_LOCK = threading.Lock()
