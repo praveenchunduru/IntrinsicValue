@@ -308,3 +308,26 @@ class ReviewerChoiceTests(unittest.TestCase):
         self.assertEqual(pipeline._default_reviewer('balanced', author), reviewer)
         self.assertEqual(pipeline._default_reviewer('balanced', reviewer), author)
         self.assertEqual(pipeline._default_reviewer('unknown-profile', 'some/model'), 'some/model')
+
+
+class SavedPlanResumeTests(unittest.TestCase):
+    def setUp(self):
+        full_pipeline.FullPipelineTests.setUp(self)
+
+    def tearDown(self):
+        full_pipeline.FullPipelineTests.tearDown(self)
+
+    def test_a_plan_saved_before_the_conventions_is_revalued_under_its_own(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = pipeline.run('AAPL', 'synthetic', directory=directory)
+            state_path = folder / 'state.json'
+            state = json.loads(state_path.read_text())
+            self.assertEqual(state['plan_conventions'], pipeline.PLAN_CONVENTIONS)
+            state.pop('plan_conventions')
+            state['complete'] = False  # An interrupted run resumed after an upgrade.
+            state_path.write_text(json.dumps(state))
+            with patch.object(pipeline, '_pin_market_conventions', return_value=[]) as pin:
+                folder = pipeline.run('AAPL', 'synthetic', directory=directory)
+                pin.assert_not_called()
+            state = json.loads(state_path.read_text())
+            self.assertTrue(any('saved before the market-consistent' in gap for gap in state['gaps']))

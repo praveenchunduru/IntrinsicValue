@@ -207,6 +207,12 @@ PLAN_FIELD_RULES = ('\nField rules: unknown fields are rejected, so use only the
 OPTIONAL_PLAN_SECTIONS = ('counterfactuals','calibration_comparisons','monitoring','repurchase_tests')
 
 
+# Recorded in run state when a model-authored plan was locked under the
+# market-consistent conventions. A plan saved before them is re-locked under
+# its own conventions on resume instead of failing outside any repair loop.
+PLAN_CONVENTIONS = 'market_consistent_v1'
+
+
 def _default_reviewer(profile, strong):
     """A reviewer from a different model than the author whenever one is configured.
 
@@ -648,6 +654,7 @@ def _refresh_workflow_contract(folder,state):
     if previous and any(name in changed for name in ('system','forecast','implementation')):
         if not state.get('provided_forecast_digest'):
             state.pop('plan',None)
+            state.pop('plan_conventions',None)
             state.pop('valuation',None)
         if not state.get('provided_draft_digest'):
             state.pop('current_memo',None)
@@ -1662,6 +1669,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         raise error
     if state.get('plan',{}).get('unavailable_due_to_coverage'):
         state.pop('plan',None)
+        state.pop('plan_conventions',None)
     state.pop('coverage_preflight_failed',None)
     if forecast_plan is not None and (changed_forecast or not state.get('plan')):
         supplied,changes=_lock_plan(forecast_plan,state['sources'],apply_conventions=False)
@@ -1809,6 +1817,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 state.setdefault('actual_input_corrections',[]).extend(changes)
                 _record_omitted_sections(state,omitted,'forecast plan\'s')
                 state['plan'],state['valuation']=plan,result
+                state['plan_conventions']=PLAN_CONVENTIONS
                 save_valuation(folder,plan,result)
                 break
             except (ValueError,KeyError,TypeError,AttributeError) as exc:
@@ -1830,7 +1839,13 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                           '\nReturn the complete corrected JSON object.'+PLAN_FIELD_RULES,tokens=12000)
         checkpoint()
     if not state['plan'].get('unavailable'):
-        state['plan'],changes=_lock_plan(state['plan'],state['sources'],apply_conventions=not state.get('provided_forecast_digest'))
+        current=not state.get('provided_forecast_digest') and state.get('plan_conventions')==PLAN_CONVENTIONS
+        if not state.get('provided_forecast_digest') and not current:
+            note=('This forecast plan was saved before the market-consistent rate and terminal-growth conventions and is '
+                  'valued under its own conventions. Remove the run folder\'s valuation_plan stages to build a new plan.')
+            if note not in state['gaps']:
+                state['gaps'].append(note)
+        state['plan'],changes=_lock_plan(state['plan'],state['sources'],apply_conventions=current)
         state.setdefault('actual_input_corrections',[]).extend(changes)
         if 'requested_counterfactuals' in state:
             state['plan']['counterfactuals']=copy.deepcopy(state['requested_counterfactuals'])
@@ -2203,6 +2218,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                     plan,result=locked,corrected
                     save_valuation(folder,plan,result)
                     state['valuation']=result
+                    if apply:
+                        state['plan_conventions']=PLAN_CONVENTIONS
             state['plan']=plan
             valuation_context=(render_valuation_context(plan,result) if result is not None else
                                json.dumps({'assumptions':plan,'computed':None},ensure_ascii=False))
