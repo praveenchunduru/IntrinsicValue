@@ -2201,7 +2201,9 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                         correction=call(f'model_response_repair_{iteration+1}'+('' if repair==0 else f'_{repair+1}'),strong,
                             'Repair this corrected valuation plan. Return the complete corrected JSON object only, keeping '
                             'finding_dispositions.'+FORECAST_SCHEMA+_rate_convention(state['sources'],plan.get('currency'))+
-                            PLAN_FIELD_RULES+'\nRejected JSON:\n'+correction+'\nRepair this precise validation failure '
+                            PLAN_FIELD_RULES+'\nValid source IDs: '+'; '.join(f"{source['id']} {str(source.get('title',''))[:80]}"
+                                                                         for source in state['sources'])+
+                            '\nRejected JSON:\n'+correction+'\nRepair this precise validation failure '
                             'without inventing actuals: '+str(exc)+
                             ('\nEarlier attempts were rejected for these reasons; do not reintroduce them: '+
                              ' | '.join(failures[:-1]) if failures[:-1] else ''),tokens=12000)
@@ -2213,6 +2215,10 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                         continue
                     state.setdefault('actual_input_corrections',[]).extend(changes)
                     _record_omitted_sections(state,omitted,f'review {iteration+1} correction\'s')
+                    if repair:
+                        adjudication['correction_repairs']=repair
+                        if isinstance(candidate.get('finding_dispositions'),dict):
+                            adjudication['finding_dispositions']=copy.deepcopy(candidate['finding_dispositions'])
                     break
                 if locked is not None:
                     plan,result=locked,corrected

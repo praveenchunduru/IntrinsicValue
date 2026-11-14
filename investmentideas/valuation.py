@@ -49,11 +49,10 @@ earnings, original DCF exit multiples and conditional returns at an unchanged
 entry multiple. They use the existing integer-year, debt/claims-settled FCFF
 convention, not a forecast of common-share payouts or trading multiples.
 
-Optional ``entry_policy`` is an explicit house decision rule, for example
-``{"basis":"base", "margin_of_safety":0.15, "label":"House entry rule",
-"rationale":"Explicitly selected valuation discount"}``. Basis may be base or
-weighted; no discount is supplied by default. Its conditional entry price is
-reference value * (1 - margin_of_safety), not a return or execution guarantee.
+``entry_policy`` is evaluated only so plans saved before its removal reproduce.
+The research pipeline drops it from every plan: this project values companies and
+sets no entry prices. Its fields are basis (base or weighted), margin_of_safety,
+label and rationale; the conditional price is reference value * (1 - margin_of_safety).
 
 Optional ``repurchase_tests`` is a list of at most eight independent one-period
 cash-funded illustrations. Each requires name, amount, price, source_refs, label

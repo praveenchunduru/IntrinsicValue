@@ -252,9 +252,11 @@ class ModelCorrectionRepairTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             folder = pipeline.run('AAPL', 'synthetic', directory=directory)
             state = json.loads((folder / 'state.json').read_text())
+            response = json.loads((folder / 'reviews' / 'model-response-1.json').read_text())
         self.assertEqual(self.correction_calls(), ['model_response_1', 'model_response_repair_1'])
         self.assertEqual(state['plan']['scenarios']['base']['ebit_margins'], [.25] * 5)
         self.assertNotIn('finding_dispositions', state['plan'])
+        self.assertEqual(response['correction_repairs'], 1)
 
     def test_a_correction_that_never_validates_leaves_the_prior_plan_and_says_so(self):
         broken = corrected_plan()
