@@ -34,6 +34,17 @@ cash is not netted against debt when relevering beta or computing capital weight
 An optional ``house_hurdle`` record is reported separately and applied only with
 ``basis=house_hurdle``. A hurdle is a policy choice, never relabeled market WACC.
 Parameter sensitivities are isolated calculations, not scenario risk premia.
+
+``term_structure`` is ``constant`` (default: one rate in every year and in the
+terminal value) or ``glide_to_market_v1``. The latter requires a dated
+``terminal_unlevered_beta`` record: the market's average operating-asset beta,
+pinned from the same industry table as sector betas. The terminal cost of capital
+relevers that beta at the firm's own debt-to-equity ratio and marginal tax rate,
+so business risk converges to the market average while financing risk stays the
+firm's own. Holding the levered beta at one instead would make terminal rates
+fall with leverage. Damodaran's spreadsheet default (risk-free rate plus ERP as
+the whole terminal rate) is reported for comparison. A glide is not defined for a
+house hurdle.
 """
 from __future__ import annotations
 
@@ -48,12 +59,14 @@ import re
 _REQUIRED = ('risk_free_rate', 'equity_risk_premium', 'unlevered_beta',
              'market_equity', 'financial_debt', 'finance_lease_debt',
              'pretax_cost_of_debt', 'marginal_tax_rate')
-_OPTIONAL = ('operating_lease_debt', 'house_hurdle')
+_OPTIONAL = ('operating_lease_debt', 'house_hurdle', 'terminal_unlevered_beta')
 _FIELDS = set(_REQUIRED + _OPTIONAL + ('as_of', 'currency', 'amount_unit',
-              'basis', 'lease_convention', 'ebit_convention'))
+              'basis', 'lease_convention', 'ebit_convention', 'term_structure'))
 _RANGES = {'risk_free_rate': (-.05, .30), 'equity_risk_premium': (0, .40),
            'unlevered_beta': (0, 5), 'pretax_cost_of_debt': (0, .60),
-           'marginal_tax_rate': (0, .60), 'house_hurdle': (0, 1)}
+           'marginal_tax_rate': (0, .60), 'house_hurdle': (0, 1),
+           'terminal_unlevered_beta': (.2, 3)}
+TERM_STRUCTURES = ('constant', 'glide_to_market_v1')
 
 
 def _date(value, name):
@@ -80,14 +93,14 @@ def _number(value, name):
 def _observation_period(record, name):
     precision = record.get('date_precision', 'day')
     value = record.get('observed_at')
-    if name == 'unlevered_beta' and precision == 'month':
+    if name in ('unlevered_beta', 'terminal_unlevered_beta') and precision == 'month':
         if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d{2}', value):
-            raise ValueError('Monthly unlevered_beta.observed_at must be YYYY-MM')
+            raise ValueError(f'Monthly {name}.observed_at must be YYYY-MM')
         start = _date(value + '-01', name + '.observed_at')
         end = date(start.year, start.month, monthrange(start.year, start.month)[1])
         return start, end, precision
     if precision != 'day':
-        raise ValueError('Only unlevered_beta supports date_precision=month; market pairs require exact dates')
+        raise ValueError('Only industry betas support date_precision=month; market pairs require exact dates')
     observation = _date(value, name + '.observed_at')
     return observation, observation, precision
 
@@ -124,21 +137,32 @@ def _record(spec, name, as_of):
     return value
 
 
-def _market(values, included_debt):
+def _wacc(values, included_debt, unlevered_beta):
     equity = values['market_equity']
     total = equity + included_debt
     debt_to_equity = included_debt / equity
-    beta = values['unlevered_beta'] * (1 + (1 - values['marginal_tax_rate']) * debt_to_equity)
+    beta = unlevered_beta * (1 + (1 - values['marginal_tax_rate']) * debt_to_equity)
     equity_cost = values['risk_free_rate'] + beta * values['equity_risk_premium']
     equity_weight, debt_weight = equity / total, included_debt / total
     after_tax_debt = values['pretax_cost_of_debt'] * (1 - values['marginal_tax_rate'])
     wacc = equity_weight * equity_cost + debt_weight * after_tax_debt
-    result = {'market_wacc': wacc, 'relevered_beta': beta,
-              'cost_of_equity': equity_cost, 'after_tax_cost_of_debt': after_tax_debt,
-              'debt_to_equity': debt_to_equity,
-              'equity_weight': equity_weight, 'debt_weight': debt_weight}
-    if not all(math.isfinite(number) for number in result.values()) or not 0 < wacc < 1:
+    return {'wacc': wacc, 'relevered_beta': beta, 'cost_of_equity': equity_cost,
+            'after_tax_cost_of_debt': after_tax_debt, 'debt_to_equity': debt_to_equity,
+            'equity_weight': equity_weight, 'debt_weight': debt_weight}
+
+
+def _market(values, included_debt):
+    current = _wacc(values, included_debt, values['unlevered_beta'])
+    result = {'market_wacc': current.pop('wacc'), **current}
+    if 'terminal_unlevered_beta' in values:
+        terminal = _wacc(values, included_debt, values['terminal_unlevered_beta'])
+        result.update(terminal_wacc=terminal['wacc'], terminal_relevered_beta=terminal['relevered_beta'],
+                      terminal_cost_of_equity=terminal['cost_of_equity'],
+                      damodaran_default_terminal_rate=values['risk_free_rate'] + values['equity_risk_premium'])
+    if not all(math.isfinite(number) for number in result.values()) or not 0 < result['market_wacc'] < 1:
         raise ValueError('Inputs do not produce a finite market WACC between zero and one')
+    if 'terminal_wacc' in result and not 0 < result['terminal_wacc'] < 1:
+        raise ValueError('Inputs do not produce a terminal cost of capital between zero and one')
     return result
 
 
@@ -166,6 +190,13 @@ def calculate_discount_rate(spec, *, as_of=None):
     basis = spec.get('basis', 'market_wacc')
     if basis not in ('market_wacc', 'house_hurdle'):
         raise ValueError('basis must be market_wacc or house_hurdle')
+    term_structure = spec.get('term_structure', 'constant')
+    if term_structure not in TERM_STRUCTURES:
+        raise ValueError('term_structure must be constant or glide_to_market_v1')
+    if term_structure != 'constant' and basis == 'house_hurdle':
+        raise ValueError('A rate glide is defined for a market WACC only; a house hurdle uses one constant rate')
+    if term_structure != 'constant' and 'terminal_unlevered_beta' not in spec:
+        raise ValueError('glide_to_market_v1 requires a dated terminal_unlevered_beta record (market operating-asset beta)')
     lease = spec.get('lease_convention')
     if lease not in ('gaap_operating', 'capitalized_operating'):
         raise ValueError('lease_convention must explicitly be gaap_operating or capitalized_operating')
@@ -197,7 +228,11 @@ def calculate_discount_rate(spec, *, as_of=None):
                    'market_equity': values['market_equity'], 'included_debt': debt,
                    'financial_debt': values['financial_debt'], 'finance_lease_debt': values['finance_lease_debt'],
                    'operating_lease_debt_included': included_operating,
-                   'matched_observation_date': spec['risk_free_rate']['observed_at']})
+                   'matched_observation_date': spec['risk_free_rate']['observed_at'],
+                   'term_structure': term_structure})
+    if term_structure == 'constant':
+        for key in ('terminal_wacc', 'terminal_relevered_beta', 'terminal_cost_of_equity', 'damodaran_default_terminal_rate'):
+            result.pop(key, None)
     result['conventions'] = {
         'lease_convention': lease, 'ebit_convention': ebit,
         'financial_debt_measurement': measurement,
@@ -212,7 +247,10 @@ def calculate_discount_rate(spec, *, as_of=None):
                              'caller affirms lease-adjusted EBIT/cashflows; operating lease liabilities included'),
         'formulas': {'relevered_beta': 'unlevered_beta * (1 + (1 - marginal_tax_rate) * debt / market_equity)',
                      'cost_of_equity': 'risk_free_rate + relevered_beta * equity_risk_premium',
-                     'market_wacc': 'equity_weight * cost_of_equity + debt_weight * pretax_cost_of_debt * (1 - marginal_tax_rate)'}}
+                     'market_wacc': 'equity_weight * cost_of_equity + debt_weight * pretax_cost_of_debt * (1 - marginal_tax_rate)',
+                     **({'terminal_wacc': 'same formula with terminal_unlevered_beta (market operating-asset beta) relevered at the firm\'s own debt-to-equity and marginal tax rate',
+                         'damodaran_default_terminal_rate': 'risk_free_rate + equity_risk_premium, whatever the leverage (comparison only)'}
+                        if term_structure != 'constant' else {})}}
     provenance = {name: copy.deepcopy(spec[name]) for name in _REQUIRED + _OPTIONAL if name in spec}
     try:
         json.dumps(provenance, allow_nan=False)

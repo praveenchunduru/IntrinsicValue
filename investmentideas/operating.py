@@ -69,7 +69,7 @@ MAX_COMPONENTS = 32
 MAX_EXPENSES = 32
 REQUIRED_EXPENSES = {'research_and_development', 'selling_general_administrative'}
 FORECAST_FIELDS = {'growth_rates', 'ebit_margins', 'tax_rate', 'sales_to_capital',
-                   'wacc', 'terminal_growth', 'terminal_roic'}
+                   'wacc', 'terminal_growth', 'terminal_roic', 'terminal_tax_rate'}
 
 
 def _number(value, context):
