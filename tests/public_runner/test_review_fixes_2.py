@@ -318,8 +318,9 @@ class ReasoningRequestTests(unittest.TestCase):
         self.assertEqual(core.reasoning_request(listed, 'openai/gpt-5.4', 6000), {'effort': 'high', 'exclude': True})
         self.assertIsNone(core.reasoning_request({'supported_parameters': ['temperature']}, 'anthropic/claude-sonnet-4.6', 8000))
         self.assertIsNone(core.reasoning_request(listed, 'anthropic/claude-sonnet-4.6', 0))
-        self.assertEqual(core.reasoning_budget('valuation_plan_repair_2'), 6000)
+        self.assertEqual(core.reasoning_budget('valuation_plan_repair_2'), 0)
         self.assertEqual(core.reasoning_budget('full_draft'), 8000)
+        self.assertEqual(core.reasoning_budget('full_draft_without_reasoning'), 0)
         self.assertEqual(core.reasoning_budget('review_0'), 0)
 
     def test_the_budget_is_added_to_the_output_limit_and_temperature_dropped_for_claude(self):
@@ -442,3 +443,25 @@ class OpusReviewFixTests(unittest.TestCase):
             pipeline._refresh_workflow_contract(Path(directory), state)
         self.assertEqual(state['iteration'], 2)
         self.assertEqual(pipeline._revisions_used(state), 0)
+
+
+class ReasoningExhaustedTests(unittest.TestCase):
+    def test_a_draft_that_only_thinks_is_retried_once_without_thinking(self):
+        from investmentideas import core
+        sent = []
+        def transport(url, *, key=None, payload=None, timeout=90):
+            sent.append(payload)
+            if payload.get('reasoning'):
+                return {'choices': [{'finish_reason': 'length', 'message': {'content': ''}}], 'usage': {'cost': 0.5}}
+            return {'choices': [{'finish_reason': 'stop', 'message': {'content': 'memo'}}], 'usage': {'cost': 0.4}}
+        router = core.Router.__new__(core.Router)
+        router.key, router.budget, router.ledger, router.checkpoint = 'k', 10.0, [], lambda: None
+        router.catalog = {'anthropic/claude-sonnet-4.6': {'pricing': {'prompt': '0.000003', 'completion': '0.000015'},
+                                                          'supported_parameters': ['reasoning', 'temperature']}}
+        with patch.object(core, 'request_json', transport):
+            with self.assertRaises(core.ReasoningExhausted):
+                router.complete('full_draft', 'anthropic/claude-sonnet-4.6', 'prompt', max_tokens=18000)
+            self.assertEqual(router.complete('full_draft_without_reasoning', 'anthropic/claude-sonnet-4.6', 'prompt',
+                                             max_tokens=18000), 'memo')
+        self.assertNotIn('reasoning', sent[-1])
+        self.assertEqual(sent[-1]['max_tokens'], 18000)

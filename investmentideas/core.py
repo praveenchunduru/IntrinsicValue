@@ -24,13 +24,22 @@ MODELS = {'economy': ('qwen/qwen3-30b-a3b-instruct-2507', 'deepseek/deepseek-v3.
 # Full-memo reviewers come from a different model family than the author, so a
 # review is not the author's own judgment returned to it. --review-model overrides.
 REVIEWERS = {'economy': 'moonshotai/kimi-k2.5', 'balanced': 'openai/gpt-5.4'}
-# Extended thinking for the two stages whose first answer decides the memo:
-# the forecast plan and the draft. OpenRouter counts reasoning inside the
+# Extended thinking for the draft. OpenRouter counts reasoning inside the
 # output limit, so the budget is added on top of the stage's output tokens.
-REASONING_BUDGETS = (('valuation_plan', 6000), ('full_draft', 8000))
+# The budget is a target, not a cap: a live plan call (2026-11-14) spent all
+# 18,000 tokens thinking and returned no text, so the plan stage does not think
+# and a thinking stage that exhausts its limit is retried once without it.
+REASONING_BUDGETS = (('full_draft', 8000),)
+WITHOUT_REASONING = '_without_reasoning'
+
+
+class ReasoningExhausted(RuntimeError):
+    """Reasoning consumed the whole output limit and no answer was returned."""
 
 
 def reasoning_budget(stage):
+    if stage.endswith(WITHOUT_REASONING):
+        return 0
     return next((budget for prefix, budget in REASONING_BUDGETS if stage.startswith(prefix)), 0)
 
 
@@ -357,6 +366,8 @@ class Router:
             row['annotations'] = annotations
         if choice.get('finish_reason') != 'stop' or not isinstance(content, str) or not content.strip():
             row['status']='incomplete'
+            if reasoning is not None and choice.get('finish_reason') == 'length' and not (content or '').strip():
+                raise ReasoningExhausted(f'The {stage} response from {model} spent its whole output limit reasoning')
             if isinstance(content,str):
                 row['partial_response']=content[:80000]
             reason = {'length': 'reached its output limit', 'error': 'failed at the provider',

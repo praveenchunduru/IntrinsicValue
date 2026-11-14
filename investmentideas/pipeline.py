@@ -2316,7 +2316,13 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             return state['stages'][cache]
         progress(name+': '+model)
         try:
-            value=router.complete(name,model,prompt,max_tokens=tokens,web=web)
+            try:
+                value=router.complete(name,model,prompt,max_tokens=tokens,web=web)
+            except core.ReasoningExhausted:
+                # Spent and recorded; one retry without thinking rather than a stopped run.
+                checkpoint()
+                progress(name+core.WITHOUT_REASONING+': '+model)
+                value=router.complete(name+core.WITHOUT_REASONING,model,prompt,max_tokens=tokens,web=web)
             state['stages'][cache]=value
             return value
         except core.BudgetExceeded as exc:
