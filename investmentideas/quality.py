@@ -431,7 +431,8 @@ def prereview_checks(memo, sources, computed=()):
             if digits < 2 and not unit:
                 continue
             if _traced(number, decimals, unit, primary_pool):
-                if cited and all(tiers.get(ref) in UNVERIFIED_SOURCE_TIERS for ref in cited):
+                if (cited and all(tiers.get(ref) in UNVERIFIED_SOURCE_TIERS for ref in cited) and
+                        (digits >= 3 or (unit or '').strip() in {'%', 'billion', 'bn', 'B', 'million'})):
                     cite_primary.append((match.group(0).strip(), line[:300]))
                 continue
             if _traced(number, decimals, unit, unverified_pool):

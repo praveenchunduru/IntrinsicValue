@@ -39,13 +39,15 @@ VERSION = 'full-2'
 DEFAULT_BUDGET = 10.0
 SECTIONS = '''Write these sections, in this order, as prose around the computed valuation summary that
 Python places above your text (do not re-type its tables; refer to its rows by name):
-(1) Valuation conclusion (about 250 words): value, price and value / price as computed, and which
-inputs carry the difference, read from the "What the price requires" rows and the implied return.
-Say plainly whether the difference rests on the operating forecast, the discount rate or terminal
-returns; convention rows are one change at a time and are never added together.
-(2) Variant view (about 400 words): on the input that carries the difference, why the house view
-differs from what the price requires, with primary evidence, and the strongest sourced opposing
-case answered economically. If the operating forecast is close to consensus, say so.
+(1) Valuation conclusion (about 250 words): value, price and value / price as computed, and what
+the price requires: name each "What the price requires" row, how far it must move or that no value
+reaches the price, and the implied return against the required return. Say plainly whether the
+difference rests on the operating forecast, the discount rate or terminal returns; convention rows
+are one change at a time and are never added together.
+(2) Variant view (about 400 words): on the inputs that carry the difference, why the house view
+differs from what the price requires, with primary evidence. Answer the strongest sourced opposing
+case with operating evidence (demand, pricing, margins, capital needs), not with scenario values.
+If the operating forecast is close to consensus, say so.
 (3) Business economics, industry and competition (about 450 words), from primary sources and the
 computed tables.
 (4) Management, capital allocation and financial history (about 450 words), from the reported
