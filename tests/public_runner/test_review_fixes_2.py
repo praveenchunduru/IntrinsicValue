@@ -369,3 +369,29 @@ class PrereviewCheckTests(unittest.TestCase):
         memo, applied, skipped = pipeline._apply_edits('Alpha beta. Gamma.', [{'quote': 'Alpha beta.', 'replacement': 'Alpha.'},
                                                                               {'quote': 'missing', 'replacement': 'x'}])
         self.assertEqual((memo, applied, len(skipped)), ('Alpha. Gamma.', 1, 1))
+
+
+class UnverifiedLabelTests(unittest.TestCase):
+    def test_citations_of_unverified_sources_are_labelled_once(self):
+        from investmentideas import pipeline
+        sources = [{'id': 'S4', 'source_tier': 'regulatory_primary'}, {'id': 'S16', 'source_tier': 'search_excerpt_unverified'},
+                   {'id': 'S17', 'source_tier': 'search_excerpt_unverified'}]
+        text = 'Demand [S16]. Margin [S4, S17]. Known [S16 unverified]. Range S16 alone. Table [S4].'
+        labelled = pipeline._label_unverified(text, sources)
+        self.assertEqual(labelled, 'Demand [S16 unverified]. Margin [S4, S17 unverified]. Known [S16 unverified]. '
+                                   'Range S16 alone. Table [S4].')
+        self.assertEqual(pipeline._label_unverified(labelled, sources), labelled)
+
+    def test_deleting_a_duplicated_passage_removes_the_second_copy(self):
+        from investmentideas import pipeline
+        memo, applied, skipped = pipeline._apply_edits('A. Dup. B. Dup. C.', [{'quote': ' Dup.', 'replacement': ''}])
+        self.assertEqual((memo, applied, skipped), ('A. Dup. B. C.', 1, []))
+
+
+class CitePrimaryTests(unittest.TestCase):
+    def test_a_primary_figure_cited_only_to_an_excerpt_is_flagged(self):
+        from investmentideas.quality import prereview_checks
+        sources = [{'id': 'S1', 'source_tier': 'regulatory_primary', 'data': {'excerpt': 'Revenue was 478,834 million.'}},
+                   {'id': 'S2', 'source_tier': 'search_excerpt_unverified', 'data': {'excerpt': 'Revenue 478.8 billion.'}}]
+        found = {row['id'] for row in prereview_checks('# M\nRevenue was $478.8 billion (unverified) [S2].', sources)}
+        self.assertIn('cite-primary-source', found)

@@ -403,7 +403,7 @@ def prereview_checks(memo, sources, computed=()):
     for item in computed:
         _numeric_leaves(item, primary)
     primary_pool, unverified_pool = sorted(primary), sorted(unverified)
-    untraced, unlabelled, additive, unlabelled_claims = [], [], [], []
+    untraced, unlabelled, additive, unlabelled_claims, cite_primary = [], [], [], [], []
     for sentence in re.split(r'(?<=[.!?])\s+|\n+', body):
         line = sentence.strip()
         if not line or line.startswith('#'):
@@ -431,6 +431,8 @@ def prereview_checks(memo, sources, computed=()):
             if digits < 2 and not unit:
                 continue
             if _traced(number, decimals, unit, primary_pool):
+                if cited and all(tiers.get(ref) in UNVERIFIED_SOURCE_TIERS for ref in cited):
+                    cite_primary.append((match.group(0).strip(), line[:300]))
                 continue
             if _traced(number, decimals, unit, unverified_pool):
                 if not re.search(r'unverified', line, re.I) and cited and all(tiers.get(ref) in UNVERIFIED_SOURCE_TIERS for ref in cited):
@@ -451,6 +453,10 @@ def prereview_checks(memo, sources, computed=()):
         add('number-unverified-only', 'minor', f'{len(unlabelled)} figures appear only in unverified web excerpts and are '
             'not labelled as unverified context or are cited to a primary source that does not contain them.',
             'Use the primary figure if one exists; otherwise label the figure as unverified context or remove it.', unlabelled)
+    if cite_primary:
+        add('cite-primary-source', 'minor', f'{len(cite_primary)} figures are cited only to unverified excerpts although '
+            'a primary source or the computed tables contain them.',
+            'Cite the primary source or computed table that contains each figure.', cite_primary)
     if unlabelled_claims:
         add('claim-unverified-unlabelled', 'minor', f'{len(unlabelled_claims)} sentences rest only on unverified web '
             'excerpts and do not say so.',

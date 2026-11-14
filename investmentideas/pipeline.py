@@ -842,6 +842,22 @@ def _computed_tables(sources):
     return '\n\n'.join(tables)
 
 
+def _label_unverified(text, sources):
+    """Mark every citation of an unverified web excerpt inline: [S16] becomes [S16 unverified].
+
+    Labelling by construction: live reviews (2026-11-14) kept finding unlabelled
+    unverified support, including in plan text that Python renders.
+    """
+    unverified={source.get('id') for source in sources
+                if isinstance(source,dict) and source.get('source_tier') in UNVERIFIED_TIERS}
+    if not unverified:
+        return text
+    def label(match):
+        return re.sub(r'\b(S\d+)\b(?![ \t]*,?[ \t]*unverified)',
+                      lambda ref:ref.group(1)+' unverified' if ref.group(1) in unverified else ref.group(1),match.group(0))
+    return re.sub(r'\[[^\[\]\n]*\bS\d+[^\[\]\n]*\]',label,text)
+
+
 def _apply_edits(memo, edits):
     """Apply quote-and-replacement edits whose quote occurs exactly once; report the rest."""
     applied,skipped=0,[]
@@ -851,8 +867,15 @@ def _apply_edits(memo, edits):
         if not isinstance(quote,str) or not quote.strip() or not isinstance(replacement,str):
             skipped.append('malformed edit')
             continue
-        if memo.count(quote)!=1:
-            skipped.append(f'quote found {memo.count(quote)} times: {quote[:80]}')
+        count=memo.count(quote)
+        if count==2 and not replacement.strip():
+            # Deleting a duplicated passage removes its second occurrence.
+            position=memo.rfind(quote)
+            memo=memo[:position]+memo[position+len(quote):]
+            applied+=1
+            continue
+        if count!=1:
+            skipped.append(f'quote found {count} times: {quote[:80]}')
             continue
         memo=memo.replace(quote,replacement)
         applied+=1
@@ -1857,7 +1880,8 @@ def _render(memo, sources, gaps, plan, result, state):
         note += (f"\n\nReview model: {latest['review_model']}" +
                  (f"; author model: {latest['author_model']}" if latest.get('author_model') else '') +
                  ('. The same model wrote and reviewed this memo.' if same else '.'))
-    return (_with_summary(memo,plan,result).rstrip() + '\n' + valuation_section(plan,result) + '\n## Source register\n'+refs+
+    body = _label_unverified(_with_summary(memo,plan,result).rstrip() + '\n' + valuation_section(plan,result), sources)
+    return (body + '\n## Source register\n'+refs+
             '\n\n## Evidence limitations\n'+ ('\n'.join('- '+g for g in gaps) or 'No retrieval gap recorded; source completeness still requires review.')+
             '\n\n## Review status\n'+state.get('quality_status','in_progress')+
             '\n\n'+note+
@@ -2407,7 +2431,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'price. Plain analytical prose without slogans, superlatives or rhetorical contrast formulas.'
             '\nCOMPUTED SUMMARY (placed above your text):\n'+computed_summary(plan,result)+
             '\nEvidence:\n'+context+'\nSynthesis:\n'+thesis+'\nValuation:\n'+valuation_context+'\nGaps:\n'+gaps,tokens=MEMO_TOKENS)
-        state['current_memo']=draft
+        state['current_memo']=_label_unverified(draft,state['sources'])
         checkpoint()
     revisions=folder/'revisions';revisions.mkdir(exist_ok=True)
     reviews=folder/'reviews';reviews.mkdir(exist_ok=True)
@@ -2445,7 +2469,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
              'describe any forecast change as made.' if isinstance(candidate,dict) and candidate.get('correction_rejected') else '')+
             ('\nNotes on the plan now valued:\n'+'\n'.join(state.get('plan_gap_notes',[])) if state.get('plan_gap_notes') else '')+
             '\nValuation:\n'+valuation_context+'\nMemo:\n'+memo+'\nFindings:\n'+json.dumps(combined)+'\nAdjudicated model response:\n'+json.dumps(candidate),tokens=MEMO_TOKENS)
-        state['current_memo']=corrected
+        state['current_memo']=_label_unverified(corrected,state['sources'])
         state['iteration']=iteration+1
         state.pop('pending_revision',None)
         checkpoint()
@@ -2496,12 +2520,13 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 edits=value.get('edits') if isinstance(value,dict) else None
                 break
             memo,applied,skipped=_apply_edits(memo,edits)
+            memo=_label_unverified(memo,state['sources'])
             fixed[f'{iteration}:{memo_key}']={'memo_sha256':memo_key,'fixed_memo_sha256':hashlib.sha256(memo.encode()).hexdigest()[:16],
                                              'issues':[issue['id'] for issue in issues],'edits_applied':applied,'edits_skipped':skipped[:20]}
             state['current_memo']=memo
             checkpoint()
             issues=prereview_checks(_with_summary(memo,plan,result),state['sources'],computed_inputs)
-        visible=_with_summary(memo,plan,result)+'\n'+valuation_section(plan,result)
+        visible=_label_unverified(_with_summary(memo,plan,result)+'\n'+valuation_section(plan,result),state['sources'])
         (revisions/f'memo-{iteration}.md').write_text(visible,encoding='utf-8')
         # A review can fail after a new draft/model is saved. Keep the reader
         # download consistent with those artifacts even before review succeeds.
