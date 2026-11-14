@@ -1520,12 +1520,29 @@ def _price_requirements(actuals, base, market):
         def mutate(scenario, value):
             scenario[field] = value
         return mutate
+    def path(field, delta):
+        # A shift row's year-1 figure alone was misread live (2026-11-14) as the
+        # whole path; report the projected path it produces, steady-state years included.
+        scenario = copy.deepcopy(base)
+        shift(field)(scenario, delta)
+        try:
+            flows = _project(actuals, scenario)['cashflows']
+        except (ValueError, ArithmeticError, KeyError, OverflowError):
+            return None
+        if field == 'growth_rates':
+            if actuals['revenue'] <= 0 or flows[-1]['revenue'] <= 0:
+                return None
+            over = (flows[-1]['revenue'] / actuals['revenue']) ** (1 / len(flows)) - 1
+            return {'year1': flows[0]['revenue_growth'], 'over_forecast': over, 'years': len(flows),
+                    'measure': 'compound_annual_growth'}
+        return {'year1': flows[0]['ebit_margin'], 'over_forecast': sum(flow['ebit_margin'] for flow in flows) / len(flows),
+                'years': len(flows), 'measure': 'average'}
     terminal_rate = base.get('terminal_rate', base.get('wacc'))
     rows = []
     for name, label, mutate, low, high, house, kind in (
-            ('revenue_growth', 'Revenue growth in every forecast year', shift('growth_rates'), -.2, .3,
+            ('revenue_growth', 'Revenue growth in every explicit forecast year', shift('growth_rates'), -.2, .3,
              base['growth_rates'][0], 'shift'),
-            ('ebit_margin', 'EBIT margin in every forecast year', shift('ebit_margins'), -.3, .45,
+            ('ebit_margin', 'EBIT margin in every explicit forecast year', shift('ebit_margins'), -.3, .45,
              base['ebit_margins'][0], 'shift'),
             ('terminal_roic', 'Terminal return on new capital', set_to('terminal_roic'),
              base['terminal_growth'] + .001, 3.0, base['terminal_roic'], 'level'),
@@ -1534,10 +1551,18 @@ def _price_requirements(actuals, base, market):
             ('terminal_growth', 'Terminal growth', set_to('terminal_growth'), -.03, terminal_rate - .0101,
              base['terminal_growth'], 'level')):
         row = {'input': name, 'label': label, 'kind': kind, 'house': house, **solve(mutate, low, high)}
+        if kind == 'shift':
+            field = 'growth_rates' if name == 'revenue_growth' else 'ebit_margins'
+            row['house_path'] = path(field, 0.0)
+            if row['status'] in ('solved', 'not_reachable'):
+                row['needed_path' if row['status'] == 'solved' else 'at_path'] = path(
+                    field, row['needed'] if row['status'] == 'solved' else row['at'])
         rows.append(row)
     return {'rows': rows, 'market_price': market,
             'basis': 'Base scenario. One input changed at a time, all others fixed; "shift" rows add the same number of '
-                     'points to every forecast year. Rows are alternatives, not additive, and carry no probability. '
+                     'points to every explicit forecast year (steady-state years keep terminal growth and the final margin) '
+                     'and report the projected path: compound annual revenue growth or the average EBIT margin over all '
+                     'forecast years. Rows are alternatives, not additive, and carry no probability. '
                      'A row that is not reachable reports the value closest to the price within the inputs the engine accepts.'}
 
 

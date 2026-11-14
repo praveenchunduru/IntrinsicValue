@@ -436,6 +436,28 @@ class OpusReviewFixTests(unittest.TestCase):
             if row['status'] == 'not_reachable':
                 self.assertIn(row['direction'], ('above', 'below'))
 
+    def test_shift_rows_report_the_projected_path_they_produce(self):
+        value = plan()
+        result = valuation.evaluate(value)
+        flows = result['scenarios']['base']['cashflows']
+        revenue0 = flows[0]['revenue'] / (1 + flows[0]['revenue_growth'])
+        rows = {row['input']: row for row in result['price_requirements']['rows']}
+        growth, margin = rows['revenue_growth'], rows['ebit_margin']
+        self.assertAlmostEqual(growth['house_path']['year1'], growth['house'])
+        self.assertAlmostEqual(growth['house_path']['over_forecast'],
+                               (flows[-1]['revenue'] / revenue0) ** (1 / len(flows)) - 1)
+        self.assertAlmostEqual(margin['house_path']['over_forecast'],
+                               sum(flow['ebit_margin'] for flow in flows) / len(flows))
+        for row in (growth, margin):
+            path = row.get('needed_path') or row.get('at_path')
+            self.assertIsNotNone(path)
+            delta = row['needed'] if row['status'] == 'solved' else row['at']
+            self.assertAlmostEqual(path['year1'], row['house'] + delta)
+        summary = pipeline.computed_summary(value, result)
+        self.assertIn('a year compounded over', summary)
+        self.assertIn('average over', summary)
+        self.assertIn('points in every explicit year: ', summary)
+
     def test_a_contract_refresh_does_not_spend_the_revision_allowance(self):
         from investmentideas import pipeline
         state = {'iteration': 1, 'complete': True, 'workflow_contract': {'old': True}, 'sources': [], 'gaps': [], 'ticker': 'AAPL', 'review_history': []}
@@ -465,3 +487,26 @@ class ReasoningExhaustedTests(unittest.TestCase):
                                              max_tokens=18000), 'memo')
         self.assertNotIn('reasoning', sent[-1])
         self.assertEqual(sent[-1]['max_tokens'], 18000)
+
+
+class MultiplesFootnoteTimingTests(unittest.TestCase):
+    """The multiples footnote must state the timing the diagnostic actually used (live AAPL review F3)."""
+
+    def _result(self, stub):
+        multiple = {'value': 30.0}
+        row = {'forecast_year1': {'market_ev_to_ebit': multiple, 'market_ev_to_nopat': multiple},
+               'original_dcf_exit': {'ev_to_final_forecast_ebit': multiple, 'ev_to_final_forecast_nopat': multiple},
+               'unchanged_entry_multiple_exit_returns': {'ebit': {'annual_return_solutions': [0.05]},
+                                                         'nopat': {'annual_return_solutions': [0.05]}}}
+        return {'computed_diagnostics': {'valuation_multiples': {'scenarios': {'base': row}}},
+                'scenarios': {'base': {'fixed_exit_return_at_market_price': {'annual_return_solutions': [0.06]}}},
+                'discounting': {'timing': {'stub_years': stub}}}
+
+    def test_stub_timing_is_described_when_used(self):
+        text = '\n'.join(pipeline._computed_exhibits(self._result(0.1342), 'USD'))
+        self.assertIn('at its discount time from the valuation date', text)
+        self.assertNotIn('integer model years', text)
+
+    def test_integer_years_are_described_without_a_stub(self):
+        text = '\n'.join(pipeline._computed_exhibits(self._result(0.0), 'USD'))
+        self.assertIn('at integer model years', text)

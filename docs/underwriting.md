@@ -307,9 +307,11 @@ Every plan with a market price reports:
   Rows carry no probability. The largest convention row is named; the two rate shifts
   show scale and are not ranked. Rows that need the glide appear only under it.
 - `price_requirements`: for the base case, how far one input at a time would have to
-  move for value to equal the price: revenue growth or EBIT margin in every forecast
-  year (as a shift in points), terminal return on new capital, sales-to-capital, or
-  terminal growth. Only inputs the engine accepts are searched; a row that cannot
+  move for value to equal the price: revenue growth or EBIT margin in every explicit
+  forecast year (as a shift in points, with the year-1 figure and the compound revenue
+  growth or average margin it produces over all forecast years), terminal return on new
+  capital, sales-to-capital, or terminal growth. Only inputs the engine accepts are
+  searched; a row that cannot
   reach the price reports the closest value and on which side of the price it stays.
   Rows are alternatives, never combined.
 - `value_to_price` for each scenario and `weighted_value_to_price`. Percentage upside
@@ -471,9 +473,11 @@ revenue by product, service or segment, otherwise aggregate growth and margin ar
 Stated aggregate paths that the operating drivers do not produce are dropped, and
 the assumption notes record the largest gap. Python fills market equity, debt and
 finance leases from the reported bridge and, for US-dollar plans, the risk-free rate
-and premium from their source. The plan and draft stages get extended thinking (6,000
-and 8,000 tokens, added to their output limits) where the model's catalog entry
-supports it.
+and premium from their source. The draft stage gets extended thinking (8,000 tokens,
+added to its output limit) where the model's catalog entry supports it. The plan stage
+does not think: a live plan call spent its whole 18,000-token limit reasoning and
+returned no text. A thinking stage that ends that way is retried once without
+reasoning.
 
 Python places a valuation summary under the memo's title: scenario values and value /
 price, what the price implies, what the price requires, the largest convention steps

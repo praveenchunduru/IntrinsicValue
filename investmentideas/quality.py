@@ -334,7 +334,7 @@ RUBRIC = (
     'without an inline "unverified" label; one-at-a-time rows added together or called cumulative; a number that is '
     'neither in the evidence, nor in the computed output, nor a shown calculation from cited figures; a conclusion '
     'that names a different driver of the gap to price than the computed tables show; a material claim contradicted '
-    'by primary evidence in the run. Minor: rounding within the last displayed digit; wording, emphasis or structure; '
+    'by primary evidence in the run; a model output cited to a filing or source as if reported. Minor: rounding within the last displayed digit; wording, emphasis or structure; '
     'an omission that does not change the conclusion. Rounding is never material; unverified excerpts used only for '
     'attributed outside views, consensus or guidance context are not material, but a company fact or number supported '
     'only by an unverified excerpt is, whatever its label.')

@@ -1593,9 +1593,12 @@ def _computed_exhibits(result,currency):
                     f'{multiple(row["forecast_year1"]["market_ev_to_"+metric])} | '
                     f'{multiple(row["original_dcf_exit"]["ev_to_final_forecast_"+metric])} | '
                     f'{returns(original)} | {returns(row["unchanged_entry_multiple_exit_returns"][metric])} |')
+        stub=((result.get('discounting') or {}).get('timing') or {}).get('stub_years') or 0
+        timing=('at its discount time from the valuation date (the first year counts only its unexpired fraction and later flows '
+                'fall at year k minus the stub)' if stub else 'at integer model years')
         lines += ['', 'Entry earnings use the first explicit forecast year, not trailing earnings; exit earnings use the final explicit year. '
             'The return comparison holds operating cash flows, opening financing/claims and shares fixed and changes only the exit valuation. '
-            'All annual FCFF is distributed under the debt/claims-settled diagnostic at integer model years; this is not a common-share payout, '
+            f'All annual FCFF is distributed under the debt/claims-settled diagnostic {timing}; this is not a common-share payout, '
             'ongoing buyback or stock-price-return forecast. Multiple/return alternatives do not change the house DCF or scenario weights.']
     repurchases=diagnostics.get('repurchase_tests')
     if isinstance(repurchases,list) and repurchases:
@@ -1855,14 +1858,23 @@ def computed_summary(plan, result):
     if requirements:
         lines+=['','What the price requires (base case, one input at a time, all others fixed; rows are alternatives):','',
                 '| Input | House | Needed for value = price |','|---|---:|---|']
+        def over(path):
+            if not isinstance(path,dict):
+                return ''
+            measure='a year compounded' if path.get('measure')=='compound_annual_growth' else 'average'
+            return f'{path["over_forecast"]:.1%} {measure} over {path["years"]} years'
+        def shifted(delta,path):
+            text=f'{delta*100:+.1f} points in every explicit year'
+            return text+(f': {path["year1"]:.1%} in year 1, {over(path)}' if isinstance(path,dict) else '')
         for row in requirements:
-            house=(f'{row["house"]:.1%} in year 1' if row['kind']=='shift' else
+            house=(f'{row["house"]:.1%} in year 1'+(f', {over(row.get("house_path"))}' if row.get('house_path') else '')
+                   if row['kind']=='shift' else
                    f'{row["house"]:.2f}' if row['input']=='sales_to_capital' else f'{row["house"]:.2%}')
             if row['status']=='solved':
-                needed=(f'{row["needed"]*100:+.1f} points in every year' if row['kind']=='shift' else
+                needed=(shifted(row['needed'],row.get('needed_path')) if row['kind']=='shift' else
                         f'{row["needed"]:.2f}' if row['input']=='sales_to_capital' else f'{row["needed"]:.2%}')
             elif row['status']=='not_reachable':
-                limit=(f'{row["at"]*100:+.1f} points in every year' if row['kind']=='shift' else
+                limit=(shifted(row['at'],row.get('at_path')) if row['kind']=='shift' else
                        f'{row["at"]:.2f}' if row['input']=='sales_to_capital' else f'{row["at"]:.2%}')
                 needed=(f'not reachable; the closest is {money(row["closest_value"])} at {limit}, still '
                         f'{"above" if row["direction"]=="above" else "below"} the price')
@@ -2467,7 +2479,9 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'after your text. Do not re-type their tables. Copy any computed or reported figure exactly as it appears in '
             'the summary, the COMPUTED FROM REPORTED FILINGS tables, the valuation output or a source. Do not calculate '
             'new figures (growth rates, margins, per-share amounts, differences or sums); if a figure you need is not '
-            'shown, make the point without it. Cite every factual claim with [S#] from the evidence.\n'+
+            'shown, make the point without it. Cite every factual claim with [S#] from the evidence. Attribute model '
+            'outputs (values, price requirements, implied returns, monitoring cases) to the computed summary or exhibits '
+            'in words, and place each [S#] directly after the reported or sourced figure it supports, not after a model output.\n'+
             EVIDENCE_TIER_RULE+'\n'+RUBRIC+'\n'
             'Engage the strongest sourced opposing economic case and answer it with evidence; a target or rating alone '
             'is not an argument. Use the computed monitoring cases, counterfactuals, multiples and repurchase tests for '
