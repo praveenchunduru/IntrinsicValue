@@ -311,6 +311,12 @@ class PromptSizeTests(unittest.TestCase):
             self.assertIn('at most', prompt)
         self.assertLess(len(json.dumps(requests[0])), len(json.dumps(self.source())))
 
+    def test_the_wait_for_a_completion_scales_with_its_output_limit(self):
+        self.assertEqual(core.completion_timeout(3500), 235)
+        self.assertEqual(core.completion_timeout(14000), 760)
+        self.assertEqual(core.completion_timeout(500), 180)
+        self.assertEqual(core.completion_timeout(10**6), 900)
+
     def test_search_lanes_reserve_the_headroom_they_request(self):
         self.assertGreaterEqual(pipeline.WEB_RESEARCH_TOKENS, 6000)
 

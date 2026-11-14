@@ -165,6 +165,11 @@ def prompt_companyfacts(data):
     return presented
 
 
+def completion_timeout(max_tokens):
+    """Seconds to wait for a non-streamed completion of up to ``max_tokens``."""
+    return min(900, max(180, 60 + max_tokens // 20))
+
+
 def _text_price_caps(pricing):
     """Conservative token prices across every declared context-length tier.
 
@@ -272,7 +277,12 @@ class Router:
         if web:
             payload['plugins'] = [{'id':'web','engine':'exa','mode':'auto','max_results':5}]
         try:
-            result = request_json(BASE + '/chat/completions', key=self.key, payload=payload, timeout=180)
+            # The response arrives only when generation ends. A fixed 180 s wait
+            # abandoned a 14,000-token draft mid-generation (observed live
+            # 2026-11-14) and left its reservation charged, so the wait scales
+            # with the requested output.
+            result = request_json(BASE + '/chat/completions', key=self.key, payload=payload,
+                                  timeout=completion_timeout(max_tokens))
         except HTTPFailure as exc:
             row.update(status='failed_http', http_status=exc.status, retry_after_seconds=exc.retry_after, error_category=exc.category)
             raise
