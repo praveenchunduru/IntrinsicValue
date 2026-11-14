@@ -386,6 +386,15 @@ def _traced(number, decimals, unit, pool):
     return False
 
 
+def prose_words(memo):
+    """Words of the writer's prose: no computed summary, no Python-rendered valuation section."""
+    body = memo.split('\n## Executable valuation')[0]
+    summary = re.search(r'## Valuation summary \(computed by Python\).*?(?=\n#{1,2} [^#])', body, re.S)
+    if summary:
+        body = body.replace(summary.group(0), '')
+    return len(re.findall(r"[A-Za-z][A-Za-z'\-]*", body))
+
+
 def prereview_checks(memo, sources, computed=()):
     """Deterministic defects in a draft's prose, before any paid review.
 
@@ -463,7 +472,7 @@ def prereview_checks(memo, sources, computed=()):
     if additive:
         add('convention-rows-added', 'minor', 'Convention or one-at-a-time rows are described as adding up or combining.',
             'State each row separately; rows are alternatives and are never added together.', [('', text) for text in additive])
-    words = len(re.findall(r"[A-Za-z][A-Za-z'\-]*", body))
+    words = prose_words(memo)
     if words > PROSE_WORD_LIMIT:
         add('length', 'minor', f'The prose is {words} words; the budget is about 3,000.',
             'Cut repetition and secondary detail, keeping every section.', [])

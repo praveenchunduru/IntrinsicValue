@@ -24,7 +24,7 @@ from .costs import cost_summary
 from .analytics import annual_metrics
 from .fundamentals import yahoo_financials
 from .inputs import canonical_reported_inputs, pin_reported_inputs
-from .quality import DIAGNOSTIC_SCOPE, RUBRIC, assessment_findings, claim_ledger, inspect_memo, parse_json, parse_review, prereview_checks
+from .quality import DIAGNOSTIC_SCOPE, RUBRIC, assessment_findings, claim_ledger, inspect_memo, parse_json, parse_review, prereview_checks, prose_words
 from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_breakdown_facts, inline_facts, archive_focus_excerpts
 from .evidence_tables import breakdown_tables, historical_baseline, render_baseline, render_breakdowns
 from .macro import gather_us_calibration
@@ -2523,10 +2523,15 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'edge; normalized one-off margin, inventory/procurement cash and reinvestment links; and the '
             'strongest sourced opponent across the saved quote. Explain computed market/exit multiple '
             'and consistent return comparisons, and repurchase economics against current house value. '
-            'Recompute any reviewer-proposed number from the computed output before adopting it; if it '
-            'disagrees, keep the computed figure. Do not resolve a finding by inventing '
+            'Adopt a reviewer-proposed number only when it appears in the computed output or a source; otherwise '
+            'keep the computed figure. Copy computed and reported figures exactly and do not calculate new ones; '
+            'attribute model outputs to the computed summary in words and place each [S#] after the sourced figure '
+            'it supports. Python places the computed summary above your text and the exhibits after it; do not '
+            're-type their tables. Do not resolve a finding by inventing '
             'a policy discount, nonrecurring adjustment, source passage or double-counted cash distribution. '
-            'Return the full revised memo only, '+MEMO_WORDS+'. Keep the required section order.\nEvidence:\n'+context+
+            'Return the full revised memo only, '+MEMO_WORDS+'. The current prose is '+str(prose_words(memo))+
+            ' words; the revision must not be longer, and should be shorter where the current prose exceeds 3,000 words. '
+            'Keep the required section order.\n'+EVIDENCE_TIER_RULE+'\n'+RUBRIC+'\nEvidence:\n'+context+
             ('\nThe forecast correction for these findings was rejected; the valuation below is unchanged. Do not '
              'describe any forecast change as made.' if isinstance(candidate,dict) and candidate.get('correction_rejected') else '')+
             ('\nNotes on the plan now valued:\n'+'\n'.join(state.get('plan_gap_notes',[])) if state.get('plan_gap_notes') else '')+
@@ -2559,24 +2564,36 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         memo_key=hashlib.sha256(memo.encode()).hexdigest()[:16]
         done=any(memo_key in (record.get('memo_sha256'),record.get('fixed_memo_sha256'))
                  for record in fixed.values() if isinstance(record,dict))
-        if issues and not done:
-            response=call(f'draft_check_fix_{iteration}',strong,
+        # Length is left to the writing stages: a live fix call (2026-11-14) asked to
+        # cut 1,300 words overran its output limit and was deleting the conclusion's
+        # required rows. The fix call corrects figures, labels and added rows only.
+        fixable=[issue for issue in issues if issue['id']!='length']
+        if fixable and not done:
+            try:
+                response=call(f'draft_check_fix_{iteration}',strong,
                 'Correct only the problems listed below in this memo draft. Return ONLY JSON {"edits":[{"quote":"exact '
                 'contiguous text copied from the memo","replacement":"corrected text"}]}. Each quote must appear exactly '
                 'once in the memo; keep each quote to one sentence or less. For an untraced figure, use the exact figure from '
                 'the computed summary, the COMPUTED FROM REPORTED FILINGS tables, the valuation output or a primary source, '
                 'or remove the figure. For a figure found only in unverified excerpts, cite the primary source that contains '
                 'it, label it as unverified context, or remove it. Describe convention rows separately, never as adding up. '
-                'For length, cut repeated or secondary sentences (an empty replacement deletes). Change nothing else.\n'+
-                EVIDENCE_TIER_RULE+'\nProblems:\n'+json.dumps(issues)+'\nCOMPUTED SUMMARY:\n'+computed_summary(plan,result)+
+                'Change nothing else.\n'+
+                EVIDENCE_TIER_RULE+'\nProblems:\n'+json.dumps(fixable)+'\nCOMPUTED SUMMARY:\n'+computed_summary(plan,result)+
                 '\nEvidence:\n'+context+'\nComputed exhibits:\n'+valuation_section(plan,result)+'\nMemo:\n'+memo,tokens=8000)
+            except core.IncompleteResponse as exc:
+                # The fix is a free-check convenience; the review still sees the draft
+                # and the same checks. A charged but unusable answer does not stop the run.
+                response=''
+                progress(f'Pre-review fix not applied: {exc}'.split(', so it')[0])
             # A live fix response (2026-11-14) gave edits, wrote "Wait, I need to
             # re-read", and gave corrected edits. The last complete block is the
             # model's answer; each edit is still applied only on an exact match.
-            edits=_last_edits(response)
+            edits=_last_edits(response) if response else []
             memo,applied,skipped=_apply_edits(memo,edits)
             memo=_label_unverified(memo,state['sources'])
-            if edits is None:
+            if not response:
+                skipped=['the fix response was incomplete and was not used']
+            elif edits is None:
                 skipped=['no complete edits object could be parsed from the response']
             fixed[f'{iteration}:{memo_key}']={'memo_sha256':memo_key,'fixed_memo_sha256':hashlib.sha256(memo.encode()).hexdigest()[:16],
                                              'issues':[issue['id'] for issue in issues],'edits_applied':applied,'edits_skipped':skipped[:20]}

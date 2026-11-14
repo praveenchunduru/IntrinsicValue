@@ -37,6 +37,10 @@ class ReasoningExhausted(RuntimeError):
     """Reasoning consumed the whole output limit and no answer was returned."""
 
 
+class IncompleteResponse(RuntimeError):
+    """A charged response ended without a complete answer (length, filter, provider error, empty)."""
+
+
 def reasoning_budget(stage):
     if stage.endswith(WITHOUT_REASONING):
         return 0
@@ -372,7 +376,7 @@ class Router:
                 row['partial_response']=content[:80000]
             reason = {'length': 'reached its output limit', 'error': 'failed at the provider',
                       'content_filter': 'was filtered by the provider'}.get(choice.get('finish_reason'), 'was empty or refused')
-            raise RuntimeError(f'The {stage} response from {model} {reason}, so it was not used. '
+            raise IncompleteResponse(f'The {stage} response from {model} {reason}, so it was not used. '
                                'Run the same command again to retry this stage; completed stages are reused. '
                                'If it repeats, choose another model')
         row['status'] = 'complete'

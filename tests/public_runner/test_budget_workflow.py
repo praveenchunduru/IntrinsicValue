@@ -274,3 +274,55 @@ class BudgetWorkflowTests(unittest.TestCase):
 
 if __name__=='__main__':
     unittest.main()
+
+
+class IncompleteFixTransport(FullContractTransport):
+    """The pre-review fix call ends at its output limit, as a live AAPL run did (2026-11-14)."""
+
+    def transport(self, url, *, key=None, payload=None, timeout=90):
+        response = super().transport(url, key=key, payload=payload, timeout=timeout)
+        if url.endswith('/chat/completions') and payload['messages'][1]['content'].startswith('Correct only the problems listed below'):
+            response['choices'][0]['finish_reason'] = 'length'
+            response['choices'][0]['message']['content'] = '```json\n{"edits":[{"quote":"cut'
+        return response
+
+
+class FixStageTests(unittest.TestCase):
+    def test_an_incomplete_fix_response_is_recorded_and_the_review_still_runs(self):
+        fixture = IncompleteFixTransport(revisions=1)
+        with tempfile.TemporaryDirectory() as directory, fixture.installed():
+            folder = pipeline.run('AAPL', 'synthetic-key', directory=directory)
+            state = json.loads((folder/'state.json').read_text())
+        self.assertTrue(state['complete'])
+        rows = {row['stage']: row for row in state['ledger']}
+        self.assertEqual(rows['draft_check_fix_0']['status'], 'incomplete')
+        self.assertIn('review_0', rows)
+        self.assertIn('review_1', rows)
+        records = list(state['prereview_fixes'].values())
+        self.assertTrue(records and all(record['edits_skipped'] == ['the fix response was incomplete and was not used']
+                                        for record in records))
+
+    def test_the_revision_is_told_the_current_length_and_the_shared_standard(self):
+        fixture = FullContractTransport(revisions=1)
+        with tempfile.TemporaryDirectory() as directory, fixture.installed():
+            pipeline.run('AAPL', 'synthetic-key', directory=directory)
+        revise = next(p['messages'][1]['content'] for p in fixture.requests
+                      if p['messages'][1]['content'].startswith('Revise the complete memo'))
+        self.assertRegex(revise, r'The current prose is \d+ words; the revision must not be longer')
+        self.assertIn(pipeline.RUBRIC, revise)
+        self.assertNotIn('Recompute any reviewer-proposed number', revise)
+
+    def test_length_alone_does_not_buy_a_fix_call(self):
+        from investmentideas import quality
+        body = '# T\n\n## (1) Conclusion\n' + ('Apple sells phones and services to consumers worldwide. ' * 700)
+        self.assertEqual([issue['id'] for issue in quality.prereview_checks(body, [], ())], ['length'])
+        length_only = [{'id': 'length', 'severity': 'minor', 'issue': 'long', 'fix': 'cut', 'source_refs': [], 'items': []}]
+        fixture = FullContractTransport()
+        with tempfile.TemporaryDirectory() as directory, fixture.installed(), \
+                patch.object(pipeline, 'prereview_checks', return_value=length_only):
+            folder = pipeline.run('AAPL', 'synthetic-key', directory=directory)
+            state = json.loads((folder/'state.json').read_text())
+        self.assertTrue(state['complete'])
+        self.assertFalse(any(p['messages'][1]['content'].startswith('Correct only the problems listed below')
+                             for p in fixture.requests))
+        self.assertNotIn('draft_check_fix_0', [row['stage'] for row in state['ledger']])
