@@ -499,8 +499,10 @@ def inspect_memo(memo, sources, valuation=None):
         'valuation': (r'valuation|intrinsic value|discounted cash flow|\bdcf\b|what is priced|\bmodel\b', 'major'),
         'scenarios': (r'scenario|\bbear\b|\bbull\b|stress', 'major'),
         'risks': (r'\brisk|downside', 'major'),
-        'disconfirming-evidence': (r'disconfirm|counter.?thesis|what would change|falsif|why we might be wrong|alternative explanation|kill criteria|contrary', 'minor'),
-        'catalysts': (r'catalyst|monitor|watch|milestone|signpost', 'minor'),
+        # The memo structure names these "Risks, including evidence that the
+        # framework is wrong" and "Observations that would change the value".
+        'disconfirming-evidence': (r'disconfirm|counter.?thesis|what would change|would change the value|framework.{0,40}wrong|falsif|why we might be wrong|alternative explanation|kill criteria|contrary', 'minor'),
+        'catalysts': (r'catalyst|monitor|watch|milestone|signpost|observations? that would change', 'minor'),
         'diligence-questions': (r'question|diligence|unknown|missing evidence|limitation|unresolved', 'minor')
     }
     if not headings:

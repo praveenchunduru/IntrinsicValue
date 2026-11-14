@@ -363,3 +363,14 @@ class AssessmentFindingTests(unittest.TestCase):
         from investmentideas.quality import assessment_findings
         rows = assessment_findings({'verdict': 'pass', 'findings': []})
         self.assertEqual([(row['id'], row['severity']) for row in rows], [('review-assessment-missing', 'minor')])
+
+
+class MemoStructureTests(unittest.TestCase):
+    def test_the_twelve_section_headings_satisfy_the_section_checks(self):
+        memo = '\n'.join(['# AAPL', '## 1. Valuation conclusion', 'x [S1]', '## 5. Business economics, industry and competition',
+                          'x [S1]', '## 7. Historical financial quality', 'x [S1]', '## 9. Bear/base/bull scenarios', 'x [S1]',
+                          '## 10. Observations that would change the value', 'x [S1]',
+                          '## 11. Risks, including evidence that the valuation framework is wrong', 'x [S1]',
+                          '## 12. Evidence gaps and unresolved questions', 'x [S1]'])
+        ids = {row['id'] for row in inspect_memo(memo, [{'id': 'S1', 'title': 'Filing', 'kind': 'filing', 'data': {'excerpt': 'Revenue 1'}}])}
+        self.assertFalse({'section-disconfirming-evidence', 'section-catalysts', 'section-risks'} & ids)
