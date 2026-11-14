@@ -1390,6 +1390,11 @@ def valuation_section(plan, result):
         growth = scenario.get('terminal_growth', inputs.get('terminal_growth'))
         ratio = f'{scenario["value_to_price"]:.2f}' if 'value_to_price' in scenario else 'n/a'
         lines.append(f'| {name.title()} | {inputs["probability"]:.1%} | {rate} | {growth:.2%} | {currency} {scenario["per_share_value"]:,.2f} | {ratio} |')
+    thin=[name for name in ('bear','base','bull') if 'terminal_rate' in result['scenarios'][name] and
+          result['scenarios'][name].get('terminal_spread') is not None and result['scenarios'][name]['terminal_spread']<.02]
+    if thin:
+        lines += ['', 'Terminal rate within two points of terminal growth in '+', '.join(thin)+': the value is fragile to '
+                      'small changes in either.']
     lines += ['',f'Weighted intrinsic value per share: {currency} {result["weighted_per_share_value"]:,.2f}'+
               (f'; value / price {result["weighted_value_to_price"]:.2f}' if 'weighted_value_to_price' in result else ''),
               '',f'Forecast basis: {plan["assumptions_label"]}',
