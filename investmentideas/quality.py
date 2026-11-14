@@ -335,7 +335,9 @@ RUBRIC = (
     'neither in the evidence, nor in the computed output, nor a shown calculation from cited figures; a conclusion '
     'that names a different driver of the gap to price than the computed tables show; a material claim contradicted '
     'by primary evidence in the run. Minor: rounding within the last displayed digit; wording, emphasis or structure; '
-    'an omission that does not change the conclusion. Labelled unverified context and rounding are never material.')
+    'an omission that does not change the conclusion. Rounding is never material; unverified excerpts used only for '
+    'attributed outside views, consensus or guidance context are not material, but a company fact or number supported '
+    'only by an unverified excerpt is, whatever its label.')
 
 
 # Free checks run on a draft before the paid review. They trace every figure in
@@ -392,17 +394,22 @@ def prereview_checks(memo, sources, computed=()):
     The memo body ends at the Python-rendered "## Executable valuation".
     """
     body = memo.split('\n## Executable valuation')[0]
+    # Python marks every unverified citation inline; judge the writer's own text.
+    body = re.sub(r'\b(S\d+) unverified\b', r'\1', body)
     summary = re.search(r'## Valuation summary \(computed by Python\).*?(?=\n#{1,2} [^#])', body, re.S)
     if summary:
         body = body.replace(summary.group(0), '')
     tiers = {source.get('id'): source.get('source_tier') for source in sources if isinstance(source, dict)}
-    primary, unverified = set(), set()
+    primary, unverified, house = set(), set(), set()
     for source in sources:
         if isinstance(source, dict):
-            _numeric_leaves(source.get('data'), unverified if source.get('source_tier') in UNVERIFIED_SOURCE_TIERS else primary)
+            target = unverified if source.get('source_tier') in UNVERIFIED_SOURCE_TIERS else primary
+            for part in (source.get('data'), source.get('primary_focus_excerpts'), source.get('breakdown_tables'),
+                         source.get('historical_baseline')):
+                _numeric_leaves(part, target)
     for item in computed:
-        _numeric_leaves(item, primary)
-    primary_pool, unverified_pool = sorted(primary), sorted(unverified)
+        _numeric_leaves(item, house)
+    primary_pool, unverified_pool, house_pool = sorted(primary | house), sorted(unverified), sorted(house)
     untraced, unlabelled, additive, unlabelled_claims, cite_primary = [], [], [], [], []
     for sentence in re.split(r'(?<=[.!?])\s+|\n+', body):
         line = sentence.strip()
@@ -414,9 +421,6 @@ def prereview_checks(memo, sources, computed=()):
         clean = re.sub(r'\b(?:19|20)\d\d(?:-\d\d-\d\d)?\b|\bFY\s?\d+|\bQ[1-4]\b|\b\d+(?:st|nd|rd|th)\b|\(\d\)|\b\d+\.\s', '', clean)
         if _ADDITIVE.search(line) and _PANEL.search(line):
             additive.append(line[:300])
-        if (cited and all(tiers.get(ref) in UNVERIFIED_SOURCE_TIERS for ref in cited) and
-                not re.search(r'unverified', line, re.I)):
-            unlabelled_claims.append(line[:300])
         for match in _NUMBER.finditer(clean):
             raw = match.group(1).replace('$', '').replace(',', '')
             unit = match.group(2)
@@ -426,19 +430,16 @@ def prereview_checks(memo, sources, computed=()):
                 continue
             decimals = len(raw.split('.')[1]) if '.' in raw else 0
             digits = len(raw.replace('-', '').replace('.', '').lstrip('0'))
-            if not unit and decimals == 0 and number <= 31:
-                continue
-            if digits < 2 and not unit:
+            # Whole numbers under three digits match some pool value by chance.
+            if decimals == 0 and digits < 3:
                 continue
             if _traced(number, decimals, unit, primary_pool):
                 if (cited and all(tiers.get(ref) in UNVERIFIED_SOURCE_TIERS for ref in cited) and
-                        (digits >= 3 or (unit or '').strip() in {'%', 'billion', 'bn', 'B', 'million'})):
+                        not _traced(number, decimals, unit, house_pool)):
                     cite_primary.append((match.group(0).strip(), line[:300]))
                 continue
             if _traced(number, decimals, unit, unverified_pool):
-                if not re.search(r'unverified', line, re.I) and cited and all(tiers.get(ref) in UNVERIFIED_SOURCE_TIERS for ref in cited):
-                    unlabelled.append((match.group(0).strip(), line[:300]))
-                elif not cited or not all(tiers.get(ref) in UNVERIFIED_SOURCE_TIERS for ref in cited):
+                if not re.search(r'unverified', line, re.I):
                     unlabelled.append((match.group(0).strip(), line[:300]))
                 continue
             untraced.append((match.group(0).strip(), line[:300]))
@@ -451,18 +452,14 @@ def prereview_checks(memo, sources, computed=()):
             'the reported inputs or any primary source within display rounding.',
             'Replace each with the exact figure from the computed tables or a primary source, or remove it.', untraced)
     if unlabelled:
-        add('number-unverified-only', 'minor', f'{len(unlabelled)} figures appear only in unverified web excerpts and are '
-            'not labelled as unverified context or are cited to a primary source that does not contain them.',
-            'Use the primary figure if one exists; otherwise label the figure as unverified context or remove it.', unlabelled)
+        add('number-unverified-only', 'minor', f'{len(unlabelled)} figures appear only in unverified web excerpts and the '
+            'sentence does not present them as unverified outside views or consensus context.',
+            'Use the primary figure if one exists; otherwise attribute it as unverified outside context in words, or remove it.',
+            unlabelled)
     if cite_primary:
         add('cite-primary-source', 'minor', f'{len(cite_primary)} figures are cited only to unverified excerpts although '
             'a primary source or the computed tables contain them.',
             'Cite the primary source or computed table that contains each figure.', cite_primary)
-    if unlabelled_claims:
-        add('claim-unverified-unlabelled', 'minor', f'{len(unlabelled_claims)} sentences rest only on unverified web '
-            'excerpts and do not say so.',
-            'Cite a primary source that contains the claim, label the sentence as unverified context, or remove it.',
-            [('', text) for text in unlabelled_claims])
     if additive:
         add('convention-rows-added', 'minor', 'Convention or one-at-a-time rows are described as adding up or combining.',
             'State each row separately; rows are alternatives and are never added together.', [('', text) for text in additive])

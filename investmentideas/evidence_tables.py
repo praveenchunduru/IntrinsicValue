@@ -41,7 +41,6 @@ DURATIONS = {
     'stock_compensation': ('ShareBasedCompensation', 'AllocatedShareBasedCompensationExpense'),
     'repurchases': ('PaymentsForRepurchaseOfCommonStock',),
     'dividends': ('PaymentsOfDividends', 'PaymentsOfDividendsCommonStock'),
-    'shares_repurchased': ('StockRepurchasedDuringPeriodShares', 'StockRepurchasedAndRetiredDuringPeriodShares'),
     'diluted_shares': ('WeightedAverageNumberOfDilutedSharesOutstanding',),
     'diluted_eps': ('EarningsPerShareDiluted',),
 }
@@ -50,6 +49,14 @@ INSTANTS = {
     'equity': ('StockholdersEquity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest'),
 }
 SHARE_UNITS = {'shares'}
+# Average buyback price pairs a value and a share count from the same disclosure;
+# cash-flow payments can include purchases outside the program (MSFT: about a
+# third above the program's own price).
+REPURCHASE_PAIRS = (('StockRepurchasedDuringPeriodValue', 'StockRepurchasedDuringPeriodShares'),
+                    ('StockRepurchasedAndRetiredDuringPeriodValue', 'StockRepurchasedAndRetiredDuringPeriodShares'),
+                    ('TreasuryStockValueAcquiredCostMethod', 'TreasuryStockSharesAcquired'))
+# Per-share and share-count values change basis at a stock split.
+SHARE_BASIS_FIELDS = ('diluted_shares', 'diluted_eps')
 
 
 def _day(value):
@@ -98,8 +105,22 @@ def _duration(gaap, concepts, start, end, currency, as_of=None):
             if row.get('start') == start and row['end'] == end and (best is None or row['filed'] > best['filed']):
                 best = row
         if best is not None:
-            return best['val'], concept
-    return None, None
+            return best['val'], concept, best['filed']
+    return None, None, None
+
+
+def _split_restated_after(gaap, concept, as_of=None):
+    """Latest filing date that restated an earlier period by a split-sized factor, or None."""
+    vintages, latest = {}, None
+    for _, row in _annual_rows(gaap, concept, as_of):
+        if row.get('val'):
+            vintages.setdefault((row.get('start'), row['end']), []).append((row['filed'], abs(row['val'])))
+    for rows in vintages.values():
+        rows.sort()
+        for (_, old), (filed, new) in zip(rows, rows[1:]):
+            if old and new and max(old, new) / min(old, new) >= 1.5 and (latest is None or filed > latest):
+                latest = filed
+    return latest
 
 
 def _instant(gaap, concepts, end, currency, as_of=None):
@@ -125,8 +146,10 @@ def historical_baseline(payload, years=5, as_of=None):
     """Reported operating history from a full SEC companyfacts payload.
 
     Returns rows oldest first. A ratio is None when either side is unreported.
-    Average repurchase price uses reported shares repurchased only; it is never
-    inferred from changes in share count.
+    Average repurchase price divides a reported repurchase value by the share
+    count of the same disclosure, never cash-flow payments or share-count
+    changes. Per-share and share-count values reported only before a later split
+    restatement are left blank rather than mixed with the new basis.
     """
     gaap = ((payload or {}).get('facts') or {}).get('us-gaap') or {}
     periods = _fiscal_years(gaap, years + 1, as_of)
@@ -135,10 +158,26 @@ def historical_baseline(payload, years=5, as_of=None):
         row = {'fiscal_year_start': period['start'], 'fiscal_year_end': period['end'], 'currency': period['currency'],
                'revenue': period['revenue']}
         concepts['revenue'] = period['revenue_concept']
+        filed = {}
         for name, options in DURATIONS.items():
-            row[name], used = _duration(gaap, options, period['start'], period['end'], period['currency'], as_of)
+            row[name], used, filed[name] = _duration(gaap, options, period['start'], period['end'], period['currency'], as_of)
             if used:
                 concepts.setdefault(name, used)
+                split = _split_restated_after(gaap, used, as_of) if name in SHARE_BASIS_FIELDS else None
+                if split and filed[name] < split:
+                    # Reported only before a later split restatement: another basis.
+                    row[name] = None
+                    row.setdefault('split_basis_blank', []).append(name)
+        row['average_repurchase_price'] = None
+        for value_concept, share_concept in REPURCHASE_PAIRS:
+            value, _, _ = _duration(gaap, (value_concept,), period['start'], period['end'], period['currency'], as_of)
+            shares, _, shares_filed = _duration(gaap, (share_concept,), period['start'], period['end'], period['currency'], as_of)
+            if value and shares:
+                split = _split_restated_after(gaap, share_concept, as_of)
+                if not (split and shares_filed < split):
+                    row['average_repurchase_price'] = value / shares
+                    concepts.setdefault('average_repurchase_price', f'{value_concept} / {share_concept}')
+                break
         for name, options in INSTANTS.items():
             row[name], used = _instant(gaap, options, period['end'], period['currency'], as_of)
             if used:
@@ -156,7 +195,7 @@ def historical_baseline(payload, years=5, as_of=None):
             pretax = row['net_income'] + row['income_tax_expense']
         item = {key: row[key] for key in ('fiscal_year_end', 'currency', 'revenue', 'operating_income', 'net_income',
                                           'operating_cash_flow', 'capital_expenditure', 'depreciation_amortization',
-                                          'stock_compensation', 'repurchases', 'shares_repurchased', 'dividends',
+                                          'stock_compensation', 'repurchases', 'average_repurchase_price', 'dividends',
                                           'diluted_shares', 'diluted_eps', 'inventory', 'research_and_development',
                                           'selling_general_administrative', 'gross_profit')}
         item.update(
@@ -169,8 +208,6 @@ def historical_baseline(payload, years=5, as_of=None):
             capital_expenditure_to_revenue=_ratio(row['capital_expenditure'], revenue),
             depreciation_amortization_to_revenue=_ratio(row['depreciation_amortization'], revenue),
             stock_compensation_to_revenue=_ratio(row['stock_compensation'], revenue),
-            average_repurchase_price=(_ratio(row['repurchases'], row['shares_repurchased'])
-                                      if row['shares_repurchased'] else None),
             gross_profit_derived=bool(row.get('gross_profit_derived')))
         table.append(item)
     # The first period exists only to compute the first year's growth.
@@ -208,14 +245,21 @@ def breakdown_tables(facts, years=3):
         members = []
         for member in dict.fromkeys(fact['member'] for fact in rows):
             def value(concepts, end):
-                found = [Decimal(fact['normalized_decimal']) for fact in rows if fact['member'] == member and
-                         fact['end_date'] == end and short(fact['concept']) in concepts]
-                return found[0] if len(set(found)) == 1 else None
-            sales = [value(revenue, end) for end in ends]
+                # The first concept with one consistent value decides; a filer that
+                # tags both total revenues and net sales is not a conflict.
+                for concept in concepts:
+                    found = {Decimal(fact['normalized_decimal']) for fact in rows if fact['member'] == member and
+                             fact['end_date'] == end and short(fact['concept']) == concept}
+                    if len(found) == 1:
+                        return found.pop()
+                    if found:
+                        return None
+                return None
+            sales = [value(REVENUE, end) for end in ends]
             if not any(item is not None for item in sales):
                 continue
-            costs = [value(cost, end) for end in ends]
-            operating = [value({'OperatingIncomeLoss'}, end) for end in ends]
+            costs = [value(('CostOfGoodsAndServicesSold', 'CostOfRevenue'), end) for end in ends]
+            operating = [value(('OperatingIncomeLoss',), end) for end in ends]
             entry = {'member': member, 'label': _member_label(member), 'revenue': sales,
                      'revenue_growth': [float(sales[i] / sales[i + 1] - 1) if i + 1 < len(sales) and sales[i] is not None
                                         and sales[i + 1] else None for i in range(len(sales))]}
@@ -252,9 +296,12 @@ def render_baseline(baseline, source_id=None):
         return ''
     ref = f' [{source_id}]' if source_id else ''
     currency = rows[-1].get('currency', '')
-    lines = [f'Reported operating history{ref}, {currency} billions; ratios computed by Python from reported values.',
+    depreciation = ('depreciation only/rev' if (baseline.get('concepts') or {}).get('depreciation_amortization') == 'Depreciation'
+                    else 'D&A/rev')
+    lines = [f'Reported operating history{ref}, {currency} billions; ratios computed by Python from reported values; '
+             'n/a means not reported on a comparable basis.',
              'FY end | revenue | growth | gross margin | operating margin | R&D/rev | SG&A/rev | effective tax | '
-             'capex/rev | D&A/rev | SBC/rev | buybacks | avg buyback price | dividends | diluted EPS']
+             f'capex/rev | {depreciation} | SBC/rev | buybacks (cash) | avg buyback price | dividends | diluted EPS']
     for row in rows:
         price = row.get('average_repurchase_price')
         eps = row.get('diluted_eps')

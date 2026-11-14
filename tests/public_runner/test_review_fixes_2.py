@@ -3,6 +3,7 @@ import copy
 import json
 import tempfile
 import unittest
+from pathlib import Path
 from datetime import date
 from decimal import Decimal
 from unittest.mock import patch
@@ -351,13 +352,12 @@ class PrereviewCheckTests(unittest.TestCase):
         found = self.ids('# M\nMargins would need +17.9 points in every year. The S&P 500 is the benchmark.')
         self.assertNotIn('number-untraced', found)
 
-    def test_unverified_claims_and_figures_need_their_label(self):
-        found = self.ids('# M\nManagement said demand is strong [S2]. Street EPS is $9.41 [S2].')
-        self.assertIn('claim-unverified-unlabelled', found)
+    def test_unverified_figures_need_the_writers_own_label(self):
+        found = self.ids('# M\nStreet EPS is $9.41 [S2].')
         self.assertIn('number-unverified-only', found)
-        found = self.ids('# M\nPer unverified excerpts, management said demand is strong [S2]. Street EPS is $9.41 (unverified) [S2].')
-        self.assertNotIn('claim-unverified-unlabelled', found)
-        self.assertNotIn('number-unverified-only', found)
+        # The inline label Python inserts does not count as the writer presenting it as outside context.
+        self.assertIn('number-unverified-only', self.ids('# M\nStreet EPS is $9.41 [S2 unverified].'))
+        self.assertNotIn('number-unverified-only', self.ids('# M\nUnverified Street estimates put EPS at $9.41 [S2].'))
 
     def test_invented_figures_and_added_rows_are_flagged(self):
         found = self.ids('# M\nProducts margin was 60.7% [S1]. Together the convention steps account for more than the entire gap.')
@@ -395,3 +395,50 @@ class CitePrimaryTests(unittest.TestCase):
                    {'id': 'S2', 'source_tier': 'search_excerpt_unverified', 'data': {'excerpt': 'Revenue 478.8 billion.'}}]
         found = {row['id'] for row in prereview_checks('# M\nRevenue was $478.8 billion (unverified) [S2].', sources)}
         self.assertIn('cite-primary-source', found)
+
+
+
+class OpusReviewFixTests(unittest.TestCase):
+    def test_house_figures_are_never_sent_to_cite_a_primary_source(self):
+        from investmentideas.quality import prereview_checks
+        sources = [{'id': 'S1', 'source_tier': 'regulatory_primary', 'data': {'excerpt': 'Margin 0.326 reported.'}},
+                   {'id': 'S2', 'source_tier': 'search_excerpt_unverified', 'data': {'excerpt': 'x'}}]
+        found = {row['id'] for row in prereview_checks('# M\nBase margin is 32.6% (unverified view) [S2].', sources, ({'margin': 0.326},))}
+        self.assertNotIn('cite-primary-source', found)
+
+    def test_focus_excerpts_count_as_primary(self):
+        from investmentideas.quality import prereview_checks
+        sources = [{'id': 'S4', 'source_tier': 'regulatory_primary', 'data': {},
+                    'primary_focus_excerpts': [{'text': 'repurchased 297 million shares for $85.8 billion'}]}]
+        self.assertEqual(prereview_checks('# M\nApple repurchased 297 million shares for $85.8 billion [S4].', sources), [])
+
+    def test_unfenced_corrected_edits_are_found(self):
+        from investmentideas import pipeline
+        response = '{"edits":[{"quote":"a","replacement":"b"}]}\nWait, I need to re-read.\n{"edits":[{"quote":"c","replacement":"d"}]}'
+        self.assertEqual(pipeline._last_edits(response), [{'quote': 'c', 'replacement': 'd'}])
+        self.assertIsNone(pipeline._last_edits('no json here'))
+
+    def test_a_model_written_summary_is_replaced(self):
+        from investmentideas import pipeline
+        value = plan()
+        result = valuation.evaluate(value)
+        memo = '# T\n\n## Valuation summary (computed by Python)\n\n| fake | 1 |\n\n## 1. Conclusion\ntext'
+        out = pipeline._with_summary(memo, value, result)
+        self.assertNotIn('| fake | 1 |', out)
+        self.assertEqual(out.count('## Valuation summary (computed by Python)'), 1)
+
+    def test_price_requirements_stay_inside_valid_inputs(self):
+        result = valuation.evaluate(plan())
+        for row in result['price_requirements']['rows']:
+            if row['input'] == 'ebit_margin' and row['status'] == 'solved':
+                self.assertLess(result['scenarios']['base']['cashflows'][0]['ebit_margin'] + row['needed'], 1)
+            if row['status'] == 'not_reachable':
+                self.assertIn(row['direction'], ('above', 'below'))
+
+    def test_a_contract_refresh_does_not_spend_the_revision_allowance(self):
+        from investmentideas import pipeline
+        state = {'iteration': 1, 'complete': True, 'workflow_contract': {'old': True}, 'sources': [], 'gaps': [], 'ticker': 'AAPL', 'review_history': []}
+        with tempfile.TemporaryDirectory() as directory:
+            pipeline._refresh_workflow_contract(Path(directory), state)
+        self.assertEqual(state['iteration'], 2)
+        self.assertEqual(pipeline._revisions_used(state), 0)

@@ -207,7 +207,7 @@ _FOCUS_HEADINGS = (
     ('purchase commitments', 1200, 1,
      r'(?im)^[ \t]*(?:(?:manufacturing|unconditional)\s+)?purchase\s+(?:obligations|commitments)[ \t]*$'),
     ('share repurchases', 1400, 1,
-     r'(?im)^[ \t]*(?:(?:share|stock)\s+repurchase\s+programs?|issuer\s+purchases\s+of\s+equity\s+securities)[ \t]*$'),
+     r'(?im)^[ \t]*(?:(?:share|stock)\s+repurchases?(?:\s+programs?)?|issuer\s+purchases\s+of\s+equity\s+securities)[ \t]*$'),
 )
 _FOCUS_LIMIT = 12000
 

@@ -1481,6 +1481,11 @@ def _price_requirements(actuals, base, market):
         def gap(x):
             scenario = copy.deepcopy(base)
             mutate(scenario, x)
+            # Only inputs the engine would accept in a plan are evaluated.
+            if (any(not -1 < margin < 1 for margin in scenario['ebit_margins']) or
+                    any(growth <= -1 for growth in scenario['growth_rates']) or
+                    scenario['sales_to_capital'] <= 0 or scenario['terminal_roic'] <= scenario['terminal_growth']):
+                return None
             try:
                 return _project(actuals, scenario)['per_share_value'] - market
             except (ValueError, ArithmeticError, KeyError, OverflowError):
@@ -1503,8 +1508,10 @@ def _price_requirements(actuals, base, market):
         valid = [(x, value) for x, value in zip(grid, values) if value is not None]
         if not valid:
             return {'status': 'not_calculated'}
-        best = max(valid, key=lambda item: item[1])
-        return {'status': 'not_reachable', 'searched': [low, high], 'highest_value': best[1] + market, 'at': best[0]}
+        # Closest approach to the price from whichever side every value lies on.
+        best = min(valid, key=lambda item: abs(item[1]))
+        return {'status': 'not_reachable', 'searched': [low, high], 'closest_value': best[1] + market, 'at': best[0],
+                'direction': 'above' if best[1] > 0 else 'below'}
     def shift(field):
         def mutate(scenario, delta):
             scenario[field] = [value + delta for value in scenario[field]]
@@ -1531,7 +1538,7 @@ def _price_requirements(actuals, base, market):
     return {'rows': rows, 'market_price': market,
             'basis': 'Base scenario. One input changed at a time, all others fixed; "shift" rows add the same number of '
                      'points to every forecast year. Rows are alternatives, not additive, and carry no probability. '
-                     'A row that is not reachable reports the highest value found in the searched range.'}
+                     'A row that is not reachable reports the value closest to the price within the inputs the engine accepts.'}
 
 
 def _roots(function, low, high, samples=160):

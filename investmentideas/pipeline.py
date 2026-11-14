@@ -120,9 +120,9 @@ scenario's step with evidence [S#] from the sources.
 Use aggregate_ebit_margins mode without gross margins/expenses if only category revenues are supported.
 Omit main scenario growth_rates and, in gross mode, ebit_margins: Python derives them.
 When the evidence includes the matched risk-free rate and implied equity risk premium, a dated
-discount_rate is required, using the documented rates.py schema: matched risk_free_rate/
-equity_risk_premium observations, explicit unlevered_beta, market_equity, financial_debt,
-finance_lease_debt, pretax_cost_of_debt, marginal_tax_rate. marginal_tax_rate is the statutory
+discount_rate is required (rates.py schema). You supply unlevered_beta, pretax_cost_of_debt and
+marginal_tax_rate, and outside US-dollar plans a risk_free_rate and equity_risk_premium in the
+cash-flow currency; Python supplies the other records, as described below. marginal_tax_rate is the statutory
 national plus subnational rate (United States: about 25%, the 21% federal rate plus state), never
 the reported effective rate; the effective rate the evidence supports as durable belongs in
 scenario tax_rate (cite the cash tax rate and any legislated minimum such as Pillar Two).
@@ -860,6 +860,24 @@ def _label_unverified(text, sources):
     return re.sub(r'\[[^\[\]\n]*\bS\d+[^\[\]\n]*\]',label,text)
 
 
+def _last_edits(response):
+    """The last complete JSON object carrying "edits" in a response, fenced or not.
+
+    A live fix response (2026-11-14) gave edits, wrote "Wait, I need to re-read",
+    and gave corrected edits; the last object is the model's answer.
+    """
+    decoder=json.JSONDecoder()
+    found=None
+    for match in re.finditer(r'\{\s*"edits"',response if isinstance(response,str) else ''):
+        try:
+            value,_=decoder.raw_decode(response,match.start())
+        except ValueError:
+            continue
+        if isinstance(value,dict) and isinstance(value.get('edits'),list):
+            found=value['edits']
+    return found
+
+
 def _apply_edits(memo, edits):
     """Apply quote-and-replacement edits whose quote occurs exactly once; report the rest."""
     applied,skipped=0,[]
@@ -944,6 +962,11 @@ def _workflow_contract():
                 if (root/name).is_file()})}
 
 
+def _revisions_used(state):
+    """Revisions spent since the last contract refresh started a new review cycle."""
+    return state['iteration']-state.get('revision_base',0)
+
+
 def _refresh_workflow_contract(folder,state):
     contract=_workflow_contract()
     previous=state.get('workflow_contract')
@@ -965,6 +988,8 @@ def _refresh_workflow_contract(folder,state):
     state['complete']=False
     state['quality_status']='needs_review'
     state['review_invalidated']=True
+    # A refresh starts a new review cycle; it does not spend the revision allowance.
+    state['revision_base']=state['iteration']
     state.pop('pending_revision',None)
     # A legacy run has no evidence of which contract produced its forecasts.
     # Preserve the model for inspection and require a fresh review. Known
@@ -1033,6 +1058,10 @@ def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
     context = _evidence_context(state['sources'])
     stages = []
     def add(stage, model, prompt, tokens, web=False):
+        # Reasoning tokens are reserved on top of the output limit, as the router does.
+        catalog=getattr(router,'catalog',{}) or {}
+        if core.reasoning_request(catalog.get(model),model,core.reasoning_budget(stage)) is not None:
+            tokens+=core.reasoning_budget(stage)
         stages.append({'stage':stage, 'model':model, 'known_prompt_utf8_bytes':len(prompt.encode()),
                        'max_completion_tokens':tokens, 'web_search':web,
                        'reservation_floor_usd':router.estimate(model,prompt,tokens,web=web)})
@@ -1052,12 +1081,14 @@ def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
     if not supplied_memo:
         add('full_draft',strong,'Write a complete investment-committee draft.\nEvidence:\n'+
             context+'\nValuation:\n'+valuation,MEMO_TOKENS)
+        # The free checks flagged every saved draft, so the fix call is planned for.
+        add('draft_check_fix_'+str(state['iteration']),strong,'Correct only the problems listed below.\nEvidence:\n'+context,8000)
     add('review_'+str(state['iteration']),reviewer,'Independently audit the complete memo.\n'+
         REVIEW_SCHEMA+'\nEvidence:\n'+context+'\nValuation:\n'+valuation+
         '\nDraft:\n'+(draft or state.get('current_memo','')),12000)
     floor = sum(row['reservation_floor_usd'] for row in stages)
     suggested=max(DEFAULT_BUDGET,float(math.ceil(floor)))
-    return {'scope':'First draft and one review; revisions and format/forecast repairs excluded',
+    return {'scope':'First draft, its fix call and one review; revisions and format/forecast repairs excluded',
             'basis':'Uncached UTF-8 byte reservations at maximum catalog price tiers and configured output limits. '
                     'Only currently known context is included. Future search results, synthesis, forecasts, '
                     'computed valuation and memo text can increase reservations; this floor is not a completion guarantee or predicted bill.',
@@ -1157,9 +1188,11 @@ def _pin_financing_records(rate, reported, record):
                                                          or refs.get('net_debt') or current.get('source_refs') or [])))
             if allocation:
                 pinned['allocation']=allocation
-            if force_label or not isinstance(pinned.get('label'),str) or not pinned['label'].strip():
+            changed=any(current.get(key)!=pinned.get(key) for key in ('value','observed_at','allocation'))
+            # A label that described a different number would contradict the pin.
+            if force_label or changed or not isinstance(pinned.get('label'),str) or not pinned['label'].strip():
                 pinned['label']=label
-            if any(current.get(key)!=pinned.get(key) for key in ('value','observed_at','allocation')):
+            if changed:
                 record(f'discount_rate.{field}',{key:current.get(key) for key in ('value','observed_at','allocation')},
                        {key:pinned.get(key) for key in ('value','observed_at','allocation')},'pinned from the reported equity bridge')
             rate[field]=pinned
@@ -1182,11 +1215,14 @@ def _pin_financing_records(rate, reported, record):
     current=rate.get('market_equity') if isinstance(rate.get('market_equity'),dict) else {}
     if (isinstance(price,(int,float)) and isinstance(shares,(int,float)) and quoted and
             current.get('construction',current.get('measurement')) in (None,'quote_times_reported_shares')):
+        quoted=quoted[:10]
         pinned={**current,'value':price*shares,'observed_at':quoted,'construction':'quote_times_reported_shares',
                 'source_refs':list(dict.fromkeys([*(refs.get('market_price') or []),*(refs.get('shares_outstanding') or [])]))}
         pinned.pop('measurement',None)
-        pinned.setdefault('label','Saved quote times reported shares outstanding')
-        if current.get('value')!=pinned['value'] or current.get('observed_at')!=quoted:
+        changed=current.get('value')!=pinned['value'] or current.get('observed_at')!=quoted
+        if changed or not pinned.get('label'):
+            pinned['label']='Saved quote times reported shares outstanding'
+        if changed:
             record('discount_rate.market_equity',{key:current.get(key) for key in ('value','observed_at')},
                    {key:pinned[key] for key in ('value','observed_at')},'saved quote times reported shares')
         rate['market_equity']=pinned
@@ -1232,9 +1268,9 @@ def _pin_market_conventions(locked, sources, reported, valuation_day, changes):
         data=erp['data']
         for key in ('risk_free_rate','equity_risk_premium'):
             current=rate.get(key) if isinstance(rate.get(key),dict) else {}
-            pinned={**current,'value':data[key],'observed_at':data['observed_at'],
-                    'source_refs':list(dict.fromkeys([*(current.get('source_refs') or []),erp['id']]))}
-            pinned.setdefault('label','Damodaran implied equity risk premium and the Treasury rate it was solved at')
+            pinned={**current,'value':data[key],'observed_at':data['observed_at'],'source_refs':[erp['id']],
+                    'label':('Treasury rate paired with the implied equity risk premium' if key=='risk_free_rate' else
+                             'Damodaran implied equity risk premium, sustainable-payout model')}
             if current.get('value')!=pinned['value'] or current.get('observed_at')!=pinned['observed_at']:
                 record(f'discount_rate.{key}',{k:current.get(k) for k in ('value','observed_at')},
                        {'value':pinned['value'],'observed_at':pinned['observed_at']},'pinned from the implied premium source')
@@ -1826,8 +1862,10 @@ def computed_summary(plan, result):
                 needed=(f'{row["needed"]*100:+.1f} points in every year' if row['kind']=='shift' else
                         f'{row["needed"]:.2f}' if row['input']=='sales_to_capital' else f'{row["needed"]:.2%}')
             elif row['status']=='not_reachable':
-                limit=(f'{row["at"]:.2f}' if row['input']=='sales_to_capital' else f'{row["at"]:.0%}')
-                needed=f'not reachable; at {limit} the value is {money(row["highest_value"])}'
+                limit=(f'{row["at"]*100:+.1f} points in every year' if row['kind']=='shift' else
+                       f'{row["at"]:.2f}' if row['input']=='sales_to_capital' else f'{row["at"]:.2%}')
+                needed=(f'not reachable; the closest is {money(row["closest_value"])} at {limit}, still '
+                        f'{"above" if row["direction"]=="above" else "below"} the price')
             else:
                 needed='not calculated'
             lines.append(f'| {row["label"]} | {house} | {needed} |')
@@ -1848,7 +1886,9 @@ def computed_summary(plan, result):
 def _with_summary(memo, plan, result):
     """Place the computed summary after the memo's title line."""
     summary=computed_summary(plan,result)
-    if not summary or '## Valuation summary (computed by Python)' in memo:
+    # Only Python writes this block: drop any copy in the model's text first.
+    memo=re.sub(r'(?ms)^## Valuation summary \(computed by Python\)\n.*?(?=^#{1,2} |\Z)','',memo)
+    if not summary:
         return memo
     lines=memo.lstrip().split('\n')
     if lines and lines[0].startswith('# '):
@@ -2063,8 +2103,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
     if state.get('complete') and not extra_sources:
         progress(f'Using completed research: {folder / "memo.md"}')
         return folder
-    if state['iteration'] > max_revisions:
-        raise ValueError(f'Increase max_revisions to at least {state["iteration"]} to investigate the new review notes')
+    if _revisions_used(state) > max_revisions:
+        raise ValueError(f'Increase max_revisions to at least {_revisions_used(state)} to investigate the new review notes')
     refresh_coverage=bool(state.get('coverage_preflight_failed') and source_snapshot is None and not extra_sources)
     if refresh_coverage:
         state['evidence_collected']=False
@@ -2176,7 +2216,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         checkpoint()
     if state.get('complete'):
         return folder
-    if state['iteration'] > max_revisions:
+    if _revisions_used(state) > max_revisions:
         raise ValueError('Increase max_revisions to review the supplemented research snapshot')
     reported=canonical_reported_inputs(state['sources'],as_of=(forecast_plan or state.get('plan',{})).get('valuation_date'))
     core.save(folder/'reported-inputs.json',reported)
@@ -2476,13 +2516,13 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         state.pop('pending_revision',None)
         checkpoint()
 
-    while state['iteration']<=max_revisions:
+    while _revisions_used(state)<=max_revisions:
         iteration=state['iteration']
         memo=state['current_memo']
         pending=state.get('pending_revision')
         if _pending_revision_matches(pending,state):
-            if iteration>=max_revisions:
-                raise ValueError(f'Increase max_revisions to at least {iteration+1} to resume the pending prose revision')
+            if _revisions_used(state)>=max_revisions:
+                raise ValueError(f'Increase max_revisions to at least {_revisions_used(state)+1} to resume the pending prose revision')
             finish_revision(iteration,memo,pending['findings'],pending['model_response'])
             continue
         if pending:
@@ -2513,16 +2553,11 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             # A live fix response (2026-11-14) gave edits, wrote "Wait, I need to
             # re-read", and gave corrected edits. The last complete block is the
             # model's answer; each edit is still applied only on an exact match.
-            edits=None
-            for block in reversed(re.findall(r'(?ms)^```(?:json)?[ \t]*\r?\n(.*?)\r?\n```[ \t]*$',response) or [response]):
-                try:
-                    value=parse_json(block)
-                except ValueError:
-                    continue
-                edits=value.get('edits') if isinstance(value,dict) else None
-                break
+            edits=_last_edits(response)
             memo,applied,skipped=_apply_edits(memo,edits)
             memo=_label_unverified(memo,state['sources'])
+            if edits is None:
+                skipped=['no complete edits object could be parsed from the response']
             fixed[f'{iteration}:{memo_key}']={'memo_sha256':memo_key,'fixed_memo_sha256':hashlib.sha256(memo.encode()).hexdigest()[:16],
                                              'issues':[issue['id'] for issue in issues],'edits_applied':applied,'edits_skipped':skipped[:20]}
             state['current_memo']=memo
@@ -2659,7 +2694,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             if not result:
                 state['quality_status']='missing_valuation'
             break
-        if iteration==max_revisions:
+        if _revisions_used(state)==max_revisions:
             state['complete']=False
             state['quality_status']='unresolved_findings'
             break
