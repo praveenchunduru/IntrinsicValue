@@ -118,7 +118,15 @@ def _weekly_prices(payload):
         raise ValueError('Adjusted closes must align one-for-one with 2–1500 weekly timestamps')
     prices, missing = {}, set()
     previous_timestamp = None
-    for timestamp, value in zip(timestamps, values):
+    # Yahoo appends its live quote after the weekly bars, stamped exactly
+    # meta.regularMarketTime, whenever the requested range reaches the latest
+    # session (verified live 2026-11-14: AAPL, SPY, MSFT, BRK-B). It repeats the
+    # final bar's exchange week and adjusted close; it is not another weekly
+    # observation. Only that explicitly identified final point is ignored; any
+    # other same-week collision still fails.
+    live_quote = meta.get('regularMarketTime')
+    last_index, ignored_live_quote = len(timestamps) - 1, False
+    for index, (timestamp, value) in enumerate(zip(timestamps, values)):
         timestamp = _finite(timestamp, 'Weekly timestamp')
         if timestamp != int(timestamp) or (previous_timestamp is not None and timestamp <= previous_timestamp):
             raise ValueError('Weekly timestamps must be strictly increasing integer epochs')
@@ -131,6 +139,9 @@ def _weekly_prices(payload):
         if observed.weekday() > 4:
             raise ValueError('Weekly bar labels must fall within their exchange trading week')
         if monday in prices or monday in missing:
+            if index == last_index and type(live_quote) is int and timestamp == live_quote:
+                ignored_live_quote = True
+                break
             raise ValueError('Multiple Yahoo observations map to the same exchange calendar week')
         if value is None:
             missing.add(monday)
@@ -141,7 +152,8 @@ def _weekly_prices(payload):
         prices[monday] = {'adjusted_close': price, 'timestamp': int(timestamp),
                           'bar_label_date': observed.isoformat()}
     return {'symbol': symbol, 'currency': currency, 'timezone': timezone_name,
-            'prices': prices, 'missing': missing, 'sha256': hashlib.sha256(raw).hexdigest()}
+            'prices': prices, 'missing': missing, 'ignored_live_quote': ignored_live_quote,
+            'sha256': hashlib.sha256(raw).hexdigest()}
 
 
 def _ols(pairs):
@@ -231,6 +243,8 @@ def weekly_equity_beta(equity_json, market_json, *, as_of, years=5,
                    'unpaired_return_week_ends': unpaired,
                    'equity_missing_adjusted_price_weeks': len(equity['missing']),
                    'benchmark_missing_adjusted_price_weeks': len(market['missing']),
+                   'equity_trailing_live_quote_ignored': equity['ignored_live_quote'],
+                   'benchmark_trailing_live_quote_ignored': market['ignored_live_quote'],
                    'paired_returns_sha256': hashlib.sha256(_canonical(pairs)).hexdigest(),
                    'raw_input_hashes': {'equity': equity['sha256'], 'benchmark': market['sha256']}})
     if shrinkage:
@@ -242,6 +256,7 @@ def weekly_equity_beta(equity_json, market_json, *, as_of, years=5,
         'alignment': 'Common exchange-local Monday week keys; both endpoints required and exactly seven calendar days apart',
         'week_end_labels': 'Friday period-end labels, not asserted last-trade dates; holidays can close earlier',
         'completion': 'Only scheduled Friday week-end labels strictly before as_of; same-date Friday and partial later weeks excluded',
+        'trailing_live_quote': 'A final point stamped exactly regularMarketTime inside the last weekly bar\'s exchange week is the provider live quote, not a weekly bar, and is ignored',
         'window': 'Calendar-year anniversary through cutoff; return-week-end labels inside window, prior anchor may precede it; Feb29 anniversary clamps to Feb28',
         'regression': 'Unweighted OLS equity_return = intercept + beta * benchmark_return',
         'benchmark': 'Selected ETF is a broad-market proxy, not the theoretical market portfolio',

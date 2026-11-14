@@ -300,5 +300,26 @@ class CollectionTests(unittest.TestCase):
                 parse_fred_aa(raw, as_of='2025-01-03')
 
 
+class CalibrationTransportTests(unittest.TestCase):
+    def test_public_calibration_requests_send_an_explicit_accept_header(self):
+        # FRED closes the connection without a response when this client's
+        # User-Agent arrives with no Accept header (reproduced live 2026-11-14).
+        from unittest.mock import patch
+        from investmentideas import pipeline
+        from investmentideas.macro import AA_URL
+        response = Mock()
+        response.read.return_value = b'observation_date,BAMLC0A2CAAEY\n'
+        response.__enter__ = lambda self: self
+        response.__exit__ = lambda self, *args: False
+        with patch.object(pipeline, 'urlopen', return_value=response) as transport:
+            self.assertEqual(pipeline._fetch_calibration_bytes(AA_URL), b'observation_date,BAMLC0A2CAAEY\n')
+        request = transport.call_args.args[0]
+        self.assertEqual(request.full_url, AA_URL)
+        self.assertEqual(request.get_header('Accept'), '*/*')
+        self.assertEqual(request.get_header('User-agent'), 'IntrinsicValue research')
+        self.assertNotIn('github', request.get_header('User-agent').lower())
+        self.assertFalse(request.has_header('Authorization'))
+
+
 if __name__ == '__main__':
     unittest.main()

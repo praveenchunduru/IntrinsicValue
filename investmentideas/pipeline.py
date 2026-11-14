@@ -601,7 +601,10 @@ def _fetch_calibration_bytes(url):
     # are never attached to evidence requests.
     # No "github" in the User-Agent: SEC returns HTTP 403 for any UA
     # containing that token (verified live 2026-11-07); keep this UA plain too.
-    request = Request(url, headers={'User-Agent':'IntrinsicValue research'})
+    # An explicit Accept header is required: FRED closes the connection without
+    # a response for this User-Agent when Accept is absent (verified live
+    # 2026-11-14: same UA with Accept -> 200, without -> RemoteDisconnected).
+    request = Request(url, headers={'User-Agent':'IntrinsicValue research','Accept':'*/*'})
     with urlopen(request, timeout=25) as response:
         raw = response.read(3000001)
     if len(raw) > 3000000:
