@@ -22,7 +22,7 @@ def main():
     parser.add_argument('--easy-model', help='Override extraction model with an OpenRouter model ID')
     parser.add_argument('--review-model',help='Explicit review-model override, saved with the current run; it is not checked against the author model')
     parser.add_argument('--strong-model', help='Override the forecast and writing model with an OpenRouter model ID; the default reviewer stays a different model')
-    parser.add_argument('--max-revisions',type=int,default=3,help='Full memo correction limit, 0–8 (default: 3)')
+    parser.add_argument('--max-revisions',type=int,default=1,help='Full memo correction limit, 0–8 (default: 1)')
     parser.add_argument('--sources',type=Path,help='Append a JSON list of supplemental archived sources to the same full run (at most 3 MB)')
     parser.add_argument('--snapshot',type=Path,help='Replay a dated S1… source manifest without refreshing evidence or quotes (at most 3 MB)')
     parser.add_argument('--forecast-plan',type=Path,help='Review an explicit forecast JSON against pinned reported inputs; never bypasses review (at most 150 KB)')

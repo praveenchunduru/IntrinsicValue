@@ -13,6 +13,7 @@ reported alongside ``pass``. A passing review remains a model's assessment.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import bisect
 import json
 import math
 import re
@@ -335,6 +336,125 @@ RUBRIC = (
     'that names a different driver of the gap to price than the computed tables show; a material claim contradicted '
     'by primary evidence in the run. Minor: rounding within the last displayed digit; wording, emphasis or structure; '
     'an omission that does not change the conclusion. Labelled unverified context and rounding are never material.')
+
+
+# Free checks run on a draft before the paid review. They trace every figure in
+# the prose to the computed output, the reported inputs or a primary source, and
+# catch the defects a live review spent three paid rounds on (2026-11-14).
+UNVERIFIED_SOURCE_TIERS = {'search_excerpt_unverified'}
+PROSE_WORD_LIMIT = 3600
+_NUMBER = re.compile(r'(?<![\w.\[/-])(-?\$?\d[\d,]*(?:\.\d+)?)(\s*(?:%|bps|bp|x|×|billion|bn|B|million|mm|M|trillion)\b|%)?', re.I)
+_SCALES = {'%': (1e-2, 1), 'bps': (1e-4, 1), 'bp': (1e-4, 1), 'billion': (1e9, 1e3, 1), 'bn': (1e9, 1e3, 1),
+           'b': (1e9, 1e3, 1), 'million': (1e6, 1), 'mm': (1e6, 1), 'm': (1e6, 1), 'trillion': (1e12, 1e6, 1e3, 1),
+           'x': (1,), '×': (1,)}
+_ADDITIVE = re.compile(r'\b(?:together|combined|in total|cumulative(?:ly)?|add up|sum of|more than the entire|account for (?:all|the entire|more than))\b', re.I)
+_PANEL = re.compile(r'\b(?:convention|panel|step|one[- ]at[- ]a[- ]time|terminal return|rate path)\b', re.I)
+
+
+def _numeric_leaves(value, out):
+    if isinstance(value, dict):
+        for item in value.values():
+            _numeric_leaves(item, out)
+    elif isinstance(value, list):
+        for item in value:
+            _numeric_leaves(item, out)
+    elif isinstance(value, bool) or value is None:
+        return
+    elif isinstance(value, (int, float)):
+        if value == value and abs(value) < 1e16:
+            out.add(abs(float(value)))
+    elif isinstance(value, str):
+        for match in re.finditer(r'\d[\d,]*(?:\.\d+)?', value[:200000]):
+            try:
+                out.add(float(match.group().replace(',', '')))
+            except ValueError:
+                pass
+    return out
+
+
+def _traced(number, decimals, unit, pool):
+    """True when a pool value displays as this number at its own precision."""
+    tolerance = 0.5 * 10 ** -decimals + 1e-9
+    for scale in _SCALES.get((unit or '').strip().lower(), (1, 1e3, 1e6, 1e9)):
+        low, high = (number - tolerance) * scale, (number + tolerance) * scale
+        index = bisect.bisect_left(pool, low)
+        if index < len(pool) and pool[index] <= high:
+            return True
+    return False
+
+
+def prereview_checks(memo, sources, computed=()):
+    """Deterministic defects in a draft's prose, before any paid review.
+
+    ``computed`` holds the valuation output, the locked plan and any rendered
+    tables. Returns findings in the review shape (severity, issue, excerpt).
+    The memo body ends at the Python-rendered "## Executable valuation".
+    """
+    body = memo.split('\n## Executable valuation')[0]
+    summary = re.search(r'## Valuation summary \(computed by Python\).*?(?=\n#{1,2} [^#])', body, re.S)
+    if summary:
+        body = body.replace(summary.group(0), '')
+    tiers = {source.get('id'): source.get('source_tier') for source in sources if isinstance(source, dict)}
+    primary, unverified = set(), set()
+    for source in sources:
+        if isinstance(source, dict):
+            _numeric_leaves(source.get('data'), unverified if source.get('source_tier') in UNVERIFIED_SOURCE_TIERS else primary)
+    for item in computed:
+        _numeric_leaves(item, primary)
+    primary_pool, unverified_pool = sorted(primary), sorted(unverified)
+    untraced, unlabelled, additive = [], [], []
+    for sentence in re.split(r'(?<=[.!?])\s+|\n+', body):
+        line = sentence.strip()
+        if not line or line.startswith('#'):
+            continue
+        cited = set(re.findall(r'S\d+', ' '.join(re.findall(r'\[([^\]]*S\d[^\]]*)\]', line))))
+        clean = re.sub(r'\[[^\]]*S\d[^\]]*\]', '', line)
+        clean = re.sub(r'\b(?:S&P|Nasdaq|Russell|FTSE|Stoxx|Nikkei|MSCI)\s*\d+\b', '', clean, flags=re.I)
+        clean = re.sub(r'\b(?:19|20)\d\d(?:-\d\d-\d\d)?\b|\bFY\s?\d+|\bQ[1-4]\b|\b\d+(?:st|nd|rd|th)\b|\(\d\)|\b\d+\.\s', '', clean)
+        if _ADDITIVE.search(line) and _PANEL.search(line):
+            additive.append(line[:300])
+        for match in _NUMBER.finditer(clean):
+            raw = match.group(1).replace('$', '').replace(',', '')
+            unit = match.group(2)
+            try:
+                number = abs(float(raw))
+            except ValueError:
+                continue
+            decimals = len(raw.split('.')[1]) if '.' in raw else 0
+            digits = len(raw.replace('-', '').replace('.', '').lstrip('0'))
+            if not unit and decimals == 0 and number <= 31:
+                continue
+            if digits < 2 and not unit:
+                continue
+            if _traced(number, decimals, unit, primary_pool):
+                continue
+            if _traced(number, decimals, unit, unverified_pool):
+                if not re.search(r'unverified', line, re.I) and cited and all(tiers.get(ref) in UNVERIFIED_SOURCE_TIERS for ref in cited):
+                    unlabelled.append((match.group(0).strip(), line[:300]))
+                elif not cited or not all(tiers.get(ref) in UNVERIFIED_SOURCE_TIERS for ref in cited):
+                    unlabelled.append((match.group(0).strip(), line[:300]))
+                continue
+            untraced.append((match.group(0).strip(), line[:300]))
+    findings = []
+    def add(identifier, severity, issue, fix, items):
+        findings.append({'id': identifier, 'severity': severity, 'issue': issue, 'fix': fix, 'source_refs': [],
+                         'items': [{'figure': figure, 'sentence': text} for figure, text in items][:25]})
+    if untraced:
+        add('number-untraced', 'minor', f'{len(untraced)} figures in the prose match nothing in the computed output, '
+            'the reported inputs or any primary source within display rounding.',
+            'Replace each with the exact figure from the computed tables or a primary source, or remove it.', untraced)
+    if unlabelled:
+        add('number-unverified-only', 'minor', f'{len(unlabelled)} figures appear only in unverified web excerpts and are '
+            'not labelled as unverified context or are cited to a primary source that does not contain them.',
+            'Use the primary figure if one exists; otherwise label the figure as unverified context or remove it.', unlabelled)
+    if additive:
+        add('convention-rows-added', 'minor', 'Convention or one-at-a-time rows are described as adding up or combining.',
+            'State each row separately; rows are alternatives and are never added together.', [('', text) for text in additive])
+    words = len(re.findall(r"[A-Za-z][A-Za-z'\-]*", body))
+    if words > PROSE_WORD_LIMIT:
+        add('length', 'minor', f'The prose is {words} words; the budget is about 3,000.',
+            'Cut repetition and secondary detail, keeping every section.', [])
+    return findings
 
 
 def assessment_findings(review):

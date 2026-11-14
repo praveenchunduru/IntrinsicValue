@@ -337,7 +337,8 @@ class FullPipelineTests(unittest.TestCase):
             old_stages={}
             for stage,(model,prompt,tokens,web) in prompts.items():
                 old=stage+':'+pipeline._digest([prompt,model,tokens,web])[:12]
-                current=stage+':'+pipeline._digest([prompt,model,tokens,web,pipeline.core.SYSTEM])[:12]
+                thinking=pipeline.core.reasoning_budget(stage)
+                current=stage+':'+pipeline._digest([prompt,model,tokens,web,pipeline.core.SYSTEM]+([thinking] if thinking else []))[:12]
                 old_stages[old]=state['stages'][current]
             state['stages']=old_stages
             state.pop('workflow_contract')

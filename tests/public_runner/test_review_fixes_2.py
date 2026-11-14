@@ -307,3 +307,33 @@ class FirstParseAnchoringTests(unittest.TestCase):
         finding = review['findings'][0]
         self.assertEqual(finding['current_excerpt_match'], 'longest-exact-span')
         self.assertTrue(finding['reviewer_excerpt'].startswith('"'))
+
+
+class ReasoningRequestTests(unittest.TestCase):
+    def test_reasoning_is_sent_only_where_the_catalog_lists_it(self):
+        from investmentideas import core
+        listed = {'supported_parameters': ['reasoning', 'temperature']}
+        self.assertEqual(core.reasoning_request(listed, 'anthropic/claude-sonnet-4.6', 8000), {'max_tokens': 8000, 'exclude': True})
+        self.assertEqual(core.reasoning_request(listed, 'openai/gpt-5.4', 6000), {'effort': 'high', 'exclude': True})
+        self.assertIsNone(core.reasoning_request({'supported_parameters': ['temperature']}, 'anthropic/claude-sonnet-4.6', 8000))
+        self.assertIsNone(core.reasoning_request(listed, 'anthropic/claude-sonnet-4.6', 0))
+        self.assertEqual(core.reasoning_budget('valuation_plan_repair_2'), 6000)
+        self.assertEqual(core.reasoning_budget('full_draft'), 8000)
+        self.assertEqual(core.reasoning_budget('review_0'), 0)
+
+    def test_the_budget_is_added_to_the_output_limit_and_temperature_dropped_for_claude(self):
+        from investmentideas import core
+        sent = {}
+        def transport(url, *, key=None, payload=None, timeout=90):
+            sent.update(payload)
+            return {'choices': [{'finish_reason': 'stop', 'message': {'content': 'ok'}}], 'usage': {'cost': 0.01}}
+        router = core.Router.__new__(core.Router)
+        router.key, router.budget, router.ledger, router.checkpoint = 'k', 10.0, [], lambda: None
+        router.catalog = {'anthropic/claude-sonnet-4.6': {'pricing': {'prompt': '0.000003', 'completion': '0.000015'},
+                                                          'supported_parameters': ['reasoning', 'temperature', 'max_tokens']}}
+        with patch.object(core, 'request_json', transport):
+            router.complete('full_draft', 'anthropic/claude-sonnet-4.6', 'prompt', max_tokens=18000)
+        self.assertEqual(sent['max_tokens'], 26000)
+        self.assertEqual(sent['reasoning'], {'max_tokens': 8000, 'exclude': True})
+        self.assertNotIn('temperature', sent)
+        self.assertEqual(router.ledger[-1]['reasoning'], {'max_tokens': 8000, 'exclude': True})

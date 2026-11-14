@@ -24,7 +24,7 @@ from .costs import cost_summary
 from .analytics import annual_metrics
 from .fundamentals import yahoo_financials
 from .inputs import canonical_reported_inputs, pin_reported_inputs
-from .quality import DIAGNOSTIC_SCOPE, RUBRIC, assessment_findings, claim_ledger, inspect_memo, parse_json, parse_review
+from .quality import DIAGNOSTIC_SCOPE, RUBRIC, assessment_findings, claim_ledger, inspect_memo, parse_json, parse_review, prereview_checks
 from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_breakdown_facts, inline_facts, archive_focus_excerpts
 from .evidence_tables import breakdown_tables, render_baseline, render_breakdowns
 from .macro import gather_us_calibration
@@ -807,6 +807,36 @@ EVIDENCE_TIER_RULE = (
     'whenever both contain a fact.')
 
 
+def _computed_tables(sources):
+    """Rendered reported-history and breakdown tables for every source that has them."""
+    tables=[]
+    for source in sources:
+        data=source.get('data') if isinstance(source,dict) else None
+        if isinstance(data,dict):
+            if data.get('historical_baseline'):
+                tables.append(render_baseline(data['historical_baseline'],source.get('id')))
+            if data.get('breakdown_tables'):
+                tables.append(render_breakdowns(data['breakdown_tables'],source.get('id')))
+    return '\n\n'.join(tables)
+
+
+def _apply_edits(memo, edits):
+    """Apply quote-and-replacement edits whose quote occurs exactly once; report the rest."""
+    applied,skipped=0,[]
+    for edit in edits if isinstance(edits,list) else []:
+        quote=edit.get('quote') if isinstance(edit,dict) else None
+        replacement=edit.get('replacement') if isinstance(edit,dict) else None
+        if not isinstance(quote,str) or not quote.strip() or not isinstance(replacement,str):
+            skipped.append('malformed edit')
+            continue
+        if memo.count(quote)!=1:
+            skipped.append(f'quote found {memo.count(quote)} times: {quote[:80]}')
+            continue
+        memo=memo.replace(quote,replacement)
+        applied+=1
+    return memo,applied,skipped
+
+
 def _evidence_context(sources):
     """Evidence for model prompts in three labelled tiers.
 
@@ -946,7 +976,7 @@ def _recover_supplied_evidence(folder,state,evidence):
 
 
 def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
-                              forecast_plan=None, draft=None, max_revisions=3):
+                              forecast_plan=None, draft=None, max_revisions=1):
     """Price known repeated context before the first potentially billed call.
 
     Future search excerpts, forecasts, derived valuation data and memo prose are
@@ -1814,7 +1844,7 @@ def _render(memo, sources, gaps, plan, result, state):
 
 
 def run(ticker, key, *, profile='balanced', budget=DEFAULT_BUDGET, directory='research-output', evidence='',
-        easy_model=None, strong_model=None, progress=lambda message: None, max_revisions=3, review_notes='', extra_sources=None, counterfactuals=None, draft=None, review_model=None,
+        easy_model=None, strong_model=None, progress=lambda message: None, max_revisions=1, review_notes='', extra_sources=None, counterfactuals=None, draft=None, review_model=None,
         source_snapshot=None, forecast_plan=None):
     ticker = core.symbol(ticker)
     if source_snapshot is not None:
@@ -2187,7 +2217,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             state['quality_status']='in_progress'
         checkpoint()
     def call(name,model,prompt,tokens=6000,web=False):
-        cache=name+':'+_digest([prompt,model,tokens,web,core.SYSTEM])[:12]
+        thinking=core.reasoning_budget(name)
+        cache=name+':'+_digest([prompt,model,tokens,web,core.SYSTEM]+([thinking] if thinking else []))[:12]
         legacy=name+':'+_digest([prompt,model,tokens,web])[:12]
         # The old digest omitted SYSTEM. It is reusable only when the saved
         # contract proves that its system instructions are still identical.
@@ -2410,7 +2441,34 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         if pending:
             state.pop('pending_revision',None)
             checkpoint()
-        visible=memo+'\n'+valuation_section(plan,result)
+        # Free checks before the paid review, and one targeted fix call when they
+        # find defects (untraced or unlabelled figures, added convention rows,
+        # length). Edits are exact quote replacements applied by Python.
+        computed_inputs=(result,plan,_computed_tables(state['sources']))
+        issues=prereview_checks(_with_summary(memo,plan,result),state['sources'],computed_inputs) if result else []
+        fixed=state.setdefault('prereview_fixes',{})
+        if issues and str(iteration) not in fixed:
+            response=call(f'draft_check_fix_{iteration}',strong,
+                'Correct only the problems listed below in this memo draft. Return ONLY JSON {"edits":[{"quote":"exact '
+                'contiguous text copied from the memo","replacement":"corrected text"}]}. Each quote must appear exactly '
+                'once in the memo; keep each quote to one sentence or less. For an untraced figure, use the exact figure from '
+                'the computed summary, the COMPUTED FROM REPORTED FILINGS tables, the valuation output or a primary source, '
+                'or remove the figure. For a figure found only in unverified excerpts, cite the primary source that contains '
+                'it, label it as unverified context, or remove it. Describe convention rows separately, never as adding up. '
+                'For length, cut repeated or secondary sentences (an empty replacement deletes). Change nothing else.\n'+
+                EVIDENCE_TIER_RULE+'\nProblems:\n'+json.dumps(issues)+'\nCOMPUTED SUMMARY:\n'+computed_summary(plan,result)+
+                '\nEvidence:\n'+context+'\nComputed exhibits:\n'+valuation_section(plan,result)+'\nMemo:\n'+memo,tokens=8000)
+            try:
+                value,_=_response_json(response)
+                edits=value.get('edits') if isinstance(value,dict) else None
+            except ValueError:
+                edits=None
+            memo,applied,skipped=_apply_edits(memo,edits)
+            fixed[str(iteration)]={'issues':[issue['id'] for issue in issues],'edits_applied':applied,'edits_skipped':skipped[:20]}
+            state['current_memo']=memo
+            checkpoint()
+            issues=prereview_checks(_with_summary(memo,plan,result),state['sources'],computed_inputs)
+        visible=_with_summary(memo,plan,result)+'\n'+valuation_section(plan,result)
         (revisions/f'memo-{iteration}.md').write_text(visible,encoding='utf-8')
         # A review can fail after a new draft/model is saved. Keep the reader
         # download consistent with those artifacts even before review succeeds.
@@ -2423,54 +2481,35 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         manifest={'memo_sha256':hashlib.sha256(visible.encode()).hexdigest(),
                   'sources_sha256':_digest(state['sources']),'valuation_sha256':_digest(result),
                   'review_type':'model_peer_review_not_publication_certification'}
-        deterministic=inspect_memo(visible,state['sources'],result)
+        deterministic=inspect_memo(visible,state['sources'],result)+[
+            {key:value for key,value in issue.items() if key!='items'}|{'issue':issue['issue']+' Examples: '+
+             '; '.join(item['figure'] or item['sentence'][:80] for item in issue['items'][:8])} for issue in issues]
         fresh_notes=(state.get('external_notes','') if state.get('external_notes_digest') !=
                      state.get('external_notes_reviewed_digest') else '')
-        prompt=('Independently audit this complete equity memo against its exact supplied evidence and '
-                'Python valuation. Source support, dates/periods/session, currency/units, claimed cash conversion, '
-                'buybacks/liquidity, net debt/cash/claims, WACC/tax/terminal reinvestment, scenario plausibility, '
-                'market-implied economics, thesis direction and genuine falsifiers, strongest contrary explanation and '
-                'decision framing all matter. Recompute every quoted sensitivity against computed_diagnostics; '
-                'Also audit the research argument: company-specific economic drivers, dated Street comparison, '
-                'authentic named outside views, calibrated required returns and observation-to-value monitoring. '
-                'Verify outside expectation -> house adjustment -> named annual driver -> Python-computed '
-                'conditional effect. A near-consensus operating view must not be sold as an invented edge. '
-                'If a credible sourced opponent across the quote is available, check its economic case is '
-                'answered rather than replaced by a target or inaccessible-model caveat. Check material '
-                'nonrecurring gross-profit benefits/refunds and reported-versus-normalized baselines, plus '
-                'inventory/procurement and trade-cash links to margins and reinvestment without counting '
-                'working capital or operating purchases twice. '
-                'Reconcile market and DCF-exit multiples using consistent earnings periods and show how '
-                'original-exit versus unchanged-entry-multiple returns differ under one fixed ownership '
-                'convention. Flag entry thresholds, margins of safety, target prices, upside/downside or '
-                'recommendation language as major: this is valuation research only. '
-                'Test repurchase prices against current house value, distinct from EPS accretion; match '
-                'historical dollars/shares/periods and distinguish retrospective conditional comparisons '
-                'from observed historical losses or future buyback forecasts. No cash may be counted twice. '
-                'A disclosed house assumption is not automatically well justified. Identify a material unsupported '
-                'load-bearing assumption or missing contrary evidence when it changes the conclusion, while avoiding '
-                'optional stylistic preferences or demands for unavailable proprietary data. '
-                'a correct base valuation does not make surrounding sensitivity prose correct. '
-                'Treat invented source assertions or unsupported valuation inputs as major; distinguish legitimate '
-                'disclosed forecasts from factual errors. If primary reports conflict with a secondary series, '
-                'require reconciliation rather than silently selecting a convenient number. '
-                'First identify, from implied_return_at_price, convention_panel and calibration comparisons, which '
-                'assumption family carries the difference between value and price, and check that the conclusion, '
-                'the price-implication section and the variant thesis name it and argue it with evidence. Check '
-                'every comparison of a number with the market price by arithmetic. Flag any number that is not in '
-                'the evidence or the computed output as major, and never write a fix that asks the author to '
-                'compute a value the engine has not computed. '
-                'Return only actionable unresolved findings. Omit withdrawn accusations, correct calculations, '
-                'and optional stylistic preferences. Check whether the allegedly missing disclosure already '
-                'appears elsewhere in the full memo before flagging it. Reserve blocker/major for errors '
-                'that materially change valuation, factual understanding, or the conclusion. '
+        earlier=state['review_history'][-1] if iteration and state.get('review_history') else None
+        ledger=('\nFindings from the previous review. Verify whether each is resolved in this draft; do not re-raise a '
+                'resolved one, and raise a new material finding only for a defect present in this draft:\n'+
+                json.dumps([{key:finding.get(key) for key in ('id','severity','issue')} for finding in earlier.get('findings',[])])
+                if earlier else '')
+        prompt=('Review this equity memo against its supplied evidence and the Python valuation, using the shared quality '
+                'standard below, and classify each defect as blocker, major or minor by that standard. Rounding within '
+                'the last displayed digit and context labelled as unverified are never material; style preferences are '
+                'not findings. Check: (1) every figure in the prose against the computed summary, the computed tables, the '
+                'valuation output or the cited source, and every comparison with the price by arithmetic; (2) that the '
+                'conclusion names the inputs that the "What the price requires" rows and the implied return show carry '
+                'the difference between value and price; (3) that company facts rest on primary sources and unverified '
+                'excerpts are labelled context; (4) that the strongest sourced opposing case is answered with evidence; '
+                '(5) that no trading-layer language appears; (6) that convention rows are never added together; (7) that '
+                'repurchase, multiple and monitoring statements use the computed diagnostics and their fixed inputs. A '
+                'disclosed house forecast is a judgment, not a defect, unless primary evidence contradicts it or it is '
+                'unexplained. Never write a fix that asks the author to compute a value the engine has not computed. '
+                'Before flagging an omission, check the whole memo. Report every material defect you find and at most '
+                'three minor ones; there is no target number of findings. '
                 'Every finding must quote one contiguous passage of the CURRENT draft verbatim, without added quotation '
                 'marks or ellipses; for an omission, quote the heading or sentence where the missing content belongs and '
-                'name the omission in issue. '
-                'Earlier notes can be stale; never report an accusation that the current draft already resolves. '
-                'Use at most 12 prioritized findings per review, issue <=100 words and fix <=70 words each; '
-                'combine related issues. If further material issues remain, keep verdict revise and state '
-                'that in a finding rather than issuing a false pass.\n'+REVIEW_SCHEMA+
+                'name the omission in issue. Earlier notes can be stale; never report an accusation that the current '
+                'draft already resolves. Keep each issue under 100 words and each fix under 70.\n'+
+                EVIDENCE_TIER_RULE+'\n'+RUBRIC+ledger+'\n'+REVIEW_SCHEMA+
                 '\nEvidence:\n'+context+'\nValuation:\n'+valuation_context+'\nDraft:\n'+visible+
                 '\nDeterministic diagnostics (not semantic proof):\n'+json.dumps(deterministic)+
                 '\nNew external notes for this draft only; verify against the CURRENT wording and omit resolved allegations:\n'+fresh_notes+

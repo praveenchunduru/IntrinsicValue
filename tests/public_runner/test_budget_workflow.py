@@ -80,13 +80,15 @@ class FullContractTransport:
                 self.timeout_once=False
                 raise RuntimeError('Synthetic uncertain transport interruption')
             content=self.memo
-        elif prompt.startswith('Independently audit'):
+        elif prompt.startswith('Review this equity memo'):
             self.review_count+=1
             findings=[]
             if self.review_count<=self.revisions:
                 findings=[{'id':'F1','severity':'major','issue':'Synthetic fixture needs an explicit monitoring clarification',
                     'source_refs':['S4'],'current_excerpt':self.excerpt,'fix':'Clarify the dated monitoring condition'}]
             content=json.dumps({'verdict':'revise' if findings else 'pass','findings':findings})
+        elif prompt.startswith('Correct only the problems listed below'):
+            content=json.dumps({'edits':[]})
         elif prompt.startswith('Investigate '):
             content='Synthetic targeted research: existing evidence supports a prose clarification. '*50
         elif prompt.startswith('Address these review findings'):
@@ -139,7 +141,9 @@ class BudgetWorkflowTests(unittest.TestCase):
             self.assertIn('--budget 10',str(stopped.exception))
 
     def test_default_allowance_completes_fresh_ticker_draft_review_and_bounded_revision(self):
-        for revisions in (0,1,3):
+        # The default is one draft, the free checks and their fix call, one review
+        # and at most one revision.
+        for revisions in (0,1):
             fixture=FullContractTransport(revisions=revisions)
             with self.subTest(revisions=revisions),tempfile.TemporaryDirectory() as directory,fixture.installed() as collected:
                 folder=pipeline.run('AAPL','synthetic-key',directory=directory)
@@ -153,9 +157,10 @@ class BudgetWorkflowTests(unittest.TestCase):
                 self.assertIn('valuation_plan',stages)
                 self.assertIn('full_draft',stages)
                 self.assertIn('review_0',stages)
+                self.assertIn('draft_check_fix_0',stages)
                 if revisions:
-                    self.assertEqual(stages[-4:],[f'targeted_research_{revisions}',f'model_response_{revisions}',
-                        f'revise_{revisions}',f'review_{revisions}'])
+                    self.assertEqual(stages[-5:],[f'targeted_research_{revisions}',f'model_response_{revisions}',
+                        f'revise_{revisions}',f'draft_check_fix_{revisions}',f'review_{revisions}'])
                 prompts=[p['messages'][1]['content'] for p in fixture.requests]
                 self.assertGreater(len(pipeline._evidence_context(state["sources"]).encode()),100000)
                 self.assertGreater(max(len(p.encode()) for p in prompts),500000)
@@ -192,7 +197,7 @@ class BudgetWorkflowTests(unittest.TestCase):
             final=json.loads((folder/'state.json').read_text())
             self.assertTrue(final['complete'])
             self.assertEqual(final['ledger'][:len(initial['ledger'])],initial['ledger'])
-            self.assertEqual([row['stage'] for row in final['ledger'][len(initial['ledger']):]],['full_draft','review_0'])
+            self.assertEqual([row['stage'] for row in final['ledger'][len(initial['ledger']):]],['full_draft','draft_check_fix_0','review_0'])
 
     def test_unavailable_final_reviewer_stops_before_all_paid_research(self):
         fixture=FullContractTransport()
