@@ -1670,8 +1670,21 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                         '\nRECORDED REVIEW:\n'+raw)
                 raw=call(f'review_format_{iteration}',reviewer,repair,tokens=12000)
                 (reviews/f'review-{iteration}-reformatted.txt').write_text(raw,encoding='utf-8')
-                review_value,normalized=_response_json(raw)
-                review=parse_review(json.dumps(review_value),memo=visible)
+                try:
+                    review_value,normalized=_response_json(raw)
+                    review=parse_review(json.dumps(review_value),memo=visible,anchor_embellished=True)
+                except ValueError as failed:
+                    # A saved response is replayed on resume. Keeping a review
+                    # that cannot be validated would stop every later attempt
+                    # here, so it is discarded (both raw texts stay on disk and
+                    # the spending stays in the ledger) and the next attempt
+                    # requests a fresh review.
+                    for name in [name for name in state['stages']
+                                 if name.split(':')[0] in (f'review_{iteration}',f'review_format_{iteration}')]:
+                        state['stages'].pop(name)
+                    checkpoint()
+                    raise ValueError(str(failed)+'. The rejected review was discarded; run the same command again '
+                                     'for a fresh review') from None
             if normalized:
                 recovery={'stage':f'review_{iteration}','method':'one_explicit_complete_json_fence'}
                 if recovery not in state.setdefault('response_normalizations',[]):

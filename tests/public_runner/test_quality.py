@@ -134,6 +134,44 @@ class StructuredReviewTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'current_excerpt'):
                     parse_review(json.dumps({'verdict':'revise','findings':[row]}), memo=memo)
 
+    def test_after_its_format_repair_an_embellished_quote_is_anchored_to_exact_memo_wording(self):
+        # Live review, 2026-11-14: one finding of twelve inserted a parenthetical
+        # into an otherwise verbatim quotation and the whole review was lost.
+        memo=('The house engages this directly: the TON618 products margin path is closer to the house bear case '
+              '(37.0% in FY2027) than the house base. If the path is correct, **the house base value** would decline.')
+        row=finding()
+        row['current_excerpt']=('The TON618 products margin path (35.5% for FY2027) is closer to the house bear case '
+                                '(37.0% in FY2027) than the house base. If the path is correct, the house base value would decline.')
+        payload=json.dumps({'verdict':'revise','findings':[row]})
+        with self.assertRaisesRegex(ValueError,'current_excerpt'):
+            parse_review(payload,memo=memo)
+        parsed=parse_review(payload,memo=memo,anchor_embellished=True)['findings'][0]
+        self.assertEqual(parsed['current_excerpt_match'],'longest-exact-span')
+        self.assertEqual(parsed['current_excerpt'],'is closer to the house bear case (37.0% in FY2027) than the house base. '
+                                                   'If the path is correct, the house base value would decline.')
+        self.assertNotIn('35.5%',parsed['current_excerpt'])
+        self.assertEqual(parsed['reviewer_excerpt'],row['current_excerpt'])
+        # Exact quotations are untouched and carry no reviewer_excerpt.
+        row['current_excerpt']='the TON618 products margin path is closer to the house bear case'
+        exact=parse_review(json.dumps({'verdict':'revise','findings':[row]}),memo=memo,anchor_embellished=True)['findings'][0]
+        self.assertEqual(exact['current_excerpt_match'],'literal')
+        self.assertNotIn('reviewer_excerpt',exact)
+
+    def test_anchoring_never_accepts_an_invented_or_too_short_quotation(self):
+        memo='- **Operating leases:** The **$12.912 billion** liability is approximately `$0.89` per share.'
+        for excerpt in ['An invented excerpt absent from the memo, long enough to pass any length rule at all.',
+                        'Operating leases: The $12.912 billion asset is approximately $0.89 per share.',
+                        'Operating leases: The $12.912 billion liability ... per share.']:
+            with self.subTest(excerpt=excerpt):
+                row=finding(); row['current_excerpt']=excerpt
+                with self.assertRaisesRegex(ValueError,'contiguous wording'):
+                    parse_review(json.dumps({'verdict':'revise','findings':[row]}),memo=memo,anchor_embellished=True)
+        # A changed number is excluded from the anchor, never reproduced as the memo's wording.
+        row=finding(); row['current_excerpt']='Operating leases: The $12.921 billion liability is approximately $0.89 per share.'
+        parsed=parse_review(json.dumps({'verdict':'revise','findings':[row]}),memo=memo,anchor_embellished=True)['findings'][0]
+        self.assertEqual(parsed['current_excerpt'],'billion liability is approximately $0.89 per share.')
+        self.assertNotIn('12.921',parsed['current_excerpt'])
+
     def test_quote_normalization_preserves_balancing_boundaries_and_code_runs(self):
         examples = [
             ('**bold** __bold__ *italic* _italic_', 'bold bold italic italic'),

@@ -21,6 +21,10 @@ SOURCE_ID = re.compile(r'S[1-9][0-9]*\Z')
 CITATION = re.compile(r'\[([^\]\n]{1,250})\]')
 SOURCE_IN_CITATION = re.compile(r'\bS[1-9][0-9]*\b')
 MAX_REVIEW_EXCERPT = 1200
+# Shortest exact run of memo wording that can anchor a finding whose quotation
+# also contains words the memo does not (an inserted parenthetical, two passages
+# joined with an ellipsis). The repair prompt asks for 50 to 300 characters.
+MIN_EXCERPT_ANCHOR = 50
 WITHDRAWN_MATERIAL_FINDING = re.compile(
     r'\bno\s+(?:(?:additional|further|other)\s+)?(?:corrections?|actions?|changes?|revisions?)\s+'
     r'(?:is\s+)?(?:needed|required|necessary)\b'
@@ -175,12 +179,45 @@ def _quote_typography(text):
     return text.translate(str.maketrans({'‘': "'", '’': "'", '“': '"', '”': '"'}))
 
 
-def parse_review(text, memo=None):
+def _longest_exact_span(memo, excerpt):
+    """Longest run of ``excerpt`` that is verbatim in ``memo``, cut to whole words.
+
+    Reviewers often embellish an otherwise accurate quotation. The finding is
+    then anchored to the part that is exactly the memo's wording. Nothing is
+    matched approximately and no memo text the reviewer did not quote is added.
+    Returns ``None`` when no exact run of at least ``MIN_EXCERPT_ANCHOR``
+    characters exists.
+    """
+    if len(excerpt) < MIN_EXCERPT_ANCHOR:
+        return None
+    from difflib import SequenceMatcher
+    match = SequenceMatcher(None, memo, excerpt, autojunk=False).find_longest_match(0, len(memo), 0, len(excerpt))
+    start, end = match.a, match.a + match.size
+    # A run that begins or ends inside a word is cut back to the word boundary.
+    if start > 0 and not memo[start - 1].isspace() and not memo[start].isspace():
+        while start < end and not memo[start].isspace():
+            start += 1
+    if end < len(memo) and not memo[end].isspace() and not memo[end - 1].isspace():
+        while end > start and not memo[end - 1].isspace():
+            end -= 1
+    span = memo[start:end].strip()
+    return span if len(span) >= MIN_EXCERPT_ANCHOR else None
+
+
+def parse_review(text, memo=None, *, anchor_embellished=False):
     """Validate unresolved findings and their logically matching verdict.
 
     When a frozen memo is supplied, material findings must quote bounded wording
     from that version, allowing only Markdown emphasis/backticks and whitespace
     differences, or explicitly recorded smart/straight quote substitutions.
+    Changed words or numbers and joined passages are rejected.
+
+    ``anchor_embellished`` is for a review that has already had its one format
+    repair. A quotation that still contains words absent from the memo is then
+    anchored to its longest exact run of at least ``MIN_EXCERPT_ANCHOR``
+    characters, with the reviewer's own wording kept beside it, instead of
+    discarding an entire review for one inexact quotation. The inexact words
+    are never treated as the memo's. A quotation with no such run is rejected.
     Match provenance is retained; unmatched optional minor excerpts
     remain explicitly unverified. Location does not establish an allegation's
     truth. Explicitly withdrawn material findings invalidate the review rather
@@ -216,7 +253,7 @@ def parse_review(text, memo=None):
             raise ValueError('Review findings must describe current unresolved issues, not archived dispositions')
         excerpt = finding.get('current_excerpt')
         material = severity in {'blocker', 'major'}
-        excerpt_match = None
+        excerpt_match, reviewer_excerpt = None, None
         if excerpt is not None or (memo is not None and material):
             if not isinstance(excerpt, str) or (material and not excerpt.strip()) or len(excerpt) > MAX_REVIEW_EXCERPT:
                 raise ValueError(f'Review current_excerpt must be nonempty text of at most {MAX_REVIEW_EXCERPT} characters')
@@ -230,7 +267,12 @@ def parse_review(text, memo=None):
             elif normalized_excerpt and _quote_typography(normalized_excerpt) in typography_memo:
                 excerpt_match = 'typography-normalized'
             else:
-                excerpt_match = 'not_matched'
+                anchor = (_longest_exact_span(typography_memo, _quote_typography(normalized_excerpt))
+                          if anchor_embellished else None)
+                if anchor is None:
+                    excerpt_match = 'not_matched'
+                else:
+                    excerpt_match, reviewer_excerpt, excerpt = 'longest-exact-span', excerpt, anchor
             if material and excerpt_match == 'not_matched':
                 raise ValueError('Review current_excerpt must quote contiguous wording from the frozen current memo')
         if material:
@@ -249,6 +291,8 @@ def parse_review(text, memo=None):
         if excerpt is not None:
             parsed['current_excerpt'] = excerpt
             parsed['current_excerpt_match'] = excerpt_match
+            if reviewer_excerpt is not None:
+                parsed['reviewer_excerpt'] = reviewer_excerpt
         findings.append(parsed)
     expected = 'revise' if any(item['severity'] in {'blocker', 'major'} for item in findings) else 'pass'
     if verdict != expected:

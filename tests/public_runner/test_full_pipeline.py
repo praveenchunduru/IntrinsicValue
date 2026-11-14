@@ -397,6 +397,16 @@ class FullPipelineTests(unittest.TestCase):
             self.assertEqual(state['review_history'],[])
             self.assertTrue((folder/'reviews/review-0-unparsed.txt').exists())
             self.assertTrue((folder/'reviews/review-0-reformatted.txt').exists())
+            # The unvalidatable review is not replayed: the next attempt pays for a fresh one.
+            self.assertFalse([name for name in state['stages'] if name.startswith('review_')])
+            self.assertEqual(sum(row['stage'].startswith('review_') for row in state['ledger']),2)
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(FakeRouter,'complete',malformed),self.assertRaisesRegex(ValueError,'fresh review'):
+                pipeline.run('AAPL','synthetic',directory=directory)
+            before=len(FakeRouter.calls)
+            folder=pipeline.run('AAPL','synthetic',directory=directory)
+            self.assertTrue(json.loads((folder/'state.json').read_text())['complete'])
+            self.assertEqual(FakeRouter.calls[before:],['review_0'])
 
     def test_provided_snapshot_forecast_and_body_require_only_fresh_review(self):
         snapshot=[copy.deepcopy(SOURCE)]
