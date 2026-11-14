@@ -94,9 +94,30 @@ class PinTests(unittest.TestCase):
         value = proposal()
         value['currency'] = 'EUR'
         value['discount_rate']['currency'] = 'EUR'
+        with self.assertRaisesRegex(ValueError, '(?s)need terminal_growth.*one constant discount rate'):
+            pin(copy.deepcopy(value))
+        for scenario in value['scenarios'].values():
+            scenario['terminal_growth'] = .025
         value, _, notes = pin(value)
         self.assertNotIn('term_structure', value['discount_rate'])
         self.assertTrue(any('not applied' in note for note in notes))
+
+    def test_rate_instructions_match_the_convention_python_applies(self):
+        self.assertIn('Omit scenario wacc and terminal_growth', pipeline._rate_convention([ERP, TABLE], 'USD'))
+        self.assertIn('state terminal_growth for each scenario', pipeline._rate_convention([ERP, TABLE], 'EUR'))
+        self.assertIn('state terminal_growth for each scenario', pipeline._rate_convention([ERP], 'USD'))
+        self.assertIn('Give wacc and terminal_growth', pipeline._rate_convention([TABLE], 'USD'))
+        self.assertNotIn('Python discounts with the current cost of capital', pipeline.FORECAST_SCHEMA)
+
+    def test_a_null_rate_block_is_treated_as_absent_and_a_malformed_one_is_rejected(self):
+        value = proposal()
+        value['discount_rate'] = None
+        with self.assertRaisesRegex(ValueError, 'dated discount_rate is required'):
+            pin(value)
+        value = proposal()
+        value['discount_rate'] = ['not', 'an', 'object']
+        with self.assertRaisesRegex(ValueError, 'must be an object'):
+            pin(value)
 
     def test_stale_or_mismatched_balance_sheets_get_no_stub(self):
         value, _, notes = pin(proposal(), day='2027-06-30')

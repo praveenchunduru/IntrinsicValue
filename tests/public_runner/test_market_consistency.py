@@ -53,7 +53,7 @@ def wacc(unlevered, equity=EQUITY, debt=DEBT):
     return equity / (equity + debt) * (RF + levered * ERP) + debt / (equity + debt) * KD * (1 - TAX)
 
 
-def hand_value(inputs, name='base', *, stub=90 / 365.25, horizon=10, flat=None, terminal_roic=None, growth_default=RF, terminal_rate=None):
+def hand_value(inputs, name='base', *, stub=90 / 365, horizon=10, flat=None, terminal_roic=None, growth_default=RF, terminal_rate=None):
     """Independent re-implementation of the v2 conventions."""
     scenario = inputs['scenarios'][name]
     initial, terminal = wacc(1.2), terminal_rate or wacc(.9)
@@ -122,8 +122,8 @@ class RatePathTests(unittest.TestCase):
     def test_stub_counts_only_the_unexpired_first_year_and_discounts_from_the_valuation_date(self):
         result = evaluate(plan())
         first = result['scenarios']['base']['cashflows'][0]
-        self.assertAlmostEqual(first['counted_fraction'], 1 - 90 / 365.25, places=12)
-        self.assertAlmostEqual(first['discount_time'], 1 - 90 / 365.25, places=12)
+        self.assertAlmostEqual(first['counted_fraction'], 1 - 90 / 365, places=12)
+        self.assertAlmostEqual(first['discount_time'], 1 - 90 / 365, places=12)
         no_stub = evaluate(plan(timing=False))
         self.assertAlmostEqual(no_stub['scenarios']['base']['per_share_value'], hand_value(plan(timing=False), stub=0), places=9)
         stale = plan()

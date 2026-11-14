@@ -562,8 +562,10 @@ def _positive_multiple(numerator, denominator):
     return dict(result, status='calculated', value=value)
 
 
-def _forecast_period(plan, index):
-    result = {'model_year': index + 1, 'discount_time_years': index + 1}
+def _forecast_period(plan, index, row=None):
+    result = {'model_year': index + 1, 'discount_time_years': (row or {}).get('discount_time', index + 1)}
+    if row and 'phase' in row:
+        result['phase'] = row['phase']
     periods = plan.get('forecast_periods')
     if isinstance(periods, list) and index < len(periods) and isinstance(periods[index], dict):
         result['supplied_period_metadata'] = copy.deepcopy(periods[index])
@@ -624,11 +626,11 @@ def _valuation_multiples(plan, actuals, scenarios, market):
         first, last = projection['cashflows'][0], projection['cashflows'][-1]
         entry = {metric: _positive_multiple(enterprise, first[metric]) for metric in ('ebit', 'nopat')}
         output[name] = {
-            'forecast_year1': {'period': _forecast_period(plan, 0), 'ebit': first['ebit'],
+            'forecast_year1': {'period': _forecast_period(plan, 0, first), 'ebit': first['ebit'],
                                'nopat': first['nopat'], 'market_ev_to_ebit': entry['ebit'],
                                'market_ev_to_nopat': entry['nopat']},
             'original_dcf_exit': {
-                'period': _forecast_period(plan, len(projection['cashflows']) - 1),
+                'period': _forecast_period(plan, len(projection['cashflows']) - 1, last),
                 'enterprise_value': projection['terminal_enterprise_value'],
                 'final_forecast_ebit': last['ebit'], 'final_forecast_nopat': last['nopat'],
                 'terminal_year_nopat': projection['terminal_nopat'],
@@ -644,7 +646,9 @@ def _valuation_multiples(plan, actuals, scenarios, market):
     return {
         'market': market_bridge, 'scenarios': output,
         'basis': 'Computed valuation exhibits. Entry multiples use first-explicit-forecast-year earnings, not historical or trailing earnings. Negative or zero EV/earnings are retained as amounts but do not produce conventional multiples. Exit alternatives have no probability weight and do not change the DCF.',
-        'discount_timing': 'Existing model convention: annual FCFF at integer years 1..N, exit at year N, opening financing bridge at time zero; no stub or midyear adjustment.',
+        'discount_timing': ('Annual FCFF discounted from the valuation date: the first year counts only its unexpired fraction and every later flow and the exit fall at year k minus that stub; no midyear adjustment.'
+                            if plan.get('_timing', {}).get('stub_years') else
+                            'Existing model convention: annual FCFF at integer years 1..N, exit at year N, opening financing bridge at time zero; no stub or midyear adjustment.'),
     }
 
 
@@ -761,7 +765,7 @@ def _counterfactuals(plan, actuals, definitions):
         if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}', name):
             raise ValueError('counterfactual names must be 1–64 letters, digits, underscores, dots or hyphens, starting with a letter or digit')
         if (not isinstance(overrides, dict) or not overrides or
-                any(key not in (*FORECAST_FIELDS, *OPTIONAL_FORECAST_FIELDS, 'operating_overrides') for key in overrides)):
+                any(key not in (*FORECAST_FIELDS, *OPTIONAL_FORECAST_FIELDS, 'terminal_growth_basis', 'operating_overrides') for key in overrides)):
             raise ValueError(f'counterfactual {name}: provide only nonempty forecast overrides from {", ".join(FORECAST_FIELDS)}; actuals and probabilities cannot change')
         for field in ('growth_rates', 'ebit_margins'):
             if field in overrides and (not isinstance(overrides[field], list) or
@@ -788,7 +792,10 @@ def _counterfactuals(plan, actuals, definitions):
         if base.get('terminal_growth_source') == 'risk_free_rate' and 'terminal_growth' not in overrides:
             changed.pop('terminal_growth', None)
         trial = dict(plan, scenarios=dict(definitions, base=changed))
-        _, validated, _ = _validated(trial)
+        try:
+            _, validated, _ = _validated(trial)
+        except ValueError as error:
+            raise ValueError(f'counterfactual {name}: {str(error).replace("base: ", "")}') from None
         effective = validated['base']
         listed = (*FORECAST_FIELDS, *OPTIONAL_FORECAST_FIELDS)
         changed_fields = {field for field in listed if effective.get(field) != base.get(field)}
@@ -853,7 +860,7 @@ def _monitoring(plan, counterfactuals, baseline, calibration_comparisons=()):
             case = counterfactuals.get(item['counterfactual'])
         else:
             case = next((case for case in calibration_comparisons if case['name']==item['calibration_comparison']),None)
-        if case is None:
+        if case is None or case.get('per_share_value') is None:
             raise ValueError('Monitoring counterfactual must name a computed conditional case')
         rows.append({**copy.deepcopy(item), 'base_per_share_value': baseline,
                      'conditional_per_share_value': case['per_share_value'],
@@ -907,7 +914,8 @@ def _computed_diagnostics(actuals, definitions, scenarios, weighted):
         row = {'tax_rate': tax, 'weighted_per_share_value': None,
                'dollar_delta': None, 'percent_delta': None}
         try:
-            values = {name: _project(actuals, dict(definitions[name], tax_rate=tax))['per_share_value']
+            values = {name: _project(actuals, dict(definitions[name], tax_rate=tax,
+                                                   **({'terminal_tax_rate': tax} if 'terminal_tax_rate' in definitions[name] else {})))['per_share_value']
                       for name in SCENARIOS}
             value = sum(values[name] * definitions[name]['probability'] for name in SCENARIOS)
             if not math.isfinite(value):
@@ -920,13 +928,22 @@ def _computed_diagnostics(actuals, definitions, scenarios, weighted):
     transition = {}
     for name in SCENARIOS:
         inputs, result = definitions[name], scenarios[name]
-        last = result['cashflows'][-1]
+        rows = result['cashflows']
+        explicit = len(inputs['growth_rates'])
+        # The step is measured where the forecast ends: from the last explicit year to the first
+        # post-forecast period (a steady-state year under the rate glide, otherwise the terminal year).
+        last = rows[explicit - 1]
+        following = rows[explicit] if explicit < len(rows) else None
+        following_fcff = following['fcff'] if following else result['terminal_fcff']
+        following_reinvestment = following['net_reinvestment'] if following else result['terminal_reinvestment']
+        following_revenue = following['revenue'] if following else result['terminal_revenue']
         margin = inputs['ebit_margins'][-1] * (1 - inputs['tax_rate'])
-        continued_reinvestment = _finite_or_none((result['terminal_revenue'] - last['revenue']) / inputs['sales_to_capital'])
-        equivalent_capital = (_finite_or_none(inputs['terminal_roic'] / (margin * (1 + inputs['terminal_growth']))) if margin else None)
-        step = (_finite_or_none(result['terminal_reinvestment'] - continued_reinvestment)
+        terminal_margin = inputs['ebit_margins'][-1] * (1 - inputs.get('terminal_tax_rate', inputs['tax_rate']))
+        continued_reinvestment = _finite_or_none((following_revenue - last['revenue']) / inputs['sales_to_capital'])
+        equivalent_capital = (_finite_or_none(inputs['terminal_roic'] / (terminal_margin * (1 + inputs['terminal_growth']))) if terminal_margin else None)
+        step = (_finite_or_none(following_reinvestment - continued_reinvestment)
                 if continued_reinvestment is not None else None)
-        fcff_delta = _value_change(result['terminal_fcff'], last['fcff'])
+        fcff_delta = _value_change(following_fcff, last['fcff'])
         alternative_price = None
         if continued_reinvestment is not None and inputs.get('convention') != GLIDE and not inputs.get('stub_years'):
             # Original constant-rate arithmetic, kept bit for bit for existing plans.
@@ -934,10 +951,10 @@ def _computed_diagnostics(actuals, definitions, scenarios, weighted):
             terminal_pv = terminal_fcff / (inputs['wacc'] - inputs['terminal_growth']) / (1 + inputs['wacc']) ** len(result['cashflows'])
             equity = result['pv_forecast_fcff'] + terminal_pv - actuals['net_debt'] - actuals['other_equity_claims']
             alternative_price = _finite_or_none(equity / actuals['shares_outstanding'])
-        elif continued_reinvestment is not None and margin:
-            # The same terminal reinvestment expressed as the return it implies,
-            # so one projection (with its rate path and timing) computes it.
-            continuing_roic = margin * inputs['sales_to_capital'] * (1 + inputs['terminal_growth'])
+        elif continued_reinvestment is not None and terminal_margin:
+            # The same reinvestment expressed as the return it implies, so one projection
+            # (with its rate path, steady-state years and timing) computes it.
+            continuing_roic = terminal_margin * inputs['sales_to_capital'] * (1 + inputs['terminal_growth'])
             if continuing_roic >= inputs['terminal_growth'] and continuing_roic > 0:
                 try:
                     alternative_price = _finite_or_none(_project(actuals, dict(inputs, terminal_roic=continuing_roic))['per_share_value'])
@@ -946,6 +963,7 @@ def _computed_diagnostics(actuals, definitions, scenarios, weighted):
         transition[name] = {
             'basis': 'Conditional forecast-to-terminal bridge; no observed return or capital-efficiency measurement is asserted.',
             'last_forecast_fcff': last['fcff'], 'terminal_fcff': result['terminal_fcff'],
+            **({'first_post_forecast_period': 'steady_state_year', 'first_post_forecast_fcff': following_fcff} if following else {}),
             'fcff_step_currency_units': fcff_delta['dollar_delta'],
             'fcff_step_percent': fcff_delta['percent_delta'],
             'implied_forecast_incremental_roic': _finite_or_none(margin * inputs['sales_to_capital']),
@@ -953,13 +971,15 @@ def _computed_diagnostics(actuals, definitions, scenarios, weighted):
             'terminal_roic': inputs['terminal_roic'],
             'forecast_sales_to_capital': inputs['sales_to_capital'],
             'equivalent_terminal_sales_to_capital': equivalent_capital,
-            'terminal_roic_required_for_continuing_forecast_sales_to_capital': _finite_or_none(margin * inputs['sales_to_capital'] * (1 + inputs['terminal_growth'])),
+            'terminal_roic_required_for_continuing_forecast_sales_to_capital': _finite_or_none(terminal_margin * inputs['sales_to_capital'] * (1 + inputs['terminal_growth'])),
             'reinvestment_timing_note': 'Forecast reinvestment uses the current-year revenue increase; terminal reinvestment uses next-year NOPAT times growth/ROIC. Thus cash-flow-equivalent terminal sales-to-capital is ROIC / [after-tax margin * (1 + terminal growth)].',
             'terminal_reinvestment': result['terminal_reinvestment'],
             'terminal_reinvestment_if_forecast_sales_to_capital_continued': continued_reinvestment,
             'reinvestment_step_vs_continuing_forecast_sales_to_capital': step,
             'alternative_per_share_value_if_forecast_sales_to_capital_continued': alternative_price,
-            'alternative_value_basis': 'Only terminal reinvestment changes to incremental terminal revenue / forecast sales-to-capital; forecast cash flows, WACC, terminal growth, terminal NOPAT, net debt, claims and shares stay fixed.'}
+            'alternative_value_basis': ('Post-forecast reinvestment (steady-state years and the terminal value) follows the forecast sales-to-capital, expressed as the return on new capital it implies; explicit forecast cash flows, discount rates, terminal growth, NOPAT, net debt, claims and shares stay fixed.'
+                                        if following else
+                                        'Only terminal reinvestment changes to incremental terminal revenue / forecast sales-to-capital; forecast cash flows, WACC, terminal growth, terminal NOPAT, net debt, claims and shares stay fixed.')}
     capital_changes=[]
     for ratio in sorted({1.0,2.0,base['sales_to_capital'],6.0,12.0}):
         row = {'sales_to_capital': ratio, 'per_share_value': None,
@@ -971,7 +991,8 @@ def _computed_diagnostics(actuals, definitions, scenarios, weighted):
             row.update(status='not_calculated', reason='Alternative arithmetic exceeded finite numeric bounds.')
         capital_changes.append(row)
     no_forecast_investment=_finite_or_none((scenarios['base']['enterprise_value']+
-        sum(row['net_reinvestment']*row['discount_factor'] for row in scenarios['base']['cashflows'])-
+        sum(row['net_reinvestment']*row['discount_factor']*row.get('counted_fraction',1.0) for row in scenarios['base']['cashflows']
+            if row.get('phase','explicit')=='explicit')-
         actuals['net_debt']-actuals['other_equity_claims'])/actuals['shares_outstanding'])
     no_terminal_excess_return = {'terminal_roic': base_terminal, 'per_share_value': None,
                                  'dollar_delta': None, 'percent_delta': None,
@@ -993,6 +1014,9 @@ def _computed_diagnostics(actuals, definitions, scenarios, weighted):
                       'changes': wacc_changes},
         'uniform_tax': {'baseline_weighted_per_share_value': weighted,
                         'baseline_scenario_tax_rates': {name: definitions[name]['tax_rate'] for name in SCENARIOS},
+                        **({'baseline_scenario_terminal_tax_rates': {name: definitions[name].get('terminal_tax_rate', definitions[name]['tax_rate'])
+                                                                     for name in SCENARIOS}}
+                           if any('terminal_tax_rate' in definitions[name] for name in SCENARIOS) else {}),
                         'fixed_assumptions': 'Replace every scenario cash operating tax rate with the stated alternative; all other scenario inputs, probability weights, net debt, claims and shares stay fixed.',
                         'changes': tax_changes},
         'terminal_transition': transition,
@@ -1231,6 +1255,13 @@ def _bottom_up_beta(record):
                       'sectors': copy.deepcopy(sectors), 'weighted_unlevered_beta': weighted}
 
 
+def _one_year_after(day):
+    try:
+        return day.replace(year=day.year + 1)
+    except ValueError:  # 29 February
+        return day.replace(year=day.year + 1, day=28)
+
+
 def _timing(plan):
     """Stub between the fiscal-year anchor and the valuation date (v2 opt-in)."""
     spec = plan.get('valuation_timing')
@@ -1243,11 +1274,12 @@ def _timing(plan):
     except (KeyError, TypeError, ValueError):
         raise ValueError('valuation_timing needs anchor_date and valuation_date as YYYY-MM-DD') from None
     days = (valued - anchor).days
-    if not 0 <= days <= 366:
+    year_length = (_one_year_after(anchor) - anchor).days
+    if not 0 <= days < year_length:
         raise ValueError(f'The fiscal-year anchor is {days} days from the valuation date; supply a balance sheet '
                          'dated within the year before the valuation date')
     return {'convention': 'stub_v1', 'anchor_date': anchor.isoformat(), 'valuation_date': valued.isoformat(),
-            'elapsed_days': days, 'stub_years': days / 365.25,
+            'elapsed_days': days, 'fiscal_year_days': year_length, 'stub_years': days / year_length,
             'basis': 'Present value dated at valuation_date. Year-one cash flow counts only for the unexpired part '
                      'of the year (as in Damodaran\'s implied-ERP calculator) and every flow is discounted from the '
                      'valuation date. Net debt stays at the anchor balance sheet; cash generated and distributed '
@@ -1255,10 +1287,25 @@ def _timing(plan):
 
 
 def _with_calculation(base, calculation):
-    """A base scenario discounted with another discount-rate calculation's path."""
-    if base.get('convention') == GLIDE:
-        return dict(base, initial_rate=calculation['applied_wacc'], terminal_rate=calculation['terminal_wacc'])
-    return dict(base, wacc=calculation['applied_wacc'])
+    """A base scenario discounted with another discount-rate calculation's path.
+
+    Under the glide a changed risk-free rate also changes a defaulted terminal
+    growth (the equity risk premium's own long-run growth), and the cap and
+    spread rules are applied again, as for the house case.
+    """
+    if base.get('convention') != GLIDE:
+        return dict(base, wacc=calculation['applied_wacc'])
+    rf = calculation['provenance']['risk_free_rate']['value']
+    scenario = dict(base, initial_rate=calculation['applied_wacc'], terminal_rate=calculation['terminal_wacc'], risk_free_rate=rf)
+    if base.get('terminal_growth_source') == 'risk_free_rate':
+        if base['growth_rates'][-1] < .01 or base['terminal_roic'] < rf:
+            raise ValueError('the risk-free terminal-growth default does not apply at this risk-free rate')
+        scenario['terminal_growth'] = rf
+    elif scenario['terminal_growth'] > rf + GROWTH_CAP_TOLERANCE:
+        raise ValueError(f'stated terminal growth exceeds this comparison\'s {rf:.2%} risk-free rate')
+    if scenario['terminal_rate'] - scenario['terminal_growth'] < MIN_TERMINAL_SPREAD or scenario['terminal_roic'] < scenario['terminal_growth']:
+        raise ValueError('terminal rate within one point of terminal growth, or terminal return below growth')
+    return scenario
 
 
 def _calibration_comparisons(plan, actuals, base, baseline):
@@ -1291,8 +1338,13 @@ def _calibration_comparisons(plan, actuals, base, baseline):
         for scenario in trial['scenarios'].values():
             scenario.pop('wacc',None)
         _,_,calculation=materialize(trial)
-        projection=_project(actuals,_with_calculation(base,calculation))
-        output.append({'name':case['name'],'label':case['label'],'overrides':copy.deepcopy(overrides),
+        try:
+            projection=_project(actuals,_with_calculation(base,calculation))
+        except ValueError as error:
+            output.append({'name':case['name'],'label':case['label'],'overrides':copy.deepcopy(overrides),
+                           'status':'not_calculated','reason':str(error)[:300],'per_share_value':None,'wacc':calculation['applied_wacc']})
+            continue
+        output.append({'name':case['name'],'label':case['label'],'overrides':copy.deepcopy(overrides),'status':'calculated',
                        'discount_rate_calculation':calculation,'wacc':calculation['applied_wacc'],
                        **({'terminal_rate':calculation['terminal_wacc']} if base.get('convention')==GLIDE else {}),
                        'per_share_value':projection['per_share_value'],
@@ -1369,12 +1421,9 @@ def evaluate(plan):
         result['market_price'] = market
         result['weighted_value_to_price'] = weighted / market
         result['reverse_dcf'] = _reverse_growth(actuals, definitions['base'], market)
-        if discounting['convention'] == GLIDE:
-            result['implied_return_at_price'] = _implied_return(actuals, definitions, scenarios, weighted, market, discounting)
-        else:
+        if discounting['convention'] != GLIDE:
             result['reverse_dcf']['discount_rate'] = _reverse_wacc(actuals, definitions['base'], market, calibration)
-            if versioned:
-                result['implied_return_at_price'] = _implied_return(actuals, definitions, scenarios, weighted, market, discounting)
+        result['implied_return_at_price'] = _implied_return(actuals, definitions, scenarios, weighted, market, discounting)
         result['convention_panel'] = _convention_panel(actuals, definitions, scenarios, discounting)
     if 'beta_cross_checks' in plan:
         result['beta_cross_checks'] = _beta_cross_checks(canonical_plan, actuals, definitions['base'], scenarios['base']['per_share_value'])

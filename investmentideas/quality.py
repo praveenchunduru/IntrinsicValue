@@ -313,6 +313,32 @@ def parse_review(text, memo=None, *, anchor_embellished=False):
     return parsed
 
 
+def assessment_findings(review):
+    """Findings implied by the reviewer's own assessment of the conclusion.
+
+    The review schema asks for a major finding whenever the reviewer says the
+    memo does not fully handle the central weakness or explain the difference
+    between value and price. That instruction alone did not bind: a reviewer
+    could answer "no" and still pass the draft. This makes the statement count.
+    """
+    weakness, explained = review.get('central_weakness'), review.get('gap_explained')
+    if not isinstance(weakness, dict) or explained is None:
+        return [_finding('review-assessment-missing', 'minor',
+                         'The reviewer did not state the central weakness of the conclusion and whether the memo '
+                         'explains the difference between value and price in the required form.',
+                         'Request a review that states both.')]
+    if any(item.get('severity') in {'blocker', 'major'} for item in review.get('findings', [])):
+        return []
+    if weakness['memo_handles_it'] == 'yes' and explained == 'yes':
+        return []
+    return [_finding('central-weakness-unhandled', 'major',
+                     f"The reviewer judged that the memo handles its central weakness: {weakness['memo_handles_it']}; "
+                     f"and explains the difference between value and price: {explained}. Central weakness: "
+                     f"{weakness['claim']} Computed effect: {weakness['computed_effect']}.",
+                     'Address this weakness in the memo using its computed value effect, and attribute the difference '
+                     'between value and price to computed steps.')]
+
+
 def _body(memo):
     # Register entries cannot substitute for citations attached to memo content.
     register = re.search(r'(?im)^#{1,6}\s*\**(?:source register|source ledger|references|sources)\b', memo)

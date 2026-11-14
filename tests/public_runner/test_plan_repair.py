@@ -206,3 +206,105 @@ class OperatingUnitLabelTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def corrected_plan():
+    value = plan()
+    value['scenarios']['base']['ebit_margins'] = [.25] * 5
+    value['finding_dispositions'] = {'F1': 'accepted: forecast margin corrected'}
+    return value
+
+
+class CorrectionRouter(full_pipeline.FakeRouter):
+    responses = []
+
+    def complete(self, stage, model, prompt, max_tokens=6000, web=False):
+        if not stage.startswith('model_response'):
+            return super().complete(stage, model, prompt, max_tokens, web)
+        self.calls.append(stage)
+        self.ledger.append({'stage': stage, 'model': model, 'status': 'complete', 'annotations': [],
+                            'charged_or_reserved_usd': .01})
+        self.checkpoint()
+        return json.dumps(type(self).responses.pop(0))
+
+
+class ModelCorrectionRepairTests(unittest.TestCase):
+    """The review-correction stage gets the same lock, omission and bounded repair as the first plan."""
+
+    def setUp(self):
+        full_pipeline.FullPipelineTests.setUp(self)
+        CorrectionRouter.calls = []
+        CorrectionRouter.revise = True
+        router = patch.object(pipeline.core, 'Router', CorrectionRouter)
+        router.start()
+        self.patches.append(router)
+
+    def tearDown(self):
+        full_pipeline.FullPipelineTests.tearDown(self)
+
+    def correction_calls(self):
+        return [stage for stage in CorrectionRouter.calls if stage.startswith('model_response')]
+
+    def test_an_invalid_correction_is_repaired_and_then_valued(self):
+        broken = corrected_plan()
+        broken['scenarios']['base']['probability'] = .9
+        CorrectionRouter.responses = [broken, corrected_plan()]
+        with tempfile.TemporaryDirectory() as directory:
+            folder = pipeline.run('AAPL', 'synthetic', directory=directory)
+            state = json.loads((folder / 'state.json').read_text())
+        self.assertEqual(self.correction_calls(), ['model_response_1', 'model_response_repair_1'])
+        self.assertEqual(state['plan']['scenarios']['base']['ebit_margins'], [.25] * 5)
+        self.assertNotIn('finding_dispositions', state['plan'])
+
+    def test_a_correction_that_never_validates_leaves_the_prior_plan_and_says_so(self):
+        broken = corrected_plan()
+        broken['scenarios']['base']['probability'] = .9
+        CorrectionRouter.responses = [copy.deepcopy(broken) for _ in range(pipeline.PLAN_REPAIRS + 1)]
+        with tempfile.TemporaryDirectory() as directory:
+            folder = pipeline.run('AAPL', 'synthetic', directory=directory)
+            state = json.loads((folder / 'state.json').read_text())
+            response = json.loads((folder / 'reviews' / 'model-response-1.json').read_text())
+        self.assertEqual(len(self.correction_calls()), pipeline.PLAN_REPAIRS + 1)
+        self.assertEqual(state['plan']['scenarios']['base']['ebit_margins'], plan()['scenarios']['base']['ebit_margins'])
+        self.assertTrue(any('remained invalid after' in gap and 'prior valuation stands' in gap for gap in state['gaps']))
+        self.assertEqual(response['correction_rejected']['repairs'], pipeline.PLAN_REPAIRS)
+
+    def test_one_bad_counterfactual_case_does_not_take_the_valid_cases_with_it(self):
+        value = corrected_plan()
+        value['counterfactuals'] = {'lower_margin': {'ebit_margins': [.1] * 5},
+                                    'broken': {'ebit_margins': [.1] * 2}}
+        CorrectionRouter.responses = [value]
+        with tempfile.TemporaryDirectory() as directory:
+            folder = pipeline.run('AAPL', 'synthetic', directory=directory)
+            state = json.loads((folder / 'state.json').read_text())
+        self.assertEqual(list(state['plan']['counterfactuals']), ['lower_margin'])
+        self.assertEqual(list(state['omitted_plan_sections']), ['counterfactuals.broken'])
+
+
+class ConventionScopeTests(unittest.TestCase):
+    def setUp(self):
+        full_pipeline.FullPipelineTests.setUp(self)
+
+    def tearDown(self):
+        full_pipeline.FullPipelineTests.tearDown(self)
+
+    def test_supplied_plans_keep_their_own_conventions_unless_they_opt_in(self):
+        sources = [full_pipeline.SOURCE]
+        with patch.object(pipeline, '_pin_market_conventions', return_value=[]) as pin:
+            _, _ = pipeline._lock_plan(plan(), sources, apply_conventions=False)
+            pin.assert_not_called()
+            opted = plan()
+            opted['valuation_timing'] = {'convention': 'stub_v1', 'anchor_date': '2025-12-31'}
+            pipeline._lock_plan(opted, sources, apply_conventions=False)
+            pin.assert_called_once()
+            pipeline._lock_plan(plan(), sources)
+            self.assertEqual(pin.call_count, 2)
+
+
+class ReviewerChoiceTests(unittest.TestCase):
+    def test_overriding_the_author_never_makes_it_review_itself(self):
+        reviewer = pipeline.core.REVIEWERS['balanced']
+        author = pipeline.core.MODELS['balanced'][1]
+        self.assertEqual(pipeline._default_reviewer('balanced', author), reviewer)
+        self.assertEqual(pipeline._default_reviewer('balanced', reviewer), author)
+        self.assertEqual(pipeline._default_reviewer('unknown-profile', 'some/model'), 'some/model')

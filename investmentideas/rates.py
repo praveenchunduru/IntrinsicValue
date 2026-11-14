@@ -42,7 +42,9 @@ pinned from the same industry table as sector betas. The terminal cost of capita
 relevers that beta at the firm's own debt-to-equity ratio and marginal tax rate,
 so business risk converges to the market average while financing risk stays the
 firm's own. Holding the levered beta at one instead would make terminal rates
-fall with leverage. Damodaran's spreadsheet default (risk-free rate plus ERP as
+collapse toward growth as leverage rises. Here only the debt tax shield (and debt
+priced below equity) lowers the rate with leverage; current leverage and the
+current pretax cost of debt carry into the terminal period. Damodaran's spreadsheet default (risk-free rate plus ERP as
 the whole terminal rate) is reported for comparison. A glide is not defined for a
 house hurdle.
 """

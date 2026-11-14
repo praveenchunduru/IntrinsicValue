@@ -327,3 +327,26 @@ class GroupedCitationTests(unittest.TestCase):
         findings=inspect_memo(memo,[{'id':'S1','data':'one'},{'id':'S2','data':'two'}])
         unresolved=next(row for row in findings if row['id']=='citation-unresolved')
         self.assertEqual(unresolved['source_refs'],['S99'])
+
+
+class AssessmentFindingTests(unittest.TestCase):
+    def review(self, handles='no', explained='partly', findings=()):
+        return {'verdict': 'pass', 'findings': list(findings), 'gap_explained': explained,
+                'central_weakness': {'claim': 'Terminal growth below the rate the ERP assumes.',
+                                     'computed_effect': '+25 per share', 'memo_handles_it': handles}}
+
+    def test_an_unhandled_central_weakness_becomes_a_major_finding(self):
+        from investmentideas.quality import assessment_findings
+        rows = assessment_findings(self.review())
+        self.assertEqual([(row['id'], row['severity']) for row in rows], [('central-weakness-unhandled', 'major')])
+        self.assertIn('+25 per share', rows[0]['issue'])
+
+    def test_no_extra_finding_when_handled_or_already_material(self):
+        from investmentideas.quality import assessment_findings
+        self.assertEqual(assessment_findings(self.review('yes', 'yes')), [])
+        self.assertEqual(assessment_findings(self.review(findings=[{'severity': 'major'}])), [])
+
+    def test_a_missing_assessment_is_recorded_without_forcing_a_revision(self):
+        from investmentideas.quality import assessment_findings
+        rows = assessment_findings({'verdict': 'pass', 'findings': []})
+        self.assertEqual([(row['id'], row['severity']) for row in rows], [('review-assessment-missing', 'minor')])
