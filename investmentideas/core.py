@@ -319,7 +319,11 @@ class Router:
             row['status']='incomplete'
             if isinstance(content,str):
                 row['partial_response']=content[:80000]
-            raise RuntimeError('Model returned an empty, refused or truncated response; increase token limit or choose another model')
+            reason = {'length': 'reached its output limit', 'error': 'failed at the provider',
+                      'content_filter': 'was filtered by the provider'}.get(choice.get('finish_reason'), 'was empty or refused')
+            raise RuntimeError(f'The {stage} response from {model} {reason}, so it was not used. '
+                               'Run the same command again to retry this stage; completed stages are reused. '
+                               'If it repeats, choose another model')
         row['status'] = 'complete'
         return content
 

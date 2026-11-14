@@ -156,6 +156,52 @@ against the actual draft. Valid source IDs alone do not prove a claim is support
 # research model overran a 3,500-token limit on a live search lane
 # (2026-11-14), so the limit leaves headroom over the requested length.
 WEB_RESEARCH_TOKENS = 6000
+# Plans are validated strictly and each failure names one defect. A single
+# repair could not clear two independent format defects in one live plan
+# (2026-11-14), which ended the run before a draft existed.
+PLAN_REPAIRS = 3
+PLAN_FIELD_RULES = ('\nField rules: unknown fields are rejected, so use only the field names shown above. Inside '
+                    'operating_model the top level has only currency, amount_unit, assumptions_label, earnings_mode, '
+                    'components and scenarios (optionally counterfactual_policy). Each component has only name, '
+                    'base_revenue and source_refs (optionally gross_margin_group, disclosure). Each operating scenario '
+                    'has only components and, in gross_profit_less_expenses mode, expenses. Each scenario component has '
+                    'only growth_rates and, in that mode, gross_margins. Do not add label, note, rationale, horizon or '
+                    'reconciliation fields there; explanations belong in scenario_rationales. amount_unit is always the '
+                    'literal string "currency_units", never a currency code. counterfactuals is an object keyed by case '
+                    'name, never a list, for example {"lower_services_margin":{"operating_overrides":{"components":'
+                    '{"services":{"gross_margins":[0.7,0.7,0.7,0.7,0.7]}}}}}. Each case changes the base scenario only: '
+                    'no bear, base or bull keys, no name or label field, and every array spans the full horizon. '
+                    'With an operating_model, scenarios omit growth_rates (and ebit_margins in gross_profit_less_expenses '
+                    'mode). With discount_rate, scenarios omit wacc. Every observed_at is a YYYY-MM-DD date.')
+# Diagnostics a plan may carry. Each is computed separately from the scenario
+# values, so an invalid one can be left out without changing the valuation.
+OPTIONAL_PLAN_SECTIONS = ('counterfactuals','calibration_comparisons','monitoring','repurchase_tests','entry_policy')
+
+
+def _omit_invalid_optional_sections(plan,validated):
+    """Validate a plan, leaving out optional diagnostics that alone fail.
+
+    Returns ``(validated(plan_used), {section: reason})``. If the plan is invalid
+    without any optional section, that core error is raised for repair. A paid
+    repair of a whole plan for one malformed diagnostic did not converge live
+    (2026-11-14): the model alternated between two rejected shapes.
+    """
+    try:
+        return validated(plan),{}
+    except (ValueError,KeyError,TypeError):
+        present=[section for section in OPTIONAL_PLAN_SECTIONS if section in plan]
+        if not present:
+            raise
+    kept={key:value for key,value in plan.items() if key not in present}
+    outcome,omitted=validated(kept),{}
+    for section in present:
+        trial={**kept,section:plan[section]}
+        try:
+            outcome=validated(trial)
+            kept=trial
+        except (ValueError,KeyError,TypeError) as exc:
+            omitted[section]=str(exc)[:300]
+    return outcome,omitted
 
 
 def _digest(value):
@@ -655,6 +701,43 @@ def _lock_plan(plan, sources):
     proposal['share_unit']='shares'
     proposal['valuation_date']=valuation_day
     locked,changes=pin_reported_inputs(proposal,sources)
+    operating=locked.get('operating_model')
+    if (isinstance(operating,dict) and operating.get('amount_unit')==reported['currency'] and
+            operating.get('currency')==reported['currency']):
+        # Models sometimes write the currency code where the unit belongs
+        # (observed live 2026-11-14, twice in one run). A currency code states
+        # no scale. Component revenue must still reconcile exactly to pinned
+        # revenue, so an operating model in thousands or millions is rejected.
+        operating['amount_unit']='currency_units'
+        changes.append({'field':'operating_model.amount_unit','previous':reported['currency'],'pinned':'currency_units',
+            'source_refs':[],'reason':'currency code written as the unit label; scale is verified by exact component-revenue reconciliation'})
+    if isinstance(operating,dict) and isinstance(locked.get('scenarios'),dict):
+        # The operating model governs revenue growth, and in gross-profit mode
+        # EBIT margins: Python derives both. A model that also writes aggregate
+        # arrays rarely matches its own component arithmetic, and a mismatch
+        # used to reject the whole plan. The redundant arrays are removed and
+        # recorded, never blended with the derived values.
+        derived=['growth_rates']+(['ebit_margins'] if operating.get('earnings_mode')=='gross_profit_less_expenses' else [])
+        for name,scenario in locked['scenarios'].items():
+            for field in derived:
+                if isinstance(scenario,dict) and field in scenario:
+                    changes.append({'field':f'scenarios.{name}.{field}','previous':scenario.pop(field),'pinned':'derived from operating_model',
+                        'source_refs':[],'reason':'aggregate forecast array duplicated the governing operating model'})
+    rate=locked.get('discount_rate')
+    if isinstance(rate,dict):
+        # Dated rate inputs govern WACC, so a scenario WACC beside them is a
+        # duplicate the guidance says to omit. Observation dates are calendar
+        # dates; a full timestamp keeps its written date. Both are recorded.
+        for name,scenario in (locked.get('scenarios') or {}).items():
+            if isinstance(scenario,dict) and 'wacc' in scenario:
+                changes.append({'field':f'scenarios.{name}.wacc','previous':scenario.pop('wacc'),'pinned':'computed from discount_rate',
+                    'source_refs':[],'reason':'scenario WACC duplicated the governing dated discount-rate inputs'})
+        for name,record in rate.items():
+            stamp=record.get('observed_at') if isinstance(record,dict) else None
+            if isinstance(stamp,str) and re.fullmatch(r'\d{4}-\d{2}-\d{2}T[0-9:.]+(?:Z|[+-]\d{2}:\d{2})?',stamp):
+                record['observed_at']=stamp[:10]
+                changes.append({'field':f'discount_rate.{name}.observed_at','previous':stamp,'pinned':stamp[:10],
+                    'source_refs':[],'reason':'timestamp shortened to its written calendar date'})
     if 'market_price' not in locked['reported_inputs']:
         locked.pop('market_price',None)
         locked['source_refs'].pop('market_price',None)
@@ -1331,9 +1414,10 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
     if 'plan' not in state:
         prompt=('Build an investment valuation plan for '+ticker+'. Ground actuals in supplied evidence; '
                 'use primary reports where accessible, and reconcile secondary-series dates and definitions.\n'+
-                FORECAST_SCHEMA+UNDERWRITING_GUIDANCE+'\nIMMUTABLE reported inputs (copy these values exactly; forecast judgments only):\n'+json.dumps(reported)+'\nEvidence:\n'+context+'\nDiligence synthesis:\n'+thesis+'\nRetrieval gaps:\n'+gaps)
+                FORECAST_SCHEMA+UNDERWRITING_GUIDANCE+PLAN_FIELD_RULES+'\nIMMUTABLE reported inputs (copy these values exactly; forecast judgments only):\n'+json.dumps(reported)+'\nEvidence:\n'+context+'\nDiligence synthesis:\n'+thesis+'\nRetrieval gaps:\n'+gaps)
         text=call('valuation_plan',strong,prompt,tokens=12000)
-        for repair in range(2):
+        failures=[]
+        for repair in range(PLAN_REPAIRS+1):
             try:
                 plan=parse_json(text)
                 if not isinstance(plan,dict):
@@ -1342,22 +1426,42 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                     state['valuation_missing']=plan
                     state['plan']=plan
                     break
-                plan,changes=_lock_plan(plan,state['sources'])
-                if not plan['reported_inputs']['coverage'].get('complete'):
-                    raise ValueError('Reported-input coverage is incomplete')
+                def validated(candidate):
+                    locked,changes=_lock_plan(candidate,state['sources'])
+                    if not locked['reported_inputs']['coverage'].get('complete'):
+                        raise ValueError('Reported-input coverage is incomplete')
+                    _validate_plan_sources(locked,state['sources'])
+                    if 'requested_counterfactuals' in state:
+                        locked['counterfactuals']=copy.deepcopy(state['requested_counterfactuals'])
+                    return locked,changes,evaluate(locked)
+                (plan,changes,result),omitted=_omit_invalid_optional_sections(plan,validated)
                 state.setdefault('actual_input_corrections',[]).extend(changes)
-                _validate_plan_sources(plan,state['sources'])
-                if 'requested_counterfactuals' in state:
-                    plan['counterfactuals']=copy.deepcopy(state['requested_counterfactuals'])
-                result=evaluate(plan)
+                for section,reason in omitted.items():
+                    note=(f'The forecast plan\'s optional {section} did not pass validation ({reason}) and was omitted; '
+                          'nothing was computed for it.')
+                    state.setdefault('omitted_plan_sections',{})[section]=reason
+                    if note not in state['gaps']:
+                        state['gaps'].append(note)
                 state['plan'],state['valuation']=plan,result
                 save_valuation(folder,plan,result)
                 break
             except (ValueError,KeyError,TypeError) as exc:
-                if repair:
-                    raise RuntimeError('Valuation plan remains invalid after one repair: '+str(exc)) from None
-                text=call('valuation_plan_repair',strong,prompt+'\nRejected JSON:\n'+text+
-                          '\nRepair this precise validation failure without inventing actuals: '+str(exc),tokens=12000)
+                failures.append(str(exc))
+                if repair==PLAN_REPAIRS:
+                    # A saved response is replayed on resume. Keeping a plan
+                    # that cannot validate would stop every later attempt at
+                    # the same point, so the rejected plan and its repairs are
+                    # discarded; their recorded spending is retained.
+                    for name in [name for name in state['stages'] if name.startswith('valuation_plan')]:
+                        state['stages'].pop(name)
+                    checkpoint()
+                    raise RuntimeError(f'Valuation plan remains invalid after {PLAN_REPAIRS} repairs: '+str(exc)+
+                                       '. The rejected plan was discarded; run the same command again for a fresh forecast') from None
+                text=call('valuation_plan_repair'+('' if repair==0 else f'_{repair+1}'),strong,prompt+'\nRejected JSON:\n'+text+
+                          '\nRepair this precise validation failure without inventing actuals: '+str(exc)+
+                          ('\nEarlier attempts were rejected for these reasons; do not reintroduce them: '+
+                           ' | '.join(failures[:-1]) if failures[:-1] else '')+
+                          '\nReturn the complete corrected JSON object.'+PLAN_FIELD_RULES,tokens=12000)
         checkpoint()
     if not state['plan'].get('unavailable'):
         state['plan'],changes=_lock_plan(state['plan'],state['sources'])

@@ -59,9 +59,17 @@ Primary inline-XBRL and normalized SEC Companyfacts records lock supported annua
 revenue, shares and the financial-debt, cash and finance-lease bridge. Alternative
 reported totals and disjoint components are reconciled; similar tag names alone
 do not establish accounting scope. Conflicting or incomplete essential primary coverage
-stops before paid research and produces no price target; unknown facts never become zero.
-The saved input-coverage report identifies the missing disclosures. Cash classification and
-unidentified additional claims remain explicit house policies, not reported facts.
+stops before paid research and produces no price target. The saved input-coverage report
+identifies the missing disclosures. Cash classification and unidentified additional claims
+remain explicit house policies, not reported facts.
+
+Two inputs can rest on a labelled assumption. When the whole SEC entity record shows no
+short-term borrowing amount beyond reported commercial paper and other short-term borrowings,
+or no finance lease liability, the missing category is assumed zero. The coverage report marks
+the field `pinned_with_disclosed_assumption`, the bridge lists the concepts that were scanned,
+and the memo states the assumption. An undisclosed borrowing would lower equity value. Issuers
+whose own facts conflict, or that report shares only by class, are refused with the specific
+reason; see the [issuer sample](docs/audit-status.md#live-validation-on-2026-11-14).
 
 The workflow synthesizes evidence, builds a source-referenced forecast plan,
 computes a bear/base/bull FCFF DCF in Python and writes a memo. Fresh-context review
