@@ -118,8 +118,9 @@ Applying that margin to each category is a shared forward assumption.
 When detailed schedules govern, omit duplicate main-scenario `growth_rates` and,
 in gross-profit mode, `ebit_margins`. Python derives them and rejects conflicting
 duplicates. Other scenario fields remain explicit: probability, cash operating
-tax, incremental sales-to-capital, terminal growth and terminal ROIC. The model
-does not infer these from category history.
+tax, incremental sales-to-capital, terminal growth and terminal ROIC (under the
+rate glide below, terminal growth may be omitted and defaults to the risk-free
+rate). The model does not infer these from category history.
 
 GAAP R&D and SG&A must retain their stock-compensation and rent costs under this
 convention. Do not deduct them again. FCFF is EBIT less cash operating taxes and
@@ -128,10 +129,39 @@ to offset depreciation. Negative EBIT creates no automatic cash tax credit.
 Terminal reinvestment is terminal NOPAT × growth / ROIC; inspect the transition
 from the last forecast year rather than treating terminal cash flow as a plug.
 
+## Start year 1 from the reported results
+
+The input adapter also reports the anchor year's operating lines in
+`reported_inputs.operating_reference`: gross profit, cost of revenue, R&D,
+`selling_general_administrative`, operating expenses excluding cost of revenue,
+total costs and expenses (which include cost of revenue) and operating income, each
+with its XBRL concept, sources and basis. Only annual facts for the revenue anchor's
+exact fiscal year count. When a line is reported only in parts it is derived and
+labelled: SG&A as selling and marketing plus general and administrative, operating
+expenses as total costs and expenses less cost of revenue, and gross profit as revenue
+less cost of revenue. A concept whose observations conflict leaves its line out. The
+latest year to date of the first forecast year from 10-Q facts is reported beside it.
+These lines are reference data and never valuation inputs.
+
+The full pipeline compares each scenario's computed year-1 EBIT margin with the
+reported operating margin of the anchor year and of the year to date. A plan or
+review correction whose year-1 margin is outside the band of both goes back for repair
+with the reported lines and the plan's own year-1 expenses. The band is 5 points, or
+40% of the reported margin when that is smaller, with a floor of 1.5 points. A step
+that is the forecast needs `margin_continuity_basis`, an object keyed by `bear`,
+`base` or `bull` whose text is at least 40 characters and cites sources in the
+evidence as `[S#]`. A review correction that leaves a scenario's year-1 margin within
+one point of the plan it replaces keeps that plan's basis. Plans supplied with
+`--forecast-plan` and offline `--revalue` runs are not checked. `valuation.json` from
+the pipeline carries `forecast_continuity`, and the memo shows year-1 margin against
+the reported results with any stated basis.
+
 ## Date the required-return inputs
 
-Optional `discount_rate` computes a constant WACC for all house scenarios. It
-requires `as_of`, matching currency/units, and `lease_convention="gaap_operating"`
+Optional `discount_rate` computes WACC for all house scenarios: one constant rate
+by default, or the rate path described under
+[market-consistent conventions](#keep-the-discount-rate-consistent-with-the-equity-risk-premium).
+It requires `as_of`, matching currency/units, and `lease_convention="gaap_operating"`
 in this FCFF integration. Set `basis` to `market_wacc` or explicitly to
 `house_hurdle`. Omit duplicate scenario `wacc` values when the calculation governs;
 conflicting rates are rejected.
@@ -153,7 +183,7 @@ shape, not an observed market input:
 | `financial_debt` | Gross debt excluding separately entered finance leases, or an explicitly allocated combined total; `measurement` is `book_value_proxy` unless explicitly `market_value` |
 | `finance_lease_debt` | Separate gross finance-lease amount, or explicit zero allocation when already included in a combined total |
 | `pretax_cost_of_debt` | Forward borrowing-cost estimate or labeled yield proxy, not a coupon substitution |
-| `marginal_tax_rate` | Normalized marginal tax for the debt shield, separate from the operating effective-tax assumption |
+| `marginal_tax_rate` | Statutory marginal tax for the debt shield (21% federal or higher for US issuers), separate from the operating effective-tax assumption |
 
 The calculator relevers asset beta using βL = βU × [1 + (1 − tax) × D/E],
 assumes zero debt beta, and applies CAPM before market-equity/gross-debt weighting.
@@ -171,8 +201,8 @@ must identify the combined total and zero allocation. This allocates the combine
 amount once; it is not a claim that finance leases are absent.
 
 No observation or supplied publication date may follow the valuation date.
-Different dates remain visible with input ages. Only `unlevered_beta` may use
-`observed_at="YYYY-MM"` with `date_precision="month"`; that month must end by
+Different dates remain visible with input ages. Only `unlevered_beta` and
+`terminal_unlevered_beta` may use `observed_at="YYYY-MM"` with `date_precision="month"`; that month must end by
 `as_of`. No precise measurement day is invented. Comparable same-date book debt,
 finance leases and quote-derived market equity are reconciled with the valuation
 bridge. Different-date or different-measurement records are labeled as such,
@@ -183,14 +213,129 @@ Live evidence collection attempts three keyless public calibration sources:
 - Damodaran's monthly sustainable-payout implied ERP and its same-row Treasury
   proxy. A newer Treasury rate must not silently replace the paired rate.
 - Damodaran's January US sector beta table, preserving month precision and
-  separate uncorrected/cash-corrected asset betas. No issuer sector is assigned
-  automatically, and peer lease conventions are not established by the table.
+  separate uncorrected/cash-corrected asset betas. The forecast author can map the
+  company to named industries for a bottom-up beta; Python copies each industry's
+  beta from the table. The table's market row sets the terminal beta. Peer lease
+  conventions are not established by the table.
 - FRED's ICE BofA AA US Corporate Index Effective Yield, explicitly a debt-cost
   proxy whose rating, maturity and composition may differ from issuer debt.
 
 Strict parsers archive original bytes and provenance. Retrieval or format failure
 creates a gap, not a substitute rate. These sources do not establish an issuer
 country-risk premium or reconstruct an unrevised historical source vintage.
+
+## Keep the discount rate consistent with the equity risk premium
+
+An implied equity risk premium is the discount rate that sets an index's price equal
+to the present value of its expected cash flows under stated assumptions. Damodaran's
+monthly sustainable-payout estimate assumes that index earnings grow at the 10-year
+Treasury rate in perpetuity after five years of consensus growth, and that the index
+keeps earning its 10-year average return on equity on new investment. A company valuation
+that uses this premium with a lower terminal growth rate values the index itself below
+its price. Reproducing his November 1, 2026 estimate (4.41% over a 4.94% Treasury
+rate) and valuing the index again with 3% terminal growth gives about 80% of its
+price. Setting every firm's return on new capital equal to its cost of capital gives
+about 65%.
+
+A plan opts into conventions that match the premium with
+`discount_rate.term_structure="glide_to_market_v1"` and a dated
+`terminal_unlevered_beta` record:
+
+- Years 1-5 use the current WACC. The rate then moves linearly to a terminal WACC by
+  year 10, and the terminal value uses the terminal WACC. A forecast shorter than 10
+  years is extended to year 10 with steady-state years at terminal growth, the final
+  margin and reinvestment of NOPAT × growth / ROIC. A longer forecast holds the
+  current rate until five years before its end.
+- The terminal WACC uses the market's cash-corrected operating-asset beta (the
+  industry table's "Total Market (without financials)" row), relevered at the firm's
+  own debt-to-equity ratio with its current debt cost and marginal tax rate.
+  Damodaran's spreadsheet default sets the terminal cost of capital to the risk-free
+  rate plus the premium whatever the leverage, the rate of an all-equity firm of
+  average market risk; it is shown beside the house rate.
+- Scenario `wacc` is not allowed. Scenario `terminal_growth` may be omitted and then
+  equals the same-date risk-free rate. A higher value is rejected. A lower value
+  needs a company-specific `terminal_growth_basis`, such as a shrinking market. A
+  scenario whose final forecast growth is below 1%, or whose terminal ROIC is below
+  the risk-free rate, must state its terminal growth.
+- The terminal WACC must exceed terminal growth by at least one point. The memo flags
+  a scenario whose spread is under two points, and sensitivity, convention-panel and
+  implied-return rows under two points are marked fragile.
+- Optional scenario `terminal_tax_rate` sets the operating tax rate for steady-state
+  years and the terminal value; it defaults to the scenario's last tax rate.
+  Damodaran's spreadsheet glides the tax rate to the marginal rate over the forecast.
+  The convention panel shows the marginal rate applied from the first steady-state
+  year and in the terminal value, as an alternative only, because the premium is
+  solved on index earnings taxed at current effective rates.
+- `basis="house_hurdle"` cannot be combined with the glide.
+
+Optional `valuation_timing={"convention":"stub_v1","anchor_date":"YYYY-MM-DD"}`
+discounts from the valuation date. The anchor is the fiscal year-end of the reported
+inputs. Year-1 cash flow counts only the part of the first forecast year still ahead,
+measured with the calendar year after the anchor, and each flow is discounted from the
+valuation date. An anchor a calendar year or more before the valuation date is
+rejected.
+
+`unlevered_beta` can also be built bottom-up from industry betas. The forecast author
+writes the mapping, and the research pipeline completes it:
+
+```json
+{"calculation": "bottom_up_sector_weighted", "source_refs": ["S9"], "label": "Revenue mix",
+ "sectors": [{"sector": "Computers/Peripherals", "weight": 0.74},
+             {"sector": "Software (System & Application)", "weight": 0.26}]}
+```
+
+Sector names must match the supplied table exactly, aggregate rows are refused, and
+weights sum to 1. The pipeline copies each sector's `cash_corrected_unlevered_beta`
+and `firms` and the table month (`observed_at="YYYY-MM"`, `date_precision="month"`)
+from the source and replaces any beta typed into the plan. A plan revalued offline
+must already carry those fields for every sector. Optional `beta_cross_checks` value
+the base case with a weekly regression beta and its Blume adjustment (two-thirds
+observed plus one-third), holding everything else fixed.
+
+Every plan with a market price reports:
+
+- `implied_return_at_price`: for each scenario and the weighted value, the single
+  discount rate, applied in every year and in the terminal value, at which value
+  equals the price. Beside it is the same calculation at the house value, the
+  flat-equivalent required return. This describes what the price implies about the
+  discount rate and makes no forecast of shareholder returns.
+- `convention_panel`: base value with one convention changed at a time: the current
+  rate held constant, Damodaran's terminal rate, terminal growth at the risk-free rate,
+  steady-state and terminal tax at the marginal rate, a terminal return equal to the
+  terminal rate, a 15% terminal return, terminal reinvestment that continues the
+  forecast's capital efficiency, and the whole rate path one point higher and lower.
+  Rows carry no probability. The largest convention row is named; the two rate shifts
+  show scale and are not ranked. Rows that need the glide appear only under it.
+- `value_to_price` for each scenario and `weighted_value_to_price`. Percentage upside
+  is no longer reported.
+
+Plans valued under the glide or a valuation-date stub also report `discounting` (the
+base rate path, terminal rate and their inputs), and their model ID ends in `-v2`.
+Other plans keep the `-v1` ID and produce the same values as before; the shipped
+examples recompute to identical per-share values.
+
+Limits: leverage moves the rate through the debt tax shield and through the gap
+between the pretax debt cost and the risk-free rate. The current debt-to-equity ratio
+and debt cost carry into the terminal rate, with no debt beta and no credit spread
+that rises with leverage. Industry betas are simple averages across each industry's
+firms, and the industry mapping is a judgment.
+
+In the full pipeline, the glide applies to model-authored plans when cash flows are in
+US dollars and the run collected the implied premium and the table's market row. For
+such runs Python copies the risk-free rate and premium from the premium's source, a
+dated `discount_rate` is required, and a US marginal tax rate below the 21% federal
+statutory rate goes back for repair. Other currencies keep one constant rate built
+from a risk-free rate in that currency; a risk-free rate that cites the US premium's
+source is refused. The
+valuation-date stub is pinned for any plan with a `discount_rate` whose revenue year
+ends on the balance-sheet date, when the engine accepts that anchor. A plan supplied
+with `--forecast-plan` keeps its own conventions unless it sets
+`term_structure="glide_to_market_v1"` or `valuation_timing` itself; an explicit
+`term_structure="constant"` is kept. The offline calculator applies whatever the plan
+states and does not check currency. Any code change refreshes the workflow contract,
+so a resumed run rebuilds a model-authored plan under the current conventions; only a
+run saved before the workflow contract existed keeps its plan's conventions, and says
+so in its gaps.
 
 ## Use issuer return history explicitly
 
@@ -231,14 +376,19 @@ derived result. Collection alone never assigns a historical beta to the DCF.
 Up to eight `calibration_comparisons` can each contain `name`, `label` and
 `overrides`. Overrides replace complete dated records for `unlevered_beta`,
 `pretax_cost_of_debt`, `marginal_tax_rate`, or the matched
-`risk_free_rate`/`equity_risk_premium` pair together. Python recomputes WACC and
-base-case value while holding operating cash flows, terminal growth/ROIC and the
-equity bridge fixed. Comparisons do not replace house scenarios or weights.
+`risk_free_rate`/`equity_risk_premium` pair together. Python recomputes the rate and
+base-case value while holding operating cash flows, terminal ROIC and the equity bridge
+fixed. With one constant rate, terminal growth is also fixed. Under the glide the
+whole rate path changes, and a terminal growth that defaults to the risk-free rate
+follows the comparison's risk-free rate; the record and memo show that growth and the
+value with house terminal growth. Comparisons do not replace house scenarios or weights.
 Alternative historical fits are not forward confidence intervals.
 
 Separately, up to eight named `counterfactuals` override base forecast inputs.
 Supported aggregate fields are `growth_rates`, `ebit_margins`, `tax_rate`,
-`sales_to_capital`, `wacc`, `terminal_growth` and `terminal_roic`. Arrays keep the
+`terminal_tax_rate`, `sales_to_capital`, `wacc`, `terminal_growth`,
+`terminal_growth_basis` and `terminal_roic`. Under the glide a counterfactual `wacc` is
+one flat rate in every year and in the terminal value. Arrays keep the
 base horizon. With an operating model, use `operating_overrides` for existing
 component growth/margin arrays or existing expense arrays. Do not mix operating
 drivers with aggregate growth/EBIT overrides. For example, in a five-year model
@@ -270,21 +420,21 @@ algebraically implied beta is not a measured issuer beta or a unique market
 belief. A solved WACC that recapitalizes terminal value differs from a cash-return
 calculation that holds the original terminal exit value fixed.
 
-## Explain multiples, entry rules and repurchase economics
+## Explain multiples and repurchase economics
 
 `computed_diagnostics.valuation_multiples` compares market enterprise value with
 first-forecast-year EBIT and NOPAT, shows the original DCF exit multiples, and
-computes conditional cash-flow returns at an unchanged entry multiple. All use
-the existing integer-year FCFF convention with debt/claims settled at entry;
+computes conditional cash-flow returns at an unchanged entry multiple. All use the
+plan's discount timing (integer years, or the valuation-date stub with the exit at the
+final model year) with debt/claims settled at entry;
 they are not common-share payout forecasts. Nonpositive profit produces a
 not-meaningful multiple, rather than an apparently useful ratio. A return using
 the original DCF exit value must disclose its implied multiple change.
 
-Optional `entry_policy` requires exactly `basis` (`base` or `weighted`),
-`margin_of_safety` (at least zero and below one), `label` and `rationale`.
-The conditional entry price equals the selected reference value times
-`1 - margin_of_safety`. No discount is chosen by the engine. This is an explicit
-house decision rule, not a promise of returns.
+This project values companies and sets no entry prices. The research pipeline drops
+`entry_policy` from any plan and records the removal. The offline calculator still
+evaluates it in plans saved before that change (basis, margin of safety, label and
+rationale) so those plans reproduce.
 
 Optional `repurchase_tests` contains up to eight independent cash-funded cases.
 Each requires `name`, `amount`, `price`, `source_refs`, `label` and
@@ -368,6 +518,18 @@ findings with provenance. Bounded revisions can research, correct, recompute and
 rewrite; budgets, missing evidence or revision limits can leave findings open.
 Editing the body, forecast or review inputs invalidates earlier approval as
 applicable. Inspect the final artifact hashes and findings for the exact run.
+
+The review schema asks the reviewer to state the conclusion's central weakness, its
+computed value effect, whether the memo handles it and whether the memo explains the
+difference between value and price. An answer other than a plain yes counts as no or
+partly. Either answer short of yes, with no other material finding, becomes a major
+finding, so the draft goes back for revision. A review that gives neither answer gets
+a minor finding and can pass; the memo then shows the assessment as not stated. The
+default reviewer is a different model from the author: GPT-5.4 for `balanced` and
+Kimi K2.5 for `economy`. When `--strong-model` names the default reviewer, the
+profile's default author reviews instead. `--review-model` can name any model,
+including the author, and is saved with the run; a run folder saved before the
+cross-model default keeps its saved reviewer.
 
 A model pass is a recorded assessment, not independent publication certification,
 an assurance of no defects, an investment recommendation or proof of forecast

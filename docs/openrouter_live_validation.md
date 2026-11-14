@@ -35,14 +35,18 @@ reserved separately before transport.
 The [offline budget regression](../tests/public_runner/test_budget_workflow.py) exercises
 fresh-from-ticker collection, complete stage contracts and zero assumed cache hits
 with large archived evidence shapes and explicitly synthetic financial-scope evidence.
-At its stated usage/rate assumptions, the first pass needs a peak $3.09 allowance;
-three full revisions need $9.17. Simulated reported usage is $1.69 and $7.77 respectively.
+At its stated usage/rate assumptions (GPT-5.4 review at $2.50/$15 per million input/output
+tokens), the first pass needs a peak $2.86 allowance; three full revisions need $8.77.
+Simulated reported usage is $1.63 and $7.54 respectively. The fixture omits the
+calibration sources, so it does not exercise the market-consistent rate pins.
 These simulations support the tested $10 default path, not a general price or
 completion promise. They are not observed provider bills or research-quality evidence.
 
-The economy profile uses open-weight Qwen for extraction/search and DeepSeek for
-analysis. Balanced uses the same Qwen easy-work routing and Claude Sonnet for
-analysis. Review-model overrides are explicit. Prices and availability are checked
+The economy profile uses open-weight Qwen for extraction/search, DeepSeek for
+analysis and Kimi K2.5 for review. Balanced uses the same Qwen easy-work routing,
+Claude Sonnet for analysis and GPT-5.4 for review. The default reviewer differs from
+the author model. An explicit review-model override can name any model and is saved
+with the run. Prices and availability are checked
 against the live catalog; there are no silent model substitutions or client retries.
 
 Full mode collects evidence, pins supported reported inputs, calculates an editable

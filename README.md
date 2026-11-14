@@ -29,7 +29,7 @@ Open **http://127.0.0.1:8765**, enter your [OpenRouter key](https://openrouter.a
 enter a real SEC requester contact email, choose a ticker, profile and spending allowance,
 and generate a full memo. The email identifies requests to SEC; it is not another paid
 API key. It stays in memory and is sent only to SEC. Choose **economy**
-for open-weight analysis or **balanced** for Claude analysis with open-weight research. Use `python3` or Windows
+for open-weight analysis or **balanced** for Claude analysis with open-weight research; a different model reviews the memo in both. Use `python3` or Windows
 `py` if that is your Python command. A dedicated key with a provider credit limit
 is recommended. The key is held in process memory; it is not stored in the browser,
 research files or logs. This loopback application is for one local user.
@@ -72,9 +72,25 @@ whose own facts conflict, or that report shares only by class, are refused with 
 reason; see the [issuer sample](docs/audit-status.md#live-validation-on-2026-11-14).
 
 The workflow synthesizes evidence, builds a source-referenced forecast plan,
-computes a bear/base/bull FCFF DCF in Python and writes a memo. Fresh-context review
-can trigger targeted research, corrections, recomputation and revision within the
-remaining budget and revision limit. Unresolved material findings remain visible.
+computes a bear/base/bull FCFF DCF in Python and writes a memo. A different model
+reviews it in a fresh context. Review can trigger targeted research, corrections,
+recomputation and revision within the remaining budget and revision limit. Unresolved
+material findings remain visible.
+
+The discount rate follows the conventions the equity risk premium was solved under.
+Damodaran's implied premium assumes the market grows at the Treasury rate forever; a
+valuation that pairs it with lower terminal growth values the market itself at about
+80% of its price. When the cash flows are in US dollars and the run collected that
+premium and the industry beta table, the pipeline therefore starts from the current
+cost of capital, moves to market-average business risk by year 10, and sets terminal
+growth to the risk-free rate unless a scenario gives a company-specific reason for
+less. Present values are dated at the valuation date when the reported balance sheet
+allows it. Year-1 margins must start from the last reported results unless the plan
+cites evidence for a step. The memo reports value relative to price, the
+discount rate the price implies beside the required return, and the value under
+alternative conventions one change at a time. It sets no entry prices, margins of
+safety or position sizes. See
+[market-consistent conventions](docs/underwriting.md#keep-the-discount-rate-consistent-with-the-equity-risk-premium).
 
 The valuation includes operating growth/margins, taxes, incremental sales-to-capital,
 terminal reinvestment at terminal ROIC, discount rates, net debt and noncommon claims,
@@ -99,7 +115,7 @@ export OPENROUTER_API_KEY
 # Replace with your real requester email for SEC access; this is not a paid key
 export SEC_CONTACT_EMAIL='your-real-email@example.com'
 
-# Full memo: open-weight extraction/research; Claude analysis and review
+# Full memo: open-weight extraction/research; Claude analysis; GPT-5.4 review
 python -m investmentideas AAPL --profile balanced --budget 10
 
 # Cheaper full analysis, or a four-call financial overview
@@ -112,8 +128,8 @@ python -m investmentideas AAPL --snapshot sources.json --forecast-plan assumptio
 # Investigate independent review notes in the same day's saved full run
 python -m investmentideas AAPL --review-notes findings.txt --max-revisions 6 --budget 10
 
-# Choose an independent final reviewer without repeating completed research
-python -m investmentideas AAPL --review-model openai/gpt-5.4 --budget 10
+# Choose a different final reviewer without repeating completed research
+python -m investmentideas AAPL --review-model moonshotai/kimi-k2.5 --budget 10
 
 ```
 
@@ -160,17 +176,21 @@ reapprove a previous memo. Generate/review a revised memo when inputs change.
 
 ## Model routing and costs
 
-| Profile | Extraction and web research | Forecast, author, review and correction |
-|---|---|---|
-| `balanced` (default) | Qwen3 30B A3B Instruct, open-weight | Claude Sonnet 4.6 |
-| `economy` | Qwen3 30B A3B Instruct, open-weight | DeepSeek V3.2, open-weight |
+| Profile | Extraction and web research | Forecast, author and correction | Review |
+|---|---|---|---|
+| `balanced` (default) | Qwen3 30B A3B Instruct, open-weight | Claude Sonnet 4.6 | GPT-5.4 |
+| `economy` | Qwen3 30B A3B Instruct, open-weight | DeepSeek V3.2, open-weight | Kimi K2.5, open-weight |
 
 All selected models and their supported token pricing are checked against the live
 OpenRouter catalog before paid work.
 Provider fallback can use another provider **for the same model** under the same
 price caps. There are no automatic client retries or silent switches to expensive
-models. A separate explicit `--review-model` override is saved with the run and
-invalidates its prior review; forecasts and completed research are retained.
+models. The default reviewer differs from the author model: when `--strong-model`
+names the profile's reviewer, the profile's default author reviews instead. An
+explicit `--review-model` can name any model, including the author; it is saved with
+the run and invalidates its prior review;
+forecasts and completed research are retained. A run folder saved before the
+cross-model default keeps its saved reviewer unless `--review-model` is given.
 Interrupted/failed requests preserve a reservation because a provider may
 already have charged; completed stages are reused.
 
@@ -245,9 +265,10 @@ python -m pip install .
 investmentideas --help
 ```
 
-The v0.2.0 release passed **268 tests** from source and a fresh installed wheel. The
+The current source passes **497 tests** locally on Python 3.9, 3.12 and 3.13; the
+v0.2.0 release passed 268. The
 [CI matrix](https://github.com/praveenchunduru/IntrinsicValue/actions/runs/42261827883)
-passes on Python 3.10, 3.12 and 3.13. CI runs synthetic evidence and mocked transports without model calls or
+tests Python 3.10, 3.12 and 3.13. CI runs synthetic evidence and mocked transports without model calls or
 secrets. [Live-validation guidance](docs/openrouter_live_validation.md) explains
 local budget controls and review provenance. Model review is a recorded assessment,
 **not independent publication certification or a guarantee of investment truth**.
