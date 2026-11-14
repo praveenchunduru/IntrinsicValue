@@ -269,3 +269,41 @@ class FinancingPinTests(unittest.TestCase):
         pipeline._pin_financing_records(rate, self.REPORTED, lambda *args: None)
         self.assertEqual(rate['financial_debt']['value'], 75e9)
         self.assertEqual(rate['market_equity']['value'], 5.2e12)
+
+
+LONG_MEMO = ('# Executive valuation\nThe house value rests on terminal returns well above the market average for a decade '
+             'and more [S1].\n')
+
+
+class QuotedExcerptRouter(full_pipeline.FakeRouter):
+    def complete(self, stage, model, prompt, max_tokens=6000, web=False):
+        text = super().complete(stage, model, prompt, max_tokens, web)
+        if stage == 'full_draft' or stage.startswith('revise_'):
+            return LONG_MEMO
+        if stage == 'review_0':
+            return json.dumps({'verdict': 'revise', 'findings': [{
+                'id': 'F1', 'severity': 'major', 'issue': 'Terminal returns are asserted without evidence.',
+                'source_refs': ['S1'], 'fix': 'Cite the evidence for durable excess returns.',
+                'current_excerpt': '"The house value rests on terminal returns well above the market average for a decade"'}]})
+        return text
+
+
+class FirstParseAnchoringTests(unittest.TestCase):
+    def setUp(self):
+        full_pipeline.FullPipelineTests.setUp(self)
+        QuotedExcerptRouter.calls = []
+        router = patch.object(pipeline.core, 'Router', QuotedExcerptRouter)
+        router.start()
+        self.patches.append(router)
+
+    def tearDown(self):
+        full_pipeline.FullPipelineTests.tearDown(self)
+
+    def test_a_quote_wrapped_excerpt_needs_no_paid_format_repair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = pipeline.run('AAPL', 'synthetic', directory=directory)
+            review = json.loads((folder / 'reviews' / 'review-0.json').read_text())
+        self.assertNotIn('review_format_0', QuotedExcerptRouter.calls)
+        finding = review['findings'][0]
+        self.assertEqual(finding['current_excerpt_match'], 'longest-exact-span')
+        self.assertTrue(finding['reviewer_excerpt'].startswith('"'))

@@ -179,7 +179,7 @@ convention that, if wrong, most changes the conclusion","computed_effect":"its v
 computed output, or not computed","memo_handles_it":"yes"|"partly"|"no"},"gap_explained":"yes"|"partly"|"no",
 "findings":[{"id":"F1",
 "severity":"blocker"|"major"|"minor","issue":"precise defect and location",
-"source_refs":["S1"],"current_excerpt":"exact quote from the CURRENT draft, at most 1200 characters","fix":"specific correction or evidence needed"}]}.
+"source_refs":["S1"],"current_excerpt":"one contiguous verbatim quote from the CURRENT draft, at most 1200 characters, no added quotation marks or ellipses; for an omission, the heading where the content belongs","fix":"specific correction or evidence needed"}]}.
 Findings are unresolved; use revise if any blocker/major exists. Use pass only when no material
 finding remains. If memo_handles_it or gap_explained is not "yes", include a blocker or major finding
 for it. Severity follows the computed value effect: blocker when it changes the conclusion or the
@@ -2349,7 +2349,9 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'and optional stylistic preferences. Check whether the allegedly missing disclosure already '
                 'appears elsewhere in the full memo before flagging it. Reserve blocker/major for errors '
                 'that materially change valuation, factual understanding, or the conclusion. '
-                'Every finding must quote the actual CURRENT draft wording or name the precise current omission. '
+                'Every finding must quote one contiguous passage of the CURRENT draft verbatim, without added quotation '
+                'marks or ellipses; for an omission, quote the heading or sentence where the missing content belongs and '
+                'name the omission in issue. '
                 'Earlier notes can be stale; never report an accusation that the current draft already resolves. '
                 'Use at most 12 prioritized findings per review, issue <=100 words and fix <=70 words each; '
                 'combine related issues. If further material issues remain, keep verdict revise and state '
@@ -2375,7 +2377,12 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             raw=call(f'review_{iteration}',reviewer,prompt,tokens=12000)
             try:
                 review_value,normalized=_response_json(raw)
-                review=parse_review(json.dumps(review_value),memo=visible)
+                # Live GPT-5.4 reviews (2026-11-14) wrapped quotes in quotation
+                # marks or joined fragments, and each paid a format repair whose
+                # result was then anchored to its longest exact span anyway. The
+                # same anchoring applies to the first response; the reviewer's
+                # wording stays on record beside the anchored excerpt.
+                review=parse_review(json.dumps(review_value),memo=visible,anchor_embellished=True)
             except ValueError as exc:
                 (reviews/f'review-{iteration}-unparsed.txt').write_text(raw,encoding='utf-8')
                 # This call repairs presentation only. Repeating the full source
