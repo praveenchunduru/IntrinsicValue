@@ -225,6 +225,10 @@ def breakdown_tables(facts, years=3):
             if any(item is not None for item in operating):
                 entry['operating_income'] = operating
                 entry['operating_margin'] = [float(o / s) if o is not None and s else None for o, s in zip(operating, sales)]
+            for key in ('revenue', 'cost_of_revenue', 'operating_income'):
+                if key in entry:
+                    entry[key] = [None if item is None else int(item) if item == item.to_integral_value() else float(item)
+                                  for item in entry[key]]
             members.append(entry)
         if members:
             output[axis] = {'fiscal_year_ends': ends, 'members': members,

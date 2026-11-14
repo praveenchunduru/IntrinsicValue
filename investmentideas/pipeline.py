@@ -26,7 +26,7 @@ from .fundamentals import yahoo_financials
 from .inputs import canonical_reported_inputs, pin_reported_inputs
 from .quality import DIAGNOSTIC_SCOPE, RUBRIC, assessment_findings, claim_ledger, inspect_memo, parse_json, parse_review, prereview_checks
 from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_breakdown_facts, inline_facts, archive_focus_excerpts
-from .evidence_tables import breakdown_tables, render_baseline, render_breakdowns
+from .evidence_tables import breakdown_tables, historical_baseline, render_baseline, render_breakdowns
 from .macro import gather_us_calibration
 from .market_beta import gather_weekly_beta
 from .prompt_context import valuation_context as render_valuation_context
@@ -782,8 +782,28 @@ def _refresh_primary_focus(folder,sources):
         raw=archive.read_bytes()
         if hashlib.sha256(raw).hexdigest()!=source.get('archive_sha256'):
             raise ValueError('Primary archive checksum changed; supply a new source instead of editing its archive')
+        # Reported history and breakdown tables are derived from the archive on
+        # every run, outside source.data, so a folder collected before they
+        # existed gets them without new paid research.
         if isinstance(source.get('data'),dict) and source['data'].get('fact_origin')=='sec_companyfacts':
+            if not source['data'].get('historical_baseline'):
+                try:
+                    baseline=historical_baseline(json.loads(raw.decode('utf-8')),
+                                                 as_of=(source['data'].get('selection') or {}).get('as_of'))
+                except (ValueError,TypeError,KeyError,AttributeError,UnicodeDecodeError):
+                    baseline=None
+                if baseline and baseline['rows'] and baseline!=source.get('historical_baseline'):
+                    source['historical_baseline']=baseline
+                    changed=True
             continue  # Canonical JSON is audited through its structured facts, not HTML prose windows.
+        if not (isinstance(source.get('data'),dict) and source['data'].get('breakdown_tables')):
+            try:
+                tables=breakdown_tables(inline_breakdown_facts(raw.decode('utf-8')))
+            except (ValueError,TypeError,KeyError,ArithmeticError,UnicodeDecodeError):
+                tables={}
+            if tables and tables!=source.get('breakdown_tables'):
+                source['breakdown_tables']=tables
+                changed=True
         focus=archive_focus_excerpts(raw.decode('utf-8'))
         if focus and focus!=source.get('primary_focus_excerpts'):
             # Keep derived windows outside source.data so supplemental-source
@@ -812,11 +832,13 @@ def _computed_tables(sources):
     tables=[]
     for source in sources:
         data=source.get('data') if isinstance(source,dict) else None
-        if isinstance(data,dict):
-            if data.get('historical_baseline'):
-                tables.append(render_baseline(data['historical_baseline'],source.get('id')))
-            if data.get('breakdown_tables'):
-                tables.append(render_breakdowns(data['breakdown_tables'],source.get('id')))
+        data=data if isinstance(data,dict) else {}
+        baseline=data.get('historical_baseline') or source.get('historical_baseline')
+        breakdowns=data.get('breakdown_tables') or source.get('breakdown_tables')
+        if baseline:
+            tables.append(render_baseline(baseline,source.get('id')))
+        if breakdowns:
+            tables.append(render_breakdowns(breakdowns,source.get('id')))
     return '\n\n'.join(tables)
 
 
@@ -847,11 +869,10 @@ def _evidence_context(sources):
     for source in sources:
         row = {key: source[key] for key in ('id','title','url','kind','source_tier','retrieved_at','primary_focus_excerpts') if key in source}
         data = source.get('data')
+        rendered = _computed_tables([source])
+        if rendered:
+            computed.append(rendered)
         if isinstance(data, dict):
-            if data.get('historical_baseline'):
-                computed.append(render_baseline(data['historical_baseline'], source.get('id')))
-            if data.get('breakdown_tables'):
-                computed.append(render_breakdowns(data['breakdown_tables'], source.get('id')))
             data = {key: value for key, value in data.items() if key not in ('historical_baseline', 'breakdown_tables')}
         if source.get('kind')=='user_evidence':
             # The public interface already bounds this focused input at 100 KB.
