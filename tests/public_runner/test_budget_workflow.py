@@ -37,6 +37,10 @@ class FullContractTransport:
         proposal['entry_policy']={'basis':'weighted','margin_of_safety':0,
             'label':'Synthetic test entry policy',
             'rationale':'Use the disclosed weighted value without an additional discount in this software fixture.'}
+        # The archived bear case starts 5.4 points below the reported operating
+        # margin, so the fixture states its basis as a plan must.
+        proposal['margin_continuity_basis']={'bear':'Synthetic fixture basis: the archived bear case assumes '
+            'memory and component cost inflation compresses year-1 gross margin [S4].'}
         proposal['repurchase_tests']=[{'name':'synthetic_cash_case','amount':1000000000,'price':300,
             'source_refs':['S4'],'label':'Synthetic one-period cash-funded illustration',
             'interpretation':'forward_conditional_illustration'}]

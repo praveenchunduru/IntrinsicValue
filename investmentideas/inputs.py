@@ -16,6 +16,44 @@ REVENUE = {'us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax',
            'us-gaap:RevenueFromContractWithCustomerIncludingAssessedTax',
            'us-gaap:Revenues', 'us-gaap:SalesRevenueNet'}
 SHARES = {'dei:EntityCommonStockSharesOutstanding', 'us-gaap:CommonStockSharesOutstanding'}
+# Reported operating lines for the anchor year. They are reference data for
+# forecast continuity, never valuation inputs. A live plan (2026-11-14) put
+# Apple's R&D at $68-96 billion against $45.8 billion reported, because no
+# reported expense level was in front of the forecast author.
+OPERATING_REFERENCE = (
+    ('gross_profit', ('us-gaap:GrossProfit',)),
+    ('cost_of_revenue', ('us-gaap:CostOfGoodsAndServicesSold', 'us-gaap:CostOfRevenue')),
+    ('research_and_development', ('us-gaap:ResearchAndDevelopmentExpense',
+                                  'us-gaap:ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost')),
+    ('selling_general_and_administrative', ('us-gaap:SellingGeneralAndAdministrativeExpense',)),
+    ('operating_expenses', ('us-gaap:OperatingExpenses', 'us-gaap:CostsAndExpenses')),
+    ('operating_income', ('us-gaap:OperatingIncomeLoss',)),
+)
+
+
+def _operating_reference(facts, start, end, currency, revenue):
+    """Unique reported operating lines for the revenue anchor's exact fiscal year."""
+    lines, conflicts = {}, []
+    for name, concepts in OPERATING_REFERENCE:
+        for concept in concepts:
+            items = [item for item in facts if item['concept'] == concept and item['parsed_start'] == start and
+                     item['parsed_end'] == end and item['unit'] == 'iso4217:' + currency and
+                     (item.get('fact_origin') != 'sec_companyfacts' or item.get('form') not in {'10-Q', '10-Q/A'}) and
+                     (name == 'operating_income' or item['value'] >= 0)]
+            chosen = _unique(items, 'reported ' + name.replace('_', ' '), conflicts)
+            if chosen:
+                lines[name] = {'value': _json_number(chosen['value']), 'concept': concept,
+                               'source_refs': chosen['source_refs']}
+                break
+    output = {'period': {'start_date': start.isoformat(), 'end_date': end.isoformat()}, 'currency': currency,
+              'lines': lines, 'conflicts': conflicts,
+              'basis': ('Reported operating lines for the revenue anchor year. Reference for year-1 forecast continuity '
+                        'only; not used in the valuation.')}
+    if 'operating_income' in lines and revenue:
+        output['operating_margin'] = float(Decimal(str(lines['operating_income']['value'])) / revenue)
+    if 'gross_profit' in lines and revenue:
+        output['gross_margin'] = float(Decimal(str(lines['gross_profit']['value'])) / revenue)
+    return output
 # Scope follows the FASB US GAAP 2026 documentation, not similar-looking names:
 # https://xbrl.fasb.org/us-gaap/2026/elts/us-gaap-doc-2026.xml
 # In particular LongTermDebt includes current maturities, while the unsuffixed
@@ -669,6 +707,7 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
             source_ids.add(sid)
     entities = {item['entity_identifier'] for item in facts}
     actuals, refs, dates, bridge, claims_bridge = {}, {}, {}, {}, {}
+    operating_reference = None
     fields = {key: 'unavailable' for key in ('revenue', 'net_debt', 'other_equity_claims', 'shares_outstanding')}
     if len(entities) > 1:
         conflicts.append('Primary reported facts identify multiple issuers; no reported actuals were pinned')
@@ -709,6 +748,8 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                 revenue = _unique(compatible, 'latest annual revenue', conflicts)
                 if revenue:
                     anchor = latest
+                    operating_reference = _operating_reference(facts, revenue['parsed_start'], revenue['parsed_end'],
+                                                               currency, revenue['value'])
                     actuals['revenue'] = _json_number(revenue['value'])
                     refs['revenue'] = revenue['source_refs']
                     dates['revenue'] = {'start_date': revenue['start_date'], 'end_date': revenue['end_date'], 'basis': revenue_basis}
@@ -881,6 +922,8 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                         *([LEASE_ABSENCE_POLICY] if claims_bridge.get('finance_lease_amount_basis') == LEASE_ABSENCE_POLICY else []),
                         'Reported shares can postdate the balance sheet and predate the quote; the dates remain distinct.',
                         'Missing primary facts are not zero; unsupported or ambiguous inputs remain unpinned.']}
+    if operating_reference and operating_reference['lines']:
+        output['operating_reference'] = operating_reference
     if quote:
         output.update(market_price=quote['value'])
         refs['market_price'] = quote['source_refs']

@@ -95,6 +95,11 @@ operating_model instead of guessing consolidated growth/margins. Its shape is
 "bull":"same complete object structure"}}. Example amounts are not issuer forecasts.
 Starting category revenue must reconcile exactly to reported total revenue. Gross margin arrays
 are forward assumptions; never call unreported individual category margins observed facts.
+reported_inputs.operating_reference gives the last reported year's gross profit, cost of revenue,
+R&D, SG&A, operating expenses and operating income. Start year-1 gross margins and expense amounts
+from those reported levels. A year-1 EBIT margin more than 5 points from the reported operating
+margin is rejected unless margin_continuity_basis (an object keyed by scenario) explains that
+scenario's step with evidence [S#].
 Use aggregate_ebit_margins mode without gross margins/expenses if only category revenues are supported.
 Omit main scenario growth_rates and, in gross mode, ebit_margins: Python derives them.
 When the evidence includes the matched risk-free rate and implied equity risk premium, a dated
@@ -236,7 +241,90 @@ def _lock_and_value(candidate, state, *, apply_conventions=True):
     _validate_plan_sources(locked,state['sources'])
     if 'requested_counterfactuals' in state:
         locked['counterfactuals']=copy.deepcopy(state['requested_counterfactuals'])
-    return locked,changes,evaluate(locked)
+    result=_evaluate(locked)
+    _check_continuity(locked,result)
+    return locked,changes,result
+
+
+# A year-1 EBIT margin this far from the last reported operating margin needs
+# a stated, evidenced basis. Live plans on 2026-11-14 reached 27% and 20%
+# against Apple's reported 33% by inventing expense levels.
+MARGIN_CONTINUITY = .05
+
+
+def forecast_continuity(plan, result):
+    """Year-1 EBIT margin in each scenario against the last reported operating margin."""
+    reference=((plan or {}).get('reported_inputs') or {}).get('operating_reference') or {}
+    margin=reference.get('operating_margin')
+    if not isinstance(margin,(int,float)) or not result or not result.get('scenarios'):
+        return None
+    rows={}
+    for name,scenario in result['scenarios'].items():
+        first=(scenario.get('cashflows') or [{}])[0]
+        year_one=first.get('ebit_margin')
+        if not isinstance(year_one,(int,float)):
+            continue
+        rows[name]={'year_one_ebit_margin':year_one,'change_percentage_points':(year_one-margin)*100}
+    lines=reference.get('lines') or {}
+    return {'reported_operating_margin':margin,'period':reference.get('period'),
+            'reported_lines':{key:line.get('value') for key,line in lines.items()},
+            'source_refs':sorted({ref for line in lines.values() for ref in line.get('source_refs',[])}),
+            'threshold_percentage_points':MARGIN_CONTINUITY*100,'scenarios':rows,
+            'basis':'Year-1 EBIT margin from the computed cash flows against the reported operating margin of the revenue '
+                    'anchor year. A diagnostic of forecast continuity; the reported lines are not valuation inputs.'}
+
+
+def _evaluate(plan):
+    """Value a locked plan and attach the forecast-continuity diagnostic."""
+    result=evaluate(plan)
+    continuity=forecast_continuity(plan,result)
+    if continuity:
+        result['forecast_continuity']=continuity
+    return result
+
+
+def _check_continuity(locked, result):
+    """Send a plan back when year-1 margins break from the reported year without a stated basis."""
+    continuity=result.get('forecast_continuity')
+    if not continuity:
+        return
+    bases=locked.get('margin_continuity_basis')
+    if bases is not None and not isinstance(bases,dict):
+        raise ValueError('margin_continuity_basis must be an object keyed by scenario')
+    bases=bases or {}
+    breaks=[]
+    for name,row in continuity['scenarios'].items():
+        basis=bases.get(name)
+        explained=isinstance(basis,str) and len(basis.strip())>=40 and re.search(r'\[S\d+',basis)
+        if abs(row['change_percentage_points'])>MARGIN_CONTINUITY*100 and not explained:
+            breaks.append(f'{name} {row["year_one_ebit_margin"]:.1%}')
+    if not breaks:
+        return
+    lines=continuity['reported_lines']
+    def billions(key):
+        value=lines.get(key)
+        return f'{value/1e9:,.1f} billion' if isinstance(value,(int,float)) else 'not reported'
+    expenses=''
+    operating=locked.get('operating_model') or {}
+    if operating.get('earnings_mode')=='gross_profit_less_expenses':
+        planned=[]
+        for name in ('bear','base','bull'):
+            amounts=((operating.get('scenarios') or {}).get(name) or {}).get('expenses') or {}
+            first={line:values[0] for line,values in amounts.items()
+                   if isinstance(values,list) and values and isinstance(values[0],(int,float))}
+            if first:
+                planned.append(name+' '+', '.join(f'{line} {value/1e9:,.1f} billion' for line,value in first.items()))
+        if planned:
+            expenses=' Year-1 expenses in the plan: '+'; '.join(planned)+'.'
+    period=(continuity.get('period') or {}).get('end_date','the last reported year')
+    raise ValueError(
+        f'Year-1 EBIT margin breaks from the reported {continuity["reported_operating_margin"]:.1%} operating margin '
+        f'(fiscal year ending {period}) by more than {MARGIN_CONTINUITY*100:.0f} points in: '+', '.join(breaks)+
+        f'. Reported: gross profit {billions("gross_profit")}, R&D {billions("research_and_development")}, '
+        f'SG&A {billions("selling_general_and_administrative")}, operating expenses {billions("operating_expenses")}, '
+        f'operating income {billions("operating_income")} [{", ".join(continuity["source_refs"])}].'+expenses+
+        ' Start year-1 gross margins and expenses from the reported levels, or, if a step of this size is the forecast, '
+        'state its evidence in margin_continuity_basis.<scenario> with [S#] citations')
 
 
 def _record_omitted_sections(state, omitted, stage):
@@ -999,7 +1087,8 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
                     raise ValueError('Aggregate forecast arrays disagree with the operating_model by more than '
                                      f'{AGGREGATE_TOLERANCE:.1%} in some year: '+'; '.join(conflicts)+
                                      '. Omit the aggregate arrays and change the component drivers until they produce '
-                                     'the intended path, or adopt the derived path in the rationale')
+                                     'the intended path, or adopt the derived path in the rationale. Keep year-1 '
+                                     'gross margins and expense amounts consistent with reported_inputs.operating_reference')
                 for name,arrays in stated.items():
                     for field in arrays:
                         changes.append({'field':f'scenarios.{name}.{field}','previous':locked['scenarios'][name].pop(field),
@@ -1195,6 +1284,7 @@ def valuation_section(plan, result):
     else:
         lines += ['', 'Measurement dates — '+ '; '.join(measurements)+'. '
                   'Balances are not rolled forward to the quote date; the annual cash-flow model has no stub-period adjustment.']
+    lines += _continuity_exhibit(result)
     lines += _market_consistency_exhibits(result, currency)
     cases=result.get('counterfactuals',{})
     if cases:
@@ -1263,6 +1353,18 @@ def _terminal_growth_sentence(result, risk_free):
     lead=(f'Terminal growth equals the {risk_free:.2%} risk-free rate, the long-run growth the equity risk premium assumes, in '
           +', '.join(default)+'; ' if default else f'The {risk_free:.2%} risk-free rate is the terminal-growth default; ')
     return lead+'; '.join(parts)+'.'
+
+
+def _continuity_exhibit(result):
+    continuity=result.get('forecast_continuity')
+    if not continuity:
+        return []
+    refs=', '.join(continuity['source_refs'])
+    cells='; '.join(f'{name} {row["year_one_ebit_margin"]:.1%} ({row["change_percentage_points"]:+.1f} pt)'
+                    for name,row in continuity['scenarios'].items())
+    return ['', '### Year-1 margin against the last reported year', '',
+            f'Reported operating margin {continuity["reported_operating_margin"]:.1%} for the fiscal year ending '
+            f'{(continuity.get("period") or {}).get("end_date","")} [{refs}]. Year-1 EBIT margin: {cells}.']
 
 
 def _market_consistency_exhibits(result, currency):
@@ -1480,7 +1582,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         if state.get('plan') and not state['plan'].get('unavailable'):
             state['plan']['counterfactuals']=copy.deepcopy(counterfactuals)
             # Validate/evaluate explicit edits before any further paid call.
-            state['valuation']=evaluate(state['plan'])
+            state['valuation']=_evaluate(state['plan'])
         state['complete']=False
         state['quality_status']='needs_review'
         state['review_invalidated']=True
@@ -1676,7 +1778,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         if 'requested_counterfactuals' in state:
             supplied['counterfactuals']=copy.deepcopy(state['requested_counterfactuals'])
         _validate_plan_sources(supplied,state['sources'])
-        state['valuation']=evaluate(supplied)
+        state['valuation']=_evaluate(supplied)
         state['plan']=supplied
         state['provided_forecast_digest']=_digest(forecast_plan)
         state.setdefault('forecast_history',[]).append({'sha256':_digest(forecast_plan),
@@ -1857,7 +1959,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         state.setdefault('actual_input_corrections',[]).extend(changes)
         if 'requested_counterfactuals' in state:
             state['plan']['counterfactuals']=copy.deepcopy(state['requested_counterfactuals'])
-        state['valuation']=evaluate(state['plan'])
+        state['valuation']=_evaluate(state['plan'])
         save_valuation(folder,state['plan'],state['valuation'])
     plan,result=state['plan'],state.get('valuation')
     valuation_context=(render_valuation_context(plan,result) if result is not None else
@@ -2148,6 +2250,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 ('assumptions_label','scenario_rationales','scenarios','operating_model','discount_rate','monitoring',
                  'counterfactuals','calibration_comparisons','forecast_periods','repurchase_tests') if k in plan})+
             '\nLocked actuals (reference only; omit from your proposal):\n'+json.dumps(plan.get('actuals',{}))+
+            '\nReported operating lines (reference for year-1 continuity):\n'+
+            json.dumps((plan.get('reported_inputs') or {}).get('operating_reference'))+
             '\nComputed diagnostics for verification:\n'+json.dumps((result or {}).get('computed_diagnostics',{}))+
             '\nComputed counterfactuals:\n'+json.dumps((result or {}).get('counterfactuals',{}))+
             '\nComputed reverse-DCF projections:\n'+json.dumps((result or {}).get('reverse_dcf',{}).get('solution_projections',[]))+

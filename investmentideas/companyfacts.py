@@ -24,6 +24,9 @@ MAX_REPORTED_FACTS = 1600
 MAX_OBSERVATIONS_PER_PERIOD = 24
 FINANCIAL_CONTEXT_CONCEPTS = frozenset('us-gaap:' + name for name in (
     'OperatingIncomeLoss', 'NetIncomeLoss', 'GrossProfit',
+    'CostOfGoodsAndServicesSold', 'CostOfRevenue', 'ResearchAndDevelopmentExpense',
+    'ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost', 'SellingGeneralAndAdministrativeExpense',
+    'OperatingExpenses', 'CostsAndExpenses',
     'NetCashProvidedByUsedInOperatingActivities', 'PaymentsToAcquirePropertyPlantAndEquipment',
     'ShareBasedCompensation', 'StockBasedCompensation', 'DepreciationDepletionAndAmortization',
     'DepreciationDepletionAndAmortizationPropertyPlantAndEquipment', 'InventoryNet',
