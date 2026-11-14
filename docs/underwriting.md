@@ -27,13 +27,52 @@ excluded. Classifying selected assets as nonoperating is a house policy, not a
 reported assertion that all cash is surplus.
 
 Debt can use a complete financial-debt total or reconciled, disjoint short- and
-long-term components. Commercial paper alone does not establish all short-term
-financing. A narrow long-term tag is not promoted to whole-company debt just
+long-term components. A narrow long-term tag is not promoted to whole-company debt just
 because a table says "Total debt": automatic classification requires same-filing
 inline facts, aligned dates/columns/values and positive evidence of financing scope.
-Ambiguous or unsupported disclosures remain incomplete. Recorded Microsoft and
-CoreWeave fixtures test real disclosure shapes; they do not demonstrate complete
-live coverage for those issuers.
+Recorded Microsoft and CoreWeave fixtures test real disclosure shapes; they are
+trimmed records and do not demonstrate complete live coverage for those issuers.
+
+Long-term debt must be complete. Short-term financing is then established in this
+order, and `net_debt_bridge.short_term_financing.basis` records which one applied:
+
+| Basis | Evidence | Coverage status |
+|---|---|---|
+| `reported` | A reported short-term borrowing total, or a complete whole-debt total | `pinned` |
+| `manual_primary_review` | A reviewed classification with an exact same-source excerpt | `pinned` |
+| `reported_current_debt_identity` | Reported current debt equals reported current long-term debt, so short-term borrowing is zero by arithmetic | `pinned` |
+| `identified_categories_house_assumption` | Commercial paper and other short-term borrowings as reported, with nothing further assumed | `pinned_with_disclosed_assumption` |
+
+The last basis is a house assumption. It applies only when the run fetched the
+whole SEC entity record and that record contains no amount, on the balance-sheet
+date, under any other short-term borrowing concept. Most issuers do not tag a
+borrowing category they do not have, so the absence of a concept is the only
+structured evidence available; it is still weaker than a reported zero. An
+undisclosed or differently tagged borrowing would raise debt and lower equity
+value. The memo's assumptions label states the assumption whenever it is used.
+A positive amount under `LineOfCredit`, `LinesOfCreditCurrent`,
+`ShortTermBankLoansAndNotesPayable`, `ShortTermNonBankLoansAndNotesPayable`,
+`BankOverdrafts` or `WarehouseAgreementBorrowings` cannot be placed between
+short-term financing and long-term debt without issuer disclosure, so it stops
+the bridge. A reported total always displaces the assumption, and reported
+current debt above the identified categories contradicts it.
+
+Three exact reconciliations handle recurring issuer tagging patterns. Each uses
+only reported amounts and is recorded in the bridge:
+
+- `LongTermDebt` equal to `DebtInstrumentCarryingAmount` (gross principal) is set
+  aside when gross less the reported unamortized discount and issuance costs equals
+  current plus noncurrent carrying debt. The carrying amounts are used.
+- A whole-debt total equal to the reported long-term subtotal, alongside separately
+  reported positive short-term borrowings, is excluded as narrower than its taxonomy
+  scope. The components are used, which is the larger figure.
+- A value repeated in prose at a coarser stated inline precision (`decimals`) is a
+  duplicate when it lies within half a unit of that precision of the most precisely
+  reported amount.
+
+Anything else that conflicts stays a conflict. When both exist for the same year,
+total revenues (`us-gaap:Revenues`) are selected over a smaller contract-revenue
+amount; a total below contract revenue is a conflict.
 
 Finance leases are deducted once: separately as other equity claims when financial
 debt excludes them, or within a selected combined debt-and-finance-lease subtotal.
@@ -41,8 +80,11 @@ debt excludes them, or within a selected combined debt-and-finance-lease subtota
 separate lease amount stays null if a combined subtotal already covers it; zero
 other claims then means no second deduction. Any zero for additional unidentified
 claims is a disclosed house assumption. With GAAP operating EBIT, operating rent
-remains an expense and operating-lease liabilities are not added to debt. Missing
-liability categories never become zero.
+remains an expense and operating-lease liabilities are not added to debt. When
+the whole SEC entity record reports no finance or capital lease liability concept
+on the balance-sheet date, finance leases are assumed zero and labelled as an
+assumption in `other_claims_bridge`. A partial lease disclosure stays unknown.
+Outside these two labelled assumptions, missing liability categories never become zero.
 
 Companyfacts records retain their actual API origin, filing/accession dates,
 units and raw values. They are not labeled as inline context facts. The financial

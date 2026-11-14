@@ -112,7 +112,8 @@ def collect(ticker, *, include_archives=False):
         cik = str(company['cik_str']).zfill(10)
         url = f'https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json'
         facts = request_json(url)
-        normalized = normalize_companyfacts(facts,identity=company,source_id=f'S{len(sources)+1}')
+        normalized = normalize_companyfacts(facts,identity=company,source_id=f'S{len(sources)+1}',
+                                            entity_record_complete=True)
         if normalized['data']['reported_facts']:
             if include_archives:
                 archived=json.dumps(facts,sort_keys=True,separators=(',',':'),allow_nan=False)
@@ -140,6 +141,28 @@ def collect(ticker, *, include_archives=False):
         except (RuntimeError, ValueError, KeyError, TypeError, IndexError):
             gaps.append('Keyless secondary financial statements were unavailable too.')
     return sources, gaps
+
+
+def prompt_companyfacts(data):
+    """SEC company facts as presented to a model.
+
+    The context table already carries every selected period value. The
+    per-filing observation records behind it repeat those values with accession
+    metadata and are several times larger; they stay in ``sources.json`` and the
+    archived payload, and are not sent with each request.
+    """
+    if (not isinstance(data, dict) or data.get('fact_origin') != 'sec_companyfacts' or
+            not isinstance(data.get('reported_facts'), list) or
+            not isinstance(data.get('financial_context_table'), list)):
+        return data
+    presented = {key: value for key, value in data.items() if key not in ('reported_facts', 'financial_context_table')}
+    presented['financial_context_table'] = [
+        {key: value for key, value in row.items() if key != 'reported_fact_indices'}
+        for row in data['financial_context_table'] if isinstance(row, dict)]
+    presented['reported_fact_records'] = {
+        'count': len(data['reported_facts']),
+        'note': 'Per-filing observation records are archived in sources.json; the table above carries every selected value.'}
+    return presented
 
 
 def _text_price_caps(pricing):
@@ -314,7 +337,7 @@ def run(ticker, key, *, profile='economy', budget=2.0, directory='research-outpu
         raise ValueError('Unknown profile')
     easy, strong = MODELS[profile]
     easy, strong = easy_model or easy, strong_model or strong
-    identity = hashlib.sha256(json.dumps([ticker, profile, easy, strong, evidence, SYSTEM, time.strftime("%Y-%m-%d", time.gmtime()), 4]).encode()).hexdigest()[:16]
+    identity = hashlib.sha256(json.dumps([ticker, profile, easy, strong, evidence, SYSTEM, time.strftime("%Y-%m-%d", time.gmtime()), 7]).encode()).hexdigest()[:16]
     folder = Path(directory) / ticker / identity
     folder.mkdir(parents=True, exist_ok=True)
     state_path = folder / 'state.json'
@@ -334,19 +357,26 @@ def run(ticker, key, *, profile='economy', budget=2.0, directory='research-outpu
         return folder
     router = Router(key, budget, state['ledger'], lambda: save(state_path, state))
     router.validate_models((easy,strong))
-    context = json.dumps({'ticker':ticker, 'sources':state['sources'], 'gaps':state['gaps']})
+    presented = [{**source, 'data': prompt_companyfacts(source.get('data'))} if isinstance(source, dict) else source
+                 for source in state['sources']]
+    context = json.dumps({'ticker':ticker, 'sources':presented, 'gaps':state['gaps']})
     tasks = [
-        ('extract', easy, 'Extract a concise, dated evidence table, business economics, financial trends and evidence gaps. Distinguish quarterly from annual observations. Evidence:\n' + context),
-        ('draft', strong, 'Write a rigorous equity research draft: thesis, business economics, competitive position, financial quality, capital allocation, bull/base/bear assumptions, catalysts, risks, disconfirming evidence and diligence questions. Do not imply live browsing. Provide valuation only where inputs support it; otherwise explain missing inputs. Evidence:\n' + context),
-        ('review', strong, 'Critique the draft against the evidence. Identify unsupported claims, bad period comparisons, valuation errors, citation issues and missing evidence. This is a model critique, not independent certification. Evidence:\n' + context),
-        ('memo', strong, 'Produce the final research draft, incorporating the critique. Include executive view, evidence-backed analysis, explicit limitations and unresolved questions. Remove unsupported numbers. Retain [S#] citations. Evidence:\n' + context)]
+        ('extract', easy, 'Extract a concise, dated evidence table, business economics, financial trends and evidence gaps. Distinguish quarterly from annual observations. Use at most 40 table rows and about 1,200 words in total. Evidence:\n' + context),
+        ('draft', strong, 'Write a rigorous equity research draft: thesis, business economics, competitive position, financial quality, capital allocation, bull/base/bear assumptions, catalysts, risks, disconfirming evidence and diligence questions. Do not imply live browsing. Provide valuation only where inputs support it; otherwise explain missing inputs. Use at most about 1,800 words and finish every section. Evidence:\n' + context),
+        ('review', strong, 'Critique the draft against the evidence. Identify unsupported claims, bad period comparisons, valuation errors, citation issues and missing evidence. This is a model critique, not independent certification. Use at most about 1,000 words. Evidence:\n' + context),
+        ('memo', strong, 'Produce the final research draft, incorporating the critique. Include executive view, evidence-backed analysis, explicit limitations and unresolved questions. Remove unsupported numbers. Retain [S#] citations. Use at most about 2,200 words and finish every section. Evidence:\n' + context)]
+    # A response cut off at the limit is rejected, so each stage's limit leaves
+    # clear headroom over its requested length (observed live 2026-11-14: a
+    # 3,500-token limit truncated the analytical draft).
+    limits = {'extract': 8000, 'draft': 8000, 'review': 6000, 'memo': 9000}
     for stage, model, instruction in tasks:
         if stage in state['stages']:
             continue
         progress(f'{stage}: {model}')
         previous = json.dumps(state['stages'])
         try:
-            state['stages'][stage] = router.complete(stage, model, instruction + '\nPrevious work:\n' + previous)
+            state['stages'][stage] = router.complete(stage, model, instruction + '\nPrevious work:\n' + previous,
+                                                     max_tokens=limits[stage])
         finally:
             save(state_path, state)
     refs = '\n'.join(f'- [{s["id"]}] {s["title"]}: {s.get("url") or "local supplied text"}' for s in state['sources'])

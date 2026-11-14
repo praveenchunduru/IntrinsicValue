@@ -16,7 +16,7 @@ import json
 import math
 import re
 
-from .inputs import PRIMARY_INPUT_CONCEPTS, REVENUE, SHARES, STRUCTURED_FORMS
+from .inputs import FINANCING_ABSENCE_SCAN, PRIMARY_INPUT_CONCEPTS, REVENUE, SHARES, STRUCTURED_FORMS
 
 ACCEPTED_FORMS = STRUCTURED_FORMS
 ANNUAL_FORMS = ACCEPTED_FORMS - {'10-Q', '10-Q/A'}
@@ -76,7 +76,7 @@ def _observation_key(item):
             str(item.get('fiscal_year') or ''), str(item.get('fiscal_period') or ''))
 
 
-def normalize_companyfacts(payload, *, identity, source_id=None, as_of=None):
+def normalize_companyfacts(payload, *, identity, source_id=None, as_of=None, entity_record_complete=False):
     """Return one regulatory-primary source after checking directory identity.
 
     ``identity`` is the SEC directory record containing ``cik_str``, ``title``
@@ -85,6 +85,12 @@ def normalize_companyfacts(payload, *, identity, source_id=None, as_of=None):
     are protected before recent quarters or later cover-page shares are selected.
     Caps never silently drop a competing reported value: normalization fails if
     the conflict-preserving representation cannot fit its explicit bounds.
+
+    ``entity_record_complete`` is set only by a caller that fetched the whole
+    entity record from the SEC endpoint. It attests which financing concepts
+    were looked for, so that their absence on a protected balance date can
+    support a disclosed assumption. A trimmed or hand-built payload must not
+    claim it.
     """
     if not isinstance(payload, dict) or not isinstance(identity, dict):
         raise ValueError('SEC companyfacts and directory identity must be objects')
@@ -221,6 +227,9 @@ def normalize_companyfacts(payload, *, identity, source_id=None, as_of=None):
                                    'missing tags remain unknown, and filing fiscal-year/frame labels do not replace fact periods.'),
             'selection': {'as_of': cutoff.isoformat(), 'annual_periods': [list(period) for period in annual_periods],
                           'protected_balance_dates': sorted(balance_dates), 'share_dates': share_dates,
+                          # Every dimensionless observation of these concepts on a protected balance
+                          # date is retained, so their absence there is an absence in the SEC record.
+                          **({'absence_scan_concepts': sorted(FINANCING_ABSENCE_SCAN)} if entity_record_complete is True else {}),
                           'valid_record_count': len(records), 'selected_record_count': len(selected),
                           'rejected_record_count': rejected, 'omitted_record_count': len(records) - len(selected),
                           'policy': 'Three latest annual revenue periods, same-date bridge facts and annual-filing shares; two latest balance/share dates; recent duration observations; earliest/latest observations of every retained competing value.'},

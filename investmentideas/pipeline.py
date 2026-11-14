@@ -152,6 +152,12 @@ finding remains. Do not manufacture defects to fill a quota, and verify every ac
 against the actual draft. Valid source IDs alone do not prove a claim is supported.'''
 
 
+# A response cut off at its limit is rejected, never used. The open-weight
+# research model overran a 3,500-token limit on a live search lane
+# (2026-11-14), so the limit leaves headroom over the requested length.
+WEB_RESEARCH_TOKENS = 6000
+
+
 def _digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
@@ -450,7 +456,7 @@ def _evidence_context(sources):
             row['data']=copy.deepcopy(data)
         elif isinstance(data, dict) and (source.get('kind') in {'financial_timeseries','sec_facts','macro_calibration'} or 'excerpts' in data or 'inline_facts' in data):
             # Preserve all structured financial rows; do not truncate JSON midway.
-            row['data'] = copy.deepcopy(data)
+            row['data'] = copy.deepcopy(core.prompt_companyfacts(data))
             if 'inline_facts' in row['data']:
                 keys=('concept','context_ref','instant','start_date','end_date','unit','scale','sign',
                       'normalized_value','normalized_decimal','is_nil','dimensions')
@@ -568,7 +574,7 @@ def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
                        'reservation_floor_usd':router.estimate(model,prompt,tokens,web=web)})
     if not state.get('web_research_complete'):
         for lane in ('business','challenge','expectations','claims'):
-            add('web_'+lane,easy,f'Research {ticker}: {lane}.',3500,web=True)
+            add('web_'+lane,easy,f'Research {ticker}: {lane}.',WEB_RESEARCH_TOKENS,web=True)
     supplied_model = forecast_plan is not None or state.get('plan')
     supplied_memo = draft is not None or state.get('current_memo')
     if not (supplied_model and supplied_memo):
@@ -659,7 +665,13 @@ def _lock_plan(plan, sources):
     lease_allocation=(
         'Finance leases are already included in the selected combined net-debt subtotal and are not deducted again in other claims. '
         if bridge.get('finance_leases_included_in_net_debt') else
+        'Finance lease liabilities are assumed zero because the scanned SEC record reports no finance lease liability concept; this is not a reported zero. '
+        if locked.get('other_claims_bridge',{}).get('reported_finance_lease_liabilities') is None else
         'Reported finance leases are deducted once in other equity claims, outside the selected financial net-debt subtotal. ')
+    if bridge.get('short_term_financing',{}).get('basis')=='identified_categories_house_assumption':
+        lease_allocation+=('Short-term financing beyond the identified reported categories is assumed zero because the scanned SEC '
+            'record reports no other short-term borrowing amount; an absent concept is not a reported zero, and undisclosed '
+            'borrowings would lower equity value. ')
     locked['assumptions_label']=(
         'Growth, margins, taxes, discount rates, capital efficiency, terminal returns and scenario weights '
         'are house forecasts, not reported facts or company guidance. Historical actuals use the '
@@ -1273,7 +1285,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             answer=call('web_'+lane,easy,
                         f'Research {ticker} as of {datetime.now(timezone.utc).date()}: {question}. '
                         'Use the web search results. Identify exact source passages, dates and definitions. '
-                        'Separate facts from hypotheses; do not invent source contents.',tokens=3500,web=True)
+                        'Separate facts from hypotheses; do not invent source contents. '
+                        'Answer in at most about 900 words.',tokens=WEB_RESEARCH_TOKENS,web=True)
             row=next(r for r in reversed(state['ledger']) if r['stage']=='web_'+lane and r.get('status')=='complete')
             for annotation in row.get('annotations',[]):
                 if not annotation.get('content'):
@@ -1589,8 +1602,9 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             break
         call(f'targeted_research_{iteration+1}',easy,
              f'Investigate {ticker} primary evidence needed to resolve these specific findings. '
-             'Find exact dated source passages; do not repeat unverified assertions. Findings:\n'+json.dumps(major),
-             tokens=3500,web=True)
+             'Find exact dated source passages; do not repeat unverified assertions. '
+             'Answer in at most about 900 words. Findings:\n'+json.dumps(major),
+             tokens=WEB_RESEARCH_TOKENS,web=True)
         research_row=next(r for r in reversed(state['ledger'])
                           if r['stage']==f'targeted_research_{iteration+1}' and r.get('status')=='complete')
         for annotation in research_row.get('annotations',[]):

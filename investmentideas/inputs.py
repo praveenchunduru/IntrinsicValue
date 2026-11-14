@@ -34,6 +34,7 @@ DEBT = {
     'current_debt_and_finance_leases': 'DebtCurrent',
     'short_term_borrowings': 'ShortTermBorrowings',
     'commercial_paper': 'CommercialPaper',
+    'other_short_term_borrowings': 'OtherShortTermBorrowings',
     'term_debt': 'LongTermDebt',
     'current_term_debt': 'LongTermDebtCurrent',
     'noncurrent_term_debt': 'LongTermDebtNoncurrent',
@@ -44,6 +45,28 @@ DEBT = {
 FINANCE_LEASES = {'total': 'FinanceLeaseLiability',
                  'current': 'FinanceLeaseLiabilityCurrent',
                  'noncurrent': 'FinanceLeaseLiabilityNoncurrent'}
+# Financing with initial terms under one year that the taxonomy keeps outside
+# long-term debt. Only ShortTermBorrowings is a complete category total.
+# CommercialPaper and OtherShortTermBorrowings ("classified as other") are
+# disjoint identified categories. A positive amount under any concept below
+# cannot be placed without issuer disclosure, so it stops an assumption-based
+# bridge instead of being added or ignored.
+UNCLASSIFIED_FINANCING = {
+    'short_term_bank_loans': 'ShortTermBankLoansAndNotesPayable',
+    'short_term_nonbank_loans': 'ShortTermNonBankLoansAndNotesPayable',
+    'bank_overdrafts': 'BankOverdrafts',
+    'line_of_credit': 'LineOfCredit',
+    'current_lines_of_credit': 'LinesOfCreditCurrent',
+    'warehouse_borrowings': 'WarehouseAgreementBorrowings',
+}
+LEGACY_LEASES = {'total': 'CapitalLeaseObligations', 'current': 'CapitalLeaseObligationsCurrent',
+                 'noncurrent': 'CapitalLeaseObligationsNoncurrent'}
+# DebtInstrumentCarryingAmount is BEFORE unamortized discount and issuance
+# costs; LongTermDebt and its current/noncurrent parts are AFTER them.
+DEBT_RECONCILIATION = {
+    'gross_long_term_debt': 'DebtInstrumentCarryingAmount',
+    'unamortized_discount_and_issuance_costs': 'DebtInstrumentUnamortizedDiscountPremiumAndDebtIssuanceCostsNet',
+}
 CASH_POLICY = ('Explicit house modeling policy: selected nonoperating assets comprise reported cash and '
                'cash equivalents plus directly reported marketable securities or short-term investments '
                'on the annual balance-sheet date. Inclusive subtotals replace their components. Missing '
@@ -57,8 +80,22 @@ CLAIMS_POLICY = ('Explicit house assumption: additional unidentified equity clai
 LEASE_POLICY = ('Finance leases are deducted once: separately in other equity claims when financial debt excludes them, '
                 'or within an explicitly selected combined debt-and-finance-lease subtotal. Operating lease liabilities '
                 'are not added under the unadjusted operating-EBIT convention; capitalizing them would require a consistent EBIT and reinvestment restatement.')
+SHORT_TERM_POLICY = ('Explicit house assumption: short-term financing beyond the identified reported categories is '
+                     'zero. The SEC entity-wide structured record was scanned for every modelled borrowing and '
+                     'finance-lease concept on the balance-sheet date and reported no other short-term borrowing '
+                     'amount. An absent concept is not a reported zero; undisclosed or differently tagged '
+                     'borrowings would raise debt and lower equity value.')
+LEASE_ABSENCE_POLICY = ('Explicit house assumption: finance lease liabilities are zero because the scanned SEC '
+                        'entity-wide structured record reports no finance or capital lease liability concept on '
+                        'the balance-sheet date. An absent concept is not a reported zero.')
+# Concepts whose absence on the balance-sheet date supports the two assumptions
+# above. A companyfacts source attests the scan in ``selection``.
+FINANCING_ABSENCE_SCAN = frozenset(
+    'us-gaap:' + concept for group in (DEBT, FINANCE_LEASES, UNCLASSIFIED_FINANCING, LEGACY_LEASES)
+    for concept in group.values())
 PRIMARY_INPUT_CONCEPTS = REVENUE | SHARES | {
-    'us-gaap:' + concept for group in (CASH, DEBT, FINANCE_LEASES) for concept in group.values()
+    'us-gaap:' + concept for group in (CASH, DEBT, FINANCE_LEASES, UNCLASSIFIED_FINANCING, LEGACY_LEASES,
+                                        DEBT_RECONCILIATION) for concept in group.values()
 }
 STRUCTURED_FORMS = frozenset({'10-K', '10-K/A', '10-Q', '10-Q/A', '20-F', '20-F/A', '40-F', '40-F/A'})
 
@@ -84,6 +121,35 @@ def _components_public(components):
                    'facts': item['facts'],
                    **({'classification_evidence': item['classification_evidence']}
                       if item.get('classification_evidence') else {})} for name, item in components.items()}
+
+
+def _reconcile_gross_term_debt(items, reconciliation):
+    """Return items without a LongTermDebt fact that is reported gross principal.
+
+    Some issuers tag the debt-note total before unamortized discount and
+    issuance costs as LongTermDebt. It is set aside only on exact reported
+    arithmetic: it equals DebtInstrumentCarryingAmount, and less the reported
+    unamortized amount it equals current plus noncurrent carrying debt. The
+    balance-sheet carrying parts are then used. Nothing is estimated.
+    """
+    whole, first, second = (items.get(key) for key in ('term_debt', 'current_term_debt', 'noncurrent_term_debt'))
+    gross = reconciliation.get('gross_long_term_debt')
+    unamortized = reconciliation.get('unamortized_discount_and_issuance_costs')
+    if not (whole and first and second and gross and unamortized):
+        return items, None
+    carrying = first['value'] + second['value']
+    if (whole['value'] == carrying or gross['value'] != whole['value'] or
+            whole['value'] - abs(unamortized['value']) != carrying):
+        return items, None
+    adjusted = dict(items)
+    adjusted['term_debt'] = None
+    return adjusted, {
+        'basis': 'Reported LongTermDebt equals gross principal before unamortized discount and issuance costs; '
+                 'current plus noncurrent carrying amounts are used',
+        'gross_principal': _json_number(whole['value']),
+        'unamortized_discount_and_issuance_costs': _json_number(abs(unamortized['value'])),
+        'carrying_amount': _json_number(carrying),
+        'source_facts': [fact for item in (whole, gross, unamortized) for fact in item['facts']]}
 
 
 def _validate_scopes(items, scopes, label, conflicts):
@@ -247,17 +313,72 @@ def _cash_selection(items, conflicts):
     return selected
 
 
-def _debt_selection(items, leases, conflicts):
-    """Compare complete disjoint alternatives at identical scopes before selection."""
+def _set_aside_narrow_totals(items, leases):
+    """Exclude a whole-debt total that the issuer's own facts show is a long-term subtotal.
+
+    DebtLongtermAndShorttermCombinedAmount and DebtAndCapitalLeaseObligations
+    include short-term debt by definition. When such a fact exactly equals the
+    reported long-term subtotal at its lease scope while a positive short-term
+    borrowing amount is separately reported, both cannot hold. The reported
+    components are used, which is always the larger debt figure, and the
+    excluded total is disclosed. A reviewed classification is never set aside.
+    """
+    if not any(items[key] and items[key]['value'] > 0
+               for key in ('short_term_borrowings', 'commercial_paper', 'other_short_term_borrowings')):
+        return items, []
+    def amounts(total, current, noncurrent):
+        found = {items[total]['value']} if items[total] else set()
+        if items[current] and items[noncurrent]:
+            found.add(items[current]['value'] + items[noncurrent]['value'])
+        return found
+    term = amounts('term_debt', 'current_term_debt', 'noncurrent_term_debt')
+    combined = amounts('term_debt_and_finance_leases', 'current_term_debt_and_finance_leases',
+                       'noncurrent_term_debt_and_finance_leases')
+    adjusted, excluded = dict(items), []
+    for key, narrower, scope in (('financial_debt', term, 'long-term debt including current maturities'),
+                                 ('total_debt_and_finance_leases', combined,
+                                  'long-term debt and finance leases including current maturities')):
+        item = items[key]
+        if item and not item.get('classification_evidence') and item['value'] in narrower:
+            adjusted[key] = None
+            excluded.append({'concept': item['concept'], 'value': _json_number(item['value']),
+                             'reason': 'Equals the reported ' + scope + ' while positive short-term borrowings are '
+                                       'separately reported; excluded as narrower than its taxonomy scope',
+                             'source_facts': item['facts']})
+    return adjusted, excluded
+
+
+def _current_long_term_amounts(items, leases):
+    """Reported current long-term debt (and finance lease) amounts, by available scope."""
+    amounts = set()
+    if items['current_term_debt_and_finance_leases']:
+        amounts.add(items['current_term_debt_and_finance_leases']['value'])
+    if items['current_term_debt']:
+        lease = leases.get('current')
+        amounts.add(items['current_term_debt']['value'] + (lease['value'] if lease else Decimal(0)))
+    return amounts
+
+
+def _debt_selection(items, leases, conflicts, *, assume_identified_short_term=False):
+    """Compare complete disjoint alternatives at identical scopes before selection.
+
+    Returns ``(components, leases_included, short_term_basis)`` or ``None``.
+    Short-term financing is established, in order, by a reported or reviewed
+    category total, by reported current debt that equals current long-term
+    debt, or (only when the caller has verified the absence scan) by the
+    disclosed identified-category assumption. A reported complete total always
+    displaces the assumption.
+    """
     before = len(conflicts)
-    # Scope atoms: short-term borrowing=1, current/noncurrent term debt=2/4,
-    # current/noncurrent finance leases=8/16. Commercial paper provides a
-    # lower bound within atom 1, not a complete short-term financing category.
+    # Scope atoms: commercial paper=1, other short-term borrowings=32, any
+    # remaining short-term financing=64, current/noncurrent term debt=2/4,
+    # current/noncurrent finance leases=8/16. The two identified short-term
+    # categories are bounds within short-term financing (97), never its total.
     _validate_scopes({**items, **{'finance_lease_' + key: leases.get(key)
                                 for key in ('total', 'current', 'noncurrent')}}, {
-        'total_debt_and_finance_leases': (31, True), 'financial_debt': (7, True),
-        'current_debt_and_finance_leases': (11, True), 'short_term_borrowings': (1, True),
-        'commercial_paper': (1, False), 'term_debt': (6, True),
+        'total_debt_and_finance_leases': (127, True), 'financial_debt': (103, True),
+        'current_debt_and_finance_leases': (107, True), 'short_term_borrowings': (97, True),
+        'commercial_paper': (1, True), 'other_short_term_borrowings': (32, True), 'term_debt': (6, True),
         'current_term_debt': (2, True), 'noncurrent_term_debt': (4, True),
         'term_debt_and_finance_leases': (30, True),
         'current_term_debt_and_finance_leases': (10, True),
@@ -290,10 +411,37 @@ def _debt_selection(items, leases, conflicts):
         candidates.append(({'current_debt_and_finance_leases': current,
                             'noncurrent_term_debt': items['noncurrent_term_debt'],
                             'noncurrent_finance_leases': leases['noncurrent']}, True))
-    if short and combined:
-        candidates.append(({'short_term_borrowings': short, **combined}, True))
-    if short and term:
-        candidates.append(({'short_term_borrowings': short, **term}, False))
+    bases = ['reported'] * len(candidates)
+    short_parts = short_basis = None
+    if short:
+        short_parts = {'short_term_borrowings': short}
+        short_basis = 'manual_primary_review' if short.get('classification_evidence') else 'reported'
+    else:
+        # Reported current debt covers short-term borrowings, current long-term
+        # debt and current finance leases. Equality with the reported current
+        # long-term amounts proves the remaining categories are zero.
+        if current and current['value'] in _current_long_term_amounts(items, leases):
+            short_parts, short_basis = {}, 'reported_current_debt_identity'
+    if short_parts is not None:
+        if combined:
+            candidates.append(({**short_parts, **combined}, True))
+            bases.append(short_basis)
+        if term:
+            candidates.append(({**short_parts, **term}, False))
+            bases.append(short_basis)
+    if not candidates and assume_identified_short_term and len(conflicts) == before:
+        identified = {key: items[key] for key in ('commercial_paper', 'other_short_term_borrowings') if items[key]}
+        expected_current = {_amount(identified) + amount for amount in _current_long_term_amounts(items, leases)}
+        if current and expected_current and current['value'] not in expected_current:
+            # Reported current debt exceeds the identified categories: other
+            # short-term financing exists, so the assumption is contradicted.
+            combined = term = None
+        if combined:
+            candidates.append(({**identified, **combined}, True))
+            bases.append('identified_categories_house_assumption')
+        if term:
+            candidates.append(({**identified, **term}, False))
+            bases.append('identified_categories_house_assumption')
     inclusive_amounts = [_amount(parts) for parts, included in candidates if included]
     exclusive_amounts = [_amount(parts) for parts, included in candidates if not included]
     if any(amount < known_lease_floor + (max(exclusive_amounts) if exclusive_amounts else 0)
@@ -312,9 +460,9 @@ def _debt_selection(items, leases, conflicts):
         return None
     # Preserve separate finance-lease treatment when a complete separate bridge
     # exists; otherwise an inclusive debt subtotal carries leases exactly once.
-    if lease_total:
-        return next((candidate for candidate in candidates if not candidate[1]), candidates[0])
-    return next((candidate for candidate in candidates if candidate[1]), candidates[0])
+    wanted = not lease_total
+    index = next((index for index, candidate in enumerate(candidates) if candidate[1] == wanted), 0)
+    return (*candidates[index], bases[index])
 
 
 def _day(value):
@@ -358,13 +506,33 @@ def _public_fact(item):
                                      'original_value', 'original_unit', 'frame', 'source_url', 'source_record') if key in item}
 
 
+def _precision(item):
+    """Stated inline-XBRL decimals; None means the value is taken as exact."""
+    decimals = item.get('decimals')
+    return decimals if isinstance(decimals, int) and not isinstance(decimals, bool) else None
+
+
 def _unique(items, label, conflicts):
     if not items:
         return None
     values = {item['value'] for item in items}
     if len(values) != 1:
-        conflicts.append(f'Conflicting primary values for {label}; no value was selected')
-        return None
+        # Filings repeat a statement amount in prose at a coarser stated
+        # precision ("$10.7 billion", decimals=-8). Such a fact is a consistent
+        # duplicate only if it lies within half a unit of its OWN stated
+        # precision of the single most precisely reported value.
+        exact = [item for item in items if _precision(item) is None]
+        finest = exact or [item for item in items
+                           if _precision(item) == max(_precision(other) for other in items)]
+        best = {item['value'] for item in finest}
+        consistent = len(best) == 1 and all(
+            item['value'] in best or (_precision(item) is not None and
+                                      abs(item['value'] - next(iter(best))) <= Decimal(5).scaleb(-_precision(item) - 1))
+            for item in items)
+        if not consistent:
+            conflicts.append(f'Conflicting primary values for {label}; no value was selected')
+            return None
+        items = [item for item in items if item['value'] in best]
     selected = dict(items[0])
     selected['source_refs'] = sorted({item['source_id'] for item in items})
     selected['facts'] = [_public_fact(item) for item in items]
@@ -424,7 +592,7 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
     sources = sources if isinstance(sources, list) else []
     today = datetime.now(timezone.utc).date()
     cutoff = min(_day(as_of) or today, today)
-    conflicts, skipped, facts, source_ids = [], [], [], set()
+    conflicts, skipped, facts, source_ids, scanned_dates = [], [], [], set(), set()
     for source in sources:
         if not isinstance(source, dict) or not (source.get('kind')=='regulatory_primary' or
                                                 source.get('source_tier')=='regulatory_primary'):
@@ -446,6 +614,11 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
             match = re.fullmatch(r'https://data\.sec\.gov/api/xbrl/companyfacts/CIK([0-9]{10})\.json', url) if isinstance(url, str) else None
             if data.get('fact_origin') == 'sec_companyfacts' and expected_entity and match and _cik(match.group(1)) == expected_entity:
                 collections.append((data['reported_facts'], 'sec_companyfacts'))
+                selection = data.get('selection') if isinstance(data.get('selection'), dict) else {}
+                scanned, dates_kept = selection.get('absence_scan_concepts'), selection.get('protected_balance_dates')
+                if (isinstance(scanned, list) and FINANCING_ABSENCE_SCAN <= set(scanned) and isinstance(dates_kept, list) and
+                        (_day(selection.get('as_of')) or cutoff) <= cutoff):
+                    scanned_dates.update(day for day in dates_kept if isinstance(day, str))
             else:
                 skipped.append('Structured primary facts lack a recognized SEC companyfacts origin and issuer endpoint')
         for raw, origin in ((raw, origin) for rows, origin in collections for raw in rows):
@@ -485,6 +658,8 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                 continue
             item = {key: raw.get(key) for key in ('concept', 'context_ref', 'instant', 'start_date', 'end_date', 'unit')}
             item['fact_origin'] = origin
+            if origin == 'inline_xbrl' and isinstance(raw.get('decimals'), str) and re.fullmatch(r'-?\d{1,2}', raw['decimals']):
+                item['decimals'] = int(raw['decimals'])
             if origin == 'sec_companyfacts':
                 item.update({key: raw.get(key) for key in ('filing_date', 'form', 'accession_number', 'original_value',
                                                           'original_unit', 'frame', 'source_url', 'source_record')})
@@ -517,12 +692,26 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
             if len(intervals) != 1:
                 conflicts.append('Conflicting annual revenue periods; no annual anchor selected')
             else:
+                # us-gaap:Revenues is total revenue; the contract-revenue
+                # concepts are narrower. A larger reported total alongside a
+                # consistent narrower amount is a scope difference, not a conflict.
+                by_concept = {}
+                for item in compatible:
+                    by_concept.setdefault(item['concept'], set()).add(item['value'])
+                total = by_concept.get('us-gaap:Revenues')
+                revenue_basis = 'primary annual duration'
+                if (len({item['value'] for item in compatible}) > 1 and total and
+                        all(len(values) == 1 for values in by_concept.values()) and
+                        all(next(iter(values)) <= next(iter(total)) for values in by_concept.values())):
+                    compatible = [item for item in compatible if item['concept'] == 'us-gaap:Revenues']
+                    revenue_basis = ('primary annual duration; reported total revenues (us-gaap:Revenues) selected over '
+                                     'narrower reported contract-revenue amounts')
                 revenue = _unique(compatible, 'latest annual revenue', conflicts)
                 if revenue:
                     anchor = latest
                     actuals['revenue'] = _json_number(revenue['value'])
                     refs['revenue'] = revenue['source_refs']
-                    dates['revenue'] = {'start_date': revenue['start_date'], 'end_date': revenue['end_date'], 'basis': 'primary annual duration'}
+                    dates['revenue'] = {'start_date': revenue['start_date'], 'end_date': revenue['end_date'], 'basis': revenue_basis}
                     fields['revenue'] = 'pinned'
     if anchor:
         def pick(concept, name):
@@ -537,7 +726,8 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
         lease = {name: pick('us-gaap:' + concept, 'finance lease ' + name)
                  for name, concept in FINANCE_LEASES.items()}
         lease_parts = _subtotal(lease, 'total', 'current', 'noncurrent', 'Finance lease', conflicts)
-        if len(conflicts) != lease_conflicts_before:
+        lease_conflicted = len(conflicts) != lease_conflicts_before
+        if lease_conflicted:
             lease_parts = None
         lease['reconciled'] = lease_parts
         debt_conflicts_before = len(conflicts)
@@ -551,11 +741,29 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                 conflicts.append('Primary classified total debt conflicts with the reported total financial debt')
             else:
                 debt_items['financial_debt'] = classified_total
-        debt_choice = _debt_selection(debt_items, lease, conflicts)
+        # Issuers report the unamortized amount with either sign; only its
+        # magnitude enters the exact reconciliation.
+        reconciliation_items = {
+            name: _unique([{**item, 'value': abs(item['value'])} for item in facts
+                           if item['concept'] == 'us-gaap:' + concept and item['parsed_instant'] == anchor and
+                           item['unit'] == 'iso4217:' + currency], name, [])
+            for name, concept in DEBT_RECONCILIATION.items()}
+        debt_items, term_reconciliation = _reconcile_gross_term_debt(debt_items, reconciliation_items)
+        debt_items, excluded_totals = _set_aside_narrow_totals(debt_items, lease)
+        # The absence assumptions need an entity-wide record that attests it
+        # looked for every modelled financing concept on this exact date.
+        scan_attested = anchor.isoformat() in scanned_dates
+        unclassified = {name: item for name, item in (
+            (name, pick('us-gaap:' + concept, name)) for name, concept in UNCLASSIFIED_FINANCING.items())
+            if item and item['value'] > 0}
+        legacy_leases = [name for name, concept in LEGACY_LEASES.items()
+                         if (found := pick('us-gaap:' + concept, 'capital lease ' + name)) and found['value'] > 0]
+        debt_choice = _debt_selection(debt_items, lease, conflicts,
+                                      assume_identified_short_term=scan_attested and not unclassified)
         if len(conflicts) != debt_conflicts_before:
             debt_choice = None
-        debt, leases_in_debt = debt_choice if debt_choice else ({}, False)
-        if cash and debt:
+        debt, leases_in_debt, short_basis = debt_choice if debt_choice else ({}, False, None)
+        if cash and debt_choice:
             cash_sum, debt_sum = _amount(cash), _amount(debt)
             actuals['net_debt'] = _json_number(debt_sum - cash_sum)
             refs['net_debt'] = sorted({sid for item in [*cash.values(), *debt.values()] for sid in item['source_refs']})
@@ -573,11 +781,33 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                                         'missing_investment_categories': [name for name in CASH if not cash_items[name]]},
                       'explanation': 'Exact sum of disjoint reported debt components minus selected cash and investments. Totals replace their components; no rounding residual or second cash add-back is permitted.',
                       'lease_policy': LEASE_POLICY}
-            fields['net_debt'] = 'pinned'
+            assumed = short_basis == 'identified_categories_house_assumption'
+            identified = [name for name in ('commercial_paper', 'other_short_term_borrowings') if name in debt]
+            bridge['short_term_financing'] = {
+                'basis': short_basis,
+                'identified_reported_categories': identified,
+                'explanation': {
+                    'reported': 'A reported complete debt total or short-term borrowing total establishes short-term financing.',
+                    'manual_primary_review': 'A reviewed primary-disclosure classification establishes short-term financing.',
+                    'reported_current_debt_identity': 'Reported current debt equals reported current long-term debt, so short-term borrowings are zero by reported arithmetic.',
+                    'identified_categories_house_assumption': SHORT_TERM_POLICY}[short_basis],
+                **({'scanned_concepts': sorted(FINANCING_ABSENCE_SCAN)} if assumed else {})}
+            if term_reconciliation and not any(name in debt for name in ('term_debt', 'financial_debt', 'total_debt_and_finance_leases')):
+                bridge['long_term_debt_reconciliation'] = term_reconciliation
+            if excluded_totals:
+                bridge['excluded_scope_inconsistent_totals'] = excluded_totals
+            fields['net_debt'] = 'pinned_with_disclosed_assumption' if assumed else 'pinned'
         else:
             if not cash:
                 skipped.append('Net-debt cash selection unavailable or conflicting on the annual balance-sheet date')
-            if not debt:
+            if not debt_choice and unclassified:
+                skipped.append('Net-debt liability bridge incomplete: reported ' +
+                               ', '.join(sorted('us-gaap:' + UNCLASSIFIED_FINANCING[name] for name in unclassified)) +
+                               ' cannot be classified between short-term financing and long-term debt without issuer disclosure; '
+                               'supply a reviewed primary classification')
+            elif not debt_choice and not scan_attested:
+                skipped.append('Net-debt liability bridge incomplete: no SEC entity-wide record attests a scan of financing concepts on the balance-sheet date, so absent short-term borrowing cannot be assumed')
+            if not debt_choice:
                 skipped.append('Net-debt liability bridge incomplete: requires total debt and finance leases, current debt plus noncurrent debt and leases, or total short-term financing plus complete long-term debt; commercial paper alone does not establish total short-term financing')
         # A combined debt subtotal covers finance leases even where the lease
         # amount is not separately disclosed. Zero here is allocation to avoid
@@ -598,6 +828,25 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                              'other_equity_claims': _json_number(claim_amount),
                              'source_facts': [fact for item in used for fact in item['facts']], 'lease_policy': LEASE_POLICY}
             fields['other_equity_claims'] = 'pinned_with_disclosed_assumption'
+        elif (scan_attested and not legacy_leases and not lease_conflicted and
+              not any(lease[key] for key in FINANCE_LEASES) and
+              not any(debt_items[key] for key in ('total_debt_and_finance_leases', 'term_debt_and_finance_leases',
+                                                  'current_term_debt_and_finance_leases',
+                                                  'noncurrent_term_debt_and_finance_leases'))):
+            actuals['other_equity_claims'] = 0
+            refs['other_equity_claims'] = ['assumption: no finance lease liability concept is reported; additional unidentified claims are zero, not a reported fact']
+            dates['other_equity_claims'] = {'instant': anchor.isoformat(), 'basis': 'no reported finance lease liability concept; explicit house assumptions'}
+            claims_bridge = {'currency': currency, 'as_of': anchor.isoformat(),
+                             'reported_finance_lease_liabilities': None,
+                             'finance_lease_amount_basis': LEASE_ABSENCE_POLICY,
+                             'finance_leases_included_in_net_debt': False,
+                             'additional_unidentified_claims': 0,
+                             'additional_unidentified_claims_basis': CLAIMS_POLICY,
+                             'other_equity_claims': 0,
+                             'scanned_concepts': sorted('us-gaap:' + concept for group in (FINANCE_LEASES, LEGACY_LEASES)
+                                                        for concept in group.values()),
+                             'source_facts': [], 'lease_policy': LEASE_POLICY}
+            fields['other_equity_claims'] = 'pinned_with_disclosed_assumption'
     outstanding = [item for item in facts if item['concept'] in SHARES and item['unit'] == 'xbrli:shares' and
                    item['parsed_instant'] and item['value'] > 0]
     if outstanding:
@@ -608,6 +857,9 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
             refs['shares_outstanding'] = chosen['source_refs']
             dates['shares_outstanding'] = {'instant': latest.isoformat(), 'basis': 'latest reported ordinary shares outstanding; never annual average or issued shares'}
             fields['shares_outstanding'] = 'pinned'
+    else:
+        skipped.append('Outstanding shares are not reported as one entity-wide amount (for example, only by share class); '
+                       'supply a reviewed primary total')
     if currency is None:
         market_currencies = {source['data'].get('currency') for source in sources
                              if isinstance(source, dict) and source.get('kind') == 'market_snapshot' and
@@ -625,6 +877,8 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                            'missing_fields': [field for field in fields if field not in actuals],
                            'conflicts': conflicts, 'notes': sorted(set(skipped))},
               'notes': [CASH_POLICY, CLAIMS_POLICY, LEASE_POLICY,
+                        *([SHORT_TERM_POLICY] if fields['net_debt'] == 'pinned_with_disclosed_assumption' else []),
+                        *([LEASE_ABSENCE_POLICY] if claims_bridge.get('finance_lease_amount_basis') == LEASE_ABSENCE_POLICY else []),
                         'Reported shares can postdate the balance sheet and predate the quote; the dates remain distinct.',
                         'Missing primary facts are not zero; unsupported or ambiguous inputs remain unpinned.']}
     if quote:
