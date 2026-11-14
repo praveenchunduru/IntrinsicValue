@@ -24,8 +24,9 @@ from .costs import cost_summary
 from .analytics import annual_metrics
 from .fundamentals import yahoo_financials
 from .inputs import canonical_reported_inputs, pin_reported_inputs
-from .quality import DIAGNOSTIC_SCOPE, assessment_findings, claim_ledger, inspect_memo, parse_json, parse_review
-from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_facts, archive_focus_excerpts
+from .quality import DIAGNOSTIC_SCOPE, RUBRIC, assessment_findings, claim_ledger, inspect_memo, parse_json, parse_review
+from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_breakdown_facts, inline_facts, archive_focus_excerpts
+from .evidence_tables import breakdown_tables, render_baseline, render_breakdowns
 from .macro import gather_us_calibration
 from .market_beta import gather_weekly_beta
 from .prompt_context import valuation_context as render_valuation_context
@@ -36,31 +37,42 @@ from .companyfacts import CONCEPT_SELECTION_SHA256
 
 VERSION = 'full-2'
 DEFAULT_BUDGET = 10.0
-SECTIONS = '''Sections, in this order: (1) Valuation conclusion: house value per share, the price,
-value / price, and the one assumption family that carries most of the difference. (2) What the
-price implies, from computed output only: the implied return at the price for each scenario and
-weighted (implied_return_at_price) beside the required return, and the growth the price needs.
-(3) Where the difference comes from: the computed convention_panel and calibration comparisons,
-largest step first; say plainly when the difference rests on the discount rate or terminal
-assumptions rather than on the operating forecast. (4) Variant thesis aimed at the largest
-computed step: why the market is wrong on that step, with evidence; restating house forecasts is
-not a variant thesis, and if the operating forecast is close to consensus say so. (5) Business
-economics, industry and competition. (6) Management and capital allocation. (7) Historical
-financial quality. (8) Operating forecast against dated consensus on a matching basis. (9)
-Bear/base/bull scenarios and the basis for their weights. (10) Observations that would change the
-value. (11) Risks, including evidence that the valuation framework rather than the forecast is
-wrong. (12) Evidence gaps and unresolved questions.'''
+SECTIONS = '''Write these sections, in this order, as prose around the computed valuation summary that
+Python places above your text (do not re-type its tables; refer to its rows by name):
+(1) Valuation conclusion (about 250 words): value, price and value / price as computed, and which
+inputs carry the difference, read from the "What the price requires" rows and the implied return.
+Say plainly whether the difference rests on the operating forecast, the discount rate or terminal
+returns; convention rows are one change at a time and are never added together.
+(2) Variant view (about 400 words): on the input that carries the difference, why the house view
+differs from what the price requires, with primary evidence, and the strongest sourced opposing
+case answered economically. If the operating forecast is close to consensus, say so.
+(3) Business economics, industry and competition (about 450 words), from primary sources and the
+computed tables.
+(4) Management, capital allocation and financial history (about 450 words), from the reported
+history and breakdown tables; compare buybacks with house value using computed figures.
+(5) Forecast and scenarios (about 500 words): how the bear, base and bull paths start from reported
+results, what drives each, and the basis for the weights. Outside estimates appear only as labelled
+unverified context.
+(6) Observations that would change the value (about 300 words), from the computed monitoring cases.
+(7) Risks, including evidence that the valuation framework is wrong (about 300 words).
+(8) Evidence gaps and unresolved questions (about 200 words).'''
 # Memo stages rewrite the full memo. A live revision overran a 14,000-token
 # limit as the memo grew, so the limit leaves room above the word budget.
 MEMO_TOKENS = 18000
-MEMO_WORDS = 'at most about 4,500 words including exhibits; a revision replaces text rather than adding to it'
+MEMO_WORDS = 'about 3,000 words of prose in total; Python adds the tables, and a revision replaces text rather than adding to it'
 FORECAST_SCHEMA = """Return ONLY compact JSON for house forecasts:
 {"assumptions_label":"House forecasts, not reported facts or guidance",
  "scenario_rationales":{"bear":"Evidence, economic mechanism and the basis for this probability [S#]","base":"...","bull":"..."},
- "scenarios":{"bear":{"probability":<decimal>,"growth_rates":[<10 annual decimals>],
- "ebit_margins":[<10 annual decimals>],"tax_rate":<decimal>,"sales_to_capital":<number>,
- "terminal_roic":<decimal>},"base":{<same fields>},"bull":{<same fields>}}}.
+ "scenarios":{"bear":{"probability":<decimal>,"tax_rate":<decimal>,"sales_to_capital":<number>,
+ "terminal_roic":<decimal>},"base":{<same fields>},"bull":{<same fields>}}}
+plus EITHER an operating_model (preferred when the evidence reports revenue by product, service or
+segment; see below), in which case Python derives each scenario's growth and margins from its drivers
+and any stated growth_rates or ebit_margins are dropped, OR, without one, "growth_rates":[<10 annual
+decimals>] and "ebit_margins":[<10 annual decimals>] in every scenario.
 Placeholders mark where your evidence-based numbers go; nothing here is a default.
+Start from the COMPUTED FROM REPORTED FILINGS tables: year-1 growth, gross and operating margins,
+expense levels, tax rate and capital intensity begin at the reported history and year to date, and
+each departure needs evidence in scenario_rationales.
 Use 10 forecast years, the same horizon in all scenarios. Probabilities sum to 1 and each
 needs a stated basis in scenario_rationales (frequencies of comparable outcomes, the evidence
 that separates the states); symmetric weights are not a default. All rates are decimals.
@@ -120,18 +132,13 @@ Python pins every industry beta from the table, so write no beta numbers. The we
 beta is computed separately as a cross-check. Python also pins the market beta used for the
 terminal cost of capital and dates the valuation; do not supply term_structure,
 terminal_unlevered_beta or valuation_timing.
-Every record needs value, observed_at, source_refs and label; currency/amount_unit match the plan,
-as_of is the valuation date, lease_convention is gaap_operating. Omit main WACC when this
+Every record you write needs value, observed_at, source_refs and label; currency/amount_unit match
+the plan, as_of is the valuation date, lease_convention is gaap_operating. Omit main WACC when this
 calculation governs. Label sector/yield proxies and differing dates; do not invent a calibration.
-Respect the pinned bridge's finance-lease allocation. If a combined debt subtotal includes
-finance leases and their separate amount is known, financial_debt equals combined debt less
-that amount and finance_lease_debt equals the same reported lease amount, counted once.
-If the split is unknown, use financial_debt at the combined amount with
-allocation:"combined_debt_including_finance_leases" and a label explicitly naming combined debt
-and leases; finance_lease_debt then has value:0, allocation:"included_in_financial_debt" and
-a label explicitly saying zero is an allocation within the combined amount, not an absent liability.
-Both financing records use the same annual balance-sheet measurement date, currency and source
-support. Do not invent a separate lease amount or add leases twice to the canonical bridge.
+Python copies market_equity (quote times reported shares), financial_debt and finance_lease_debt
+from the reported bridge, and, for US-dollar plans with the implied premium in the evidence, the
+risk_free_rate and equity_risk_premium from that source. You supply unlevered_beta,
+pretax_cost_of_debt and marginal_tax_rate; the other records may be omitted.
 Only when no industry in the table fits the business, the unlevered_beta
 record may instead omit value and include calculation:"historical_issuer_cash_corrected" and
 historical_equity_beta:<measured value>, with observed_at, source_refs and label retained.
@@ -555,6 +562,20 @@ def _prepare_source(source):
     raw=source.get('raw_document')
     data=source.get('data',{})
     companyfacts=isinstance(data,dict) and data.get('fact_origin')=='sec_companyfacts'
+    # Reported history and product/segment tables are computed once here, so
+    # the forecast author and writer copy reported figures (2026-11-14: the
+    # writer took Apple's category revenue from unverified web excerpts).
+    # (The company-facts history is computed by normalize_companyfacts itself.)
+    if (isinstance(raw,str) and not companyfacts and isinstance(data,dict) and
+          (source.get('kind')=='regulatory_primary' or source.get('source_tier')=='regulatory_primary')):
+        try:
+            tables=breakdown_tables(inline_breakdown_facts(raw))
+        except (ValueError,TypeError,KeyError,ArithmeticError):
+            tables={}
+        if tables:
+            data=copy.deepcopy(data)
+            data['breakdown_tables']=tables
+            source['data']=data
     if isinstance(raw,str) and not companyfacts:
         facts=inline_facts(raw)
         if facts:
@@ -772,13 +793,36 @@ def _refresh_primary_focus(folder,sources):
     return changed
 
 
+# Unverified web excerpts are bounded: they support attributed outside views and
+# consensus context only. A live run sent 74 KB of them and the memo leaned on
+# them for company facts the filings already contained.
+UNVERIFIED_EXCERPT_CHARS = 2000
+UNVERIFIED_TOTAL_CHARS = 30000
+UNVERIFIED_TIERS = {'search_excerpt_unverified'}
+EVIDENCE_TIER_RULE = (
+    'Evidence tiers. (1) COMPUTED FROM REPORTED FILINGS and PRIMARY AND OFFICIAL SOURCES support company facts and '
+    'numbers. (2) UNVERIFIED WEB EXCERPTS support only attributed outside views, consensus or guidance context and '
+    'qualitative colour; label each such use inline as unverified, and never make an unverified excerpt the only '
+    'support for a company fact, a number used in a comparison, or the valuation conclusion. Prefer the primary source '
+    'whenever both contain a fact.')
+
+
 def _evidence_context(sources):
-    # Excerpts are bounded; full originals remain in the source archive. Never
-    # pass an entire filing, private environment or credentials into a prompt.
-    packed = []
+    """Evidence for model prompts in three labelled tiers.
+
+    Excerpts are bounded; full originals remain in the source archive. Never
+    pass an entire filing, private environment or credentials into a prompt.
+    """
+    computed, primary, unverified, used = [], [], [], 0
     for source in sources:
         row = {key: source[key] for key in ('id','title','url','kind','source_tier','retrieved_at','primary_focus_excerpts') if key in source}
         data = source.get('data')
+        if isinstance(data, dict):
+            if data.get('historical_baseline'):
+                computed.append(render_baseline(data['historical_baseline'], source.get('id')))
+            if data.get('breakdown_tables'):
+                computed.append(render_breakdowns(data['breakdown_tables'], source.get('id')))
+            data = {key: value for key, value in data.items() if key not in ('historical_baseline', 'breakdown_tables')}
         if source.get('kind')=='user_evidence':
             # The public interface already bounds this focused input at 100 KB.
             # Include all accepted text, including corrections near its end.
@@ -793,10 +837,24 @@ def _evidence_context(sources):
                     for fact in row['data']['inline_facts']]
         else:
             text = json.dumps(data, ensure_ascii=False)
-            row['excerpt'] = text[:14000]
-            row['excerpt_truncated'] = len(text) > 14000
-        packed.append(row)
-    return json.dumps(packed, ensure_ascii=False)
+            limit = 14000
+            if source.get('source_tier') in UNVERIFIED_TIERS:
+                limit = max(0, min(UNVERIFIED_EXCERPT_CHARS, UNVERIFIED_TOTAL_CHARS - used))
+                used += min(len(text), limit)
+            if limit >= 200:
+                row['excerpt'] = text[:limit]
+                row['excerpt_truncated'] = len(text) > limit
+            else:
+                row['excerpt_omitted'] = 'Prompt budget for unverified excerpts reached; title and URL only.'
+        (unverified if source.get('source_tier') in UNVERIFIED_TIERS else primary).append(row)
+    parts = []
+    if computed:
+        parts.append('COMPUTED FROM REPORTED FILINGS (Python tables; cite the bracketed source ID):\n' + '\n\n'.join(computed))
+    parts.append('PRIMARY AND OFFICIAL SOURCES:\n' + json.dumps(primary, ensure_ascii=False))
+    if unverified:
+        parts.append('UNVERIFIED WEB EXCERPTS (search results; attributed outside views and consensus context only, '
+                     'labelled unverified where cited):\n' + json.dumps(unverified, ensure_ascii=False))
+    return '\n\n'.join(parts)
 
 
 def _workflow_contract():
@@ -1245,11 +1303,12 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
             'source_refs':[],'reason':'currency code written as the unit label; scale is verified by exact component-revenue reconciliation'})
     if isinstance(operating,dict) and isinstance(locked.get('scenarios'),dict):
         # The operating model governs revenue growth, and in gross-profit mode
-        # EBIT margins: Python derives both. Aggregate arrays that agree with
-        # that arithmetic are redundant and removed (recorded). Arrays that
-        # disagree are the author's stated view of a different path: the plan is
-        # sent back for repair with both paths rather than silently valuing one
-        # and narrating the other (observed live 2026-11-14: 3-4 margin points).
+        # EBIT margins: Python derives both, and stated aggregate arrays are
+        # removed and recorded. Sending a disagreeing plan back for repair was
+        # tried live (2026-11-14): to match its stated margins the author
+        # invented expense levels ($68-96 billion of R&D against $45.8 billion
+        # reported). The detailed drivers now govern; the stated paths and the
+        # largest gap stay in the recorded changes and the assumption notes.
         fields=['growth_rates']+(['ebit_margins'] if operating.get('earnings_mode')=='gross_profit_less_expenses' else [])
         stated={name:{field:scenario[field] for field in fields if field in scenario}
                 for name,scenario in locked['scenarios'].items() if isinstance(scenario,dict)}
@@ -1271,17 +1330,26 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
                                 any(not isinstance(v,(int,float)) or isinstance(v,bool) or abs(v-c)>AGGREGATE_TOLERANCE
                                     for v,c in zip(values,computed))):
                             conflicts.append(f'{name}.{field} stated {_rounded(values)} but the operating_model gives {_rounded(computed)}')
-                if conflicts:
-                    raise ValueError('Aggregate forecast arrays disagree with the operating_model by more than '
-                                     f'{AGGREGATE_TOLERANCE:.1%} in some year: '+'; '.join(conflicts)+
-                                     '. Omit the aggregate arrays and change the component drivers until they produce '
-                                     'the intended path, or adopt the derived path in the rationale. Keep year-1 '
-                                     'gross margins and expense amounts consistent with reported_inputs.operating_reference')
+                gaps={}
+                for name,arrays in stated.items():
+                    for field,values in arrays.items():
+                        computed=derived['scenarios'][name][field]
+                        if isinstance(values,list) and len(values)==len(computed) and all(
+                                isinstance(v,(int,float)) and not isinstance(v,bool) for v in values):
+                            gaps[(name,field)]=max(abs(v-c) for v,c in zip(values,computed))
                 for name,arrays in stated.items():
                     for field in arrays:
+                        disagreed=any(text.startswith(f'{name}.{field} ') for text in conflicts)
                         changes.append({'field':f'scenarios.{name}.{field}','previous':locked['scenarios'][name].pop(field),
                             'pinned':'derived from operating_model','source_refs':[],
-                            'reason':'aggregate forecast array matched the governing operating model within tolerance'})
+                            'reason':('stated array differs from the governing operating model; the drivers govern'
+                                      if disagreed else 'aggregate forecast array matched the governing operating model within tolerance')})
+                if conflicts:
+                    worst=max(gaps.items(),key=lambda item:item[1],default=None)
+                    derived_note=('The plan also stated growth or EBIT-margin paths that its operating drivers do not produce'+
+                                  (f' (largest gap {worst[1]*100:.1f} points, {worst[0][0]} {worst[0][1].replace("_"," ")})' if worst else '')+
+                                  '; the drivers govern and the stated paths are recorded with the input changes.')
+                    locked['_derived_path_note']=derived_note
     opted_in=((isinstance(locked.get('discount_rate'),dict) and
                locked['discount_rate'].get('term_structure')=='glide_to_market_v1') or 'valuation_timing' in locked)
     if apply_conventions or opted_in:
@@ -1289,6 +1357,9 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
     else:
         convention_notes=['This supplied plan keeps its own rate and timing conventions; the market-consistent rate path '
                           'and valuation-date stub apply only when a plan opts in with discount_rate.term_structure or valuation_timing.']
+    derived_note=locked.pop('_derived_path_note',None)
+    if derived_note:
+        convention_notes=[*convention_notes,derived_note]
     if 'entry_policy' in locked:
         # Valuation research only (settled owner decision): no entry thresholds.
         changes.append({'field':'entry_policy','previous':locked.pop('entry_policy'),'pinned':None,'source_refs':[],
@@ -1637,6 +1708,81 @@ def _market_consistency_exhibits(result, currency):
     return lines
 
 
+def computed_summary(plan, result):
+    """The valuation summary Python places at the top of every memo.
+
+    The model writes interpretation around it and never re-types it: a live first
+    draft (2026-11-14) mis-copied years, signs and ranges when it rebuilt these
+    tables itself.
+    """
+    if not result or not result.get('scenarios'):
+        return ''
+    currency=result.get('currency') or (plan or {}).get('currency','')
+    def money(value):
+        return f'{currency} {value:,.2f}'
+    lines=['## Valuation summary (computed by Python)','',
+           '| Scenario | Probability | Value per share | Value / price |','|---|---:|---:|---:|']
+    for name in ('bear','base','bull'):
+        row=result['scenarios'][name]
+        ratio=f'{row["value_to_price"]:.2f}' if 'value_to_price' in row else 'n/a'
+        lines.append(f'| {name.title()} | {row["probability"]:.0%} | {money(row["per_share_value"])} | {ratio} |')
+    weighted=result['weighted_per_share_value']
+    lines.append(f'| Weighted | 100% | {money(weighted)} | '+
+                 (f'{result["weighted_value_to_price"]:.2f} |' if 'weighted_value_to_price' in result else 'n/a |'))
+    dates=(plan or {}).get('input_dates',{}) if isinstance((plan or {}).get('input_dates'),dict) else {}
+    quoted=((dates.get('market_price') or {}).get('observed_at') or '')[:10]
+    if result.get('market_price') is not None:
+        lines+=['',f'Price {money(result["market_price"])}'+(f', observed {quoted}' if quoted else '')+
+                (f'; valuation date {result["valuation_date"]}.' if result.get('valuation_date') else '.')]
+    implied=(result.get('implied_return_at_price') or {}).get('probability_weighted_value') or {}
+    if isinstance(implied.get('implied_return'),(int,float)) and isinstance(implied.get('required_return_flat_equivalent'),(int,float)):
+        lines+=['',f'What the price implies: one flat discount rate of {implied["implied_return"]:.2%} equates the weighted value '
+                   f'with the price; the house cash flows at the house rate path are equivalent to '
+                   f'{implied["required_return_flat_equivalent"]:.2%} (difference {implied["gap_percentage_points"]:.2f} points).']
+    requirements=(result.get('price_requirements') or {}).get('rows') or []
+    if requirements:
+        lines+=['','What the price requires (base case, one input at a time, all others fixed; rows are alternatives):','',
+                '| Input | House | Needed for value = price |','|---|---:|---|']
+        for row in requirements:
+            house=(f'{row["house"]:.1%} in year 1' if row['kind']=='shift' else
+                   f'{row["house"]:.2f}' if row['input']=='sales_to_capital' else f'{row["house"]:.2%}')
+            if row['status']=='solved':
+                needed=(f'{row["needed"]*100:+.1f} points in every year' if row['kind']=='shift' else
+                        f'{row["needed"]:.2f}' if row['input']=='sales_to_capital' else f'{row["needed"]:.2%}')
+            elif row['status']=='not_reachable':
+                limit=(f'{row["at"]:.2f}' if row['input']=='sales_to_capital' else f'{row["at"]:.0%}')
+                needed=f'not reachable; at {limit} the value is {money(row["highest_value"])}'
+            else:
+                needed='not calculated'
+            lines.append(f'| {row["label"]} | {house} | {needed} |')
+    panel=[row for row in ((result.get('convention_panel') or {}).get('rows') or [])
+           if row.get('kind')=='convention' and row.get('status')=='calculated' and row.get('dollar_delta') is not None]
+    if panel:
+        panel=sorted(panel,key=lambda row:-abs(row['dollar_delta']))[:3]
+        lines+=['','Largest convention steps (base case, one change at a time; never added together): '+
+                '; '.join(f'{row["label"].split(" (")[0].split(":")[0]} {money(row["per_share_value"])} ({row["dollar_delta"]:+,.2f})'
+                          for row in panel)+'.']
+    continuity=result.get('forecast_continuity')
+    if continuity:
+        lines+=['',f'Year-1 EBIT margin against the reported {continuity["reported_operating_margin"]:.1%}: '+
+                '; '.join(f'{name} {row["year_one_ebit_margin"]:.1%}' for name,row in continuity['scenarios'].items())+'.']
+    return '\n'.join(lines)+'\n'
+
+
+def _with_summary(memo, plan, result):
+    """Place the computed summary after the memo's title line."""
+    summary=computed_summary(plan,result)
+    if not summary or '## Valuation summary (computed by Python)' in memo:
+        return memo
+    lines=memo.lstrip().split('\n')
+    if lines and lines[0].startswith('# '):
+        head,rest=[lines[0]],lines[1:]
+        while rest and (not rest[0].strip() or rest[0].startswith('**') or rest[0].strip()=='---'):
+            head.append(rest.pop(0))
+        return '\n'.join(head).rstrip()+'\n\n'+summary+'\n'+'\n'.join(rest)
+    return summary+'\n'+memo
+
+
 def _render(memo, sources, gaps, plan, result, state):
     refs = '\n'.join(f'- [{s["id"]}] {s["title"]} — {s.get("url") or "supplied text"}; '
                      f'retrieved {s.get("retrieved_at","not recorded")}' for s in sources)
@@ -1660,7 +1806,7 @@ def _render(memo, sources, gaps, plan, result, state):
         note += (f"\n\nReview model: {latest['review_model']}" +
                  (f"; author model: {latest['author_model']}" if latest.get('author_model') else '') +
                  ('. The same model wrote and reviewed this memo.' if same else '.'))
-    return (memo.rstrip() + '\n' + valuation_section(plan,result) + '\n## Source register\n'+refs+
+    return (_with_summary(memo,plan,result).rstrip() + '\n' + valuation_section(plan,result) + '\n## Source register\n'+refs+
             '\n\n## Evidence limitations\n'+ ('\n'.join('- '+g for g in gaps) or 'No retrieval gap recorded; source completeness still requires review.')+
             '\n\n## Review status\n'+state.get('quality_status','in_progress')+
             '\n\n'+note+
@@ -2192,54 +2338,23 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         'basis':'Deterministic presentation size, not a token count or a promised cost saving. Full saved math remains authoritative.'}
     if not state.get('current_memo'):
         draft=call('full_draft',strong,
-            'Write a complete investment-committee equity research draft for '+ticker+
-            ', '+MEMO_WORDS+', with clear headings. '+SECTIONS+
-            '\nSupport material factual claims with [S#] references. Use the archived evidence and actual '
-            'computed valuation and computed_diagnostics, not model mental arithmetic. Explain what must be true for the market price '
-            'and what invalidates the thesis. Address management, governance, economic reinvestment, SBC/dilution, '
-            'competitive-return fade, taxes, debt/cash/claims, tail risks and decision-changing sensitivities '
-            'to the extent evidence supports them. Missing evidence must narrow the conclusion. '
-            'Tie category demand, pricing/mix, delivery costs and GAAP expenses to the computed operating forecast. '
-            'Compare dated Street estimates on a matching basis and identify the true disagreement; known near-term '
-            'headwinds are not automatically an analytical edge. Engage named outside arguments and disclosed conflicts. '
-            'Trace each load-bearing variant from outside expectation to house array, economic mechanism, '
-            'source/counterevidence, computed conditional value and observation that would change the choice. '
-            'If no differentiated operating view is supported, state that directly and defend the actual '
-            'rate, terminal-duration or capitalization disagreement. Answer the strongest available credible '
-            'opponent on the other side of the saved quote economically; a target panel or isolated rate '
-            'sensitivity does not reproduce an outside model. Missing full-model access does not erase '
-            'the sourced demand, supply, price/mix, margin or capital-allocation argument. '
-            'For material one-off margin benefits/refunds, distinguish reported and normalized baselines '
-            'and show how runoff, input costs, price/mix and expenses reach the forecast, with an explicit '
-            'house residual where components cannot be quantified. Link inventory composition, trade cash '
-            'movements and procurement commitments to margin timing and reinvestment without double counting '
-            'the composite working-capital baseline or ordinary purchase costs. '
-            'Explain the dated discount-rate build, source/proxy limits and separate hurdle if present. '
-            'Use the computed monitoring cases to show dated observation -> changed input -> conditional value, '
-            'without adding correlated cases together. Do not replace missing research with repeated caveats. '
-            'Do not invent transcripts, guidance, consensus, exact fiscal dates, buybacks, or model features. '
-            'This is valuation research only: do not give buy/sell/underweight ratings, portfolio sizing, '
-            'tax or cost-basis advice. State the valuation view and what must be true instead. '
-            'Report value, its relation to the price and sensitivities only. Write value / price, not upside or '
-            'downside; give no entry thresholds, margins of safety, target prices or recommendations. The '
-            'computed implied return at the price describes what the price implies, not a forecast of '
-            'shareholder returns. '
-            'Use plain analytical prose, without slogans, world-class superlatives, or rhetorical contrast formulas. '
-            'Distinguish the house thesis from the competing market-pricing case; genuine falsifiers must '
-            'undermine the house conclusion and change a named forecast or model assumption. '
-            'State reverse-DCF growth as conditional on named fixed assumptions for its explicit forecast horizon, '
-            'not as a unique observed market belief. Use computed_diagnostics for every numerical tax or WACC '
-            'sensitivity and state which other assumptions are fixed. '
-            'Use computed_diagnostics.valuation_multiples to show market versus original exit multiples '
-            'with matched first/final forecast earnings definitions, alongside original-exit and unchanged-entry-'
-            'multiple return diagnostics. Explain the rerating embedded in any return claim; the debt/claims-'
-            'settled FCFF stream is not a forecast of actual common-share payouts. Assess sourced repurchase '
-            'prices against current house value. EPS accretion alone does not prove value creation. Use '
-            'computed repurchase_tests when supplied, distinguish retrospective conditional comparisons '
-            'from forward illustrations, and retire cash/shares once without also paying that cash out. '
-            'The executable valuation table is appended separately; discuss its economics without duplicating '
-            'a conflicting numeric table. Forecasts are house assumptions, not reported facts.\nEvidence:\n'+context+
-            '\nSynthesis:\n'+thesis+'\nValuation:\n'+valuation_context+'\nGaps:\n'+gaps,tokens=MEMO_TOKENS)
+            'Write the prose of an investment-committee equity research memo for '+ticker+', '+MEMO_WORDS+'. '+SECTIONS+
+            '\nPython places the COMPUTED SUMMARY below at the top of the memo and appends the full computed exhibits '
+            'after your text. Do not re-type their tables. Copy any computed or reported figure exactly as it appears in '
+            'the summary, the COMPUTED FROM REPORTED FILINGS tables, the valuation output or a source. Do not calculate '
+            'new figures (growth rates, margins, per-share amounts, differences or sums); if a figure you need is not '
+            'shown, make the point without it. Cite every factual claim with [S#] from the evidence.\n'+
+            EVIDENCE_TIER_RULE+'\n'+RUBRIC+'\n'
+            'Engage the strongest sourced opposing economic case and answer it with evidence; a target or rating alone '
+            'is not an argument. Use the computed monitoring cases, counterfactuals, multiples and repurchase tests for '
+            'those topics and say which inputs they hold fixed; reverse-DCF and implied-return figures are conditional '
+            'on named fixed assumptions, not market beliefs. GAAP EBIT already expenses stock compensation, which is a '
+            'real cost. Missing evidence narrows the conclusion; state each gap once instead of repeating caveats. '
+            'Do not invent transcripts, guidance, consensus, dates or quotes. Valuation research only: no ratings, '
+            'target prices, entry levels, margins of safety, upside or downside, or position sizing; write value / '
+            'price. Plain analytical prose without slogans, superlatives or rhetorical contrast formulas.'
+            '\nCOMPUTED SUMMARY (placed above your text):\n'+computed_summary(plan,result)+
+            '\nEvidence:\n'+context+'\nSynthesis:\n'+thesis+'\nValuation:\n'+valuation_context+'\nGaps:\n'+gaps,tokens=MEMO_TOKENS)
         state['current_memo']=draft
         checkpoint()
     revisions=folder/'revisions';revisions.mkdir(exist_ok=True)

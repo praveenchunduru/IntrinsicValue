@@ -1457,6 +1457,7 @@ def evaluate(plan):
         if discounting['convention'] != GLIDE:
             result['reverse_dcf']['discount_rate'] = _reverse_wacc(actuals, definitions['base'], market, calibration)
         result['implied_return_at_price'] = _implied_return(actuals, definitions, scenarios, weighted, market, discounting)
+        result['price_requirements'] = _price_requirements(actuals, definitions['base'], market)
         result['convention_panel'] = _convention_panel(actuals, definitions, scenarios, discounting)
     if 'beta_cross_checks' in plan:
         result['beta_cross_checks'] = _beta_cross_checks(canonical_plan, actuals, definitions['base'], scenarios['base']['per_share_value'])
@@ -1466,6 +1467,71 @@ def evaluate(plan):
     if 'repurchase_tests' in plan:
         result['computed_diagnostics']['repurchase_tests'] = _repurchase_tests(plan, actuals, scenarios, weighted)
     return result
+
+
+def _price_requirements(actuals, base, market):
+    """What the price requires of one base-case input at a time, every other input fixed.
+
+    A live first draft (2026-11-14) explained the gap to price by adding convention
+    changes that lower value. This exhibit states directly how far each input
+    would have to move for the base value to equal the price, or that no value
+    of it does. Inputs interact; rows are alternatives and are never combined.
+    """
+    def solve(mutate, low, high, samples=48):
+        def gap(x):
+            scenario = copy.deepcopy(base)
+            mutate(scenario, x)
+            try:
+                return _project(actuals, scenario)['per_share_value'] - market
+            except (ValueError, ArithmeticError, KeyError, OverflowError):
+                return None
+        grid = [low + (high - low) * index / samples for index in range(samples + 1)]
+        values = [gap(x) for x in grid]
+        for (left, fl), (right, fr) in zip(zip(grid, values), zip(grid[1:], values[1:])):
+            if fl is None or fr is None or fl * fr > 0:
+                continue
+            for _ in range(50):
+                middle = (left + right) / 2
+                fm = gap(middle)
+                if fm is None:
+                    break
+                if fl * fm <= 0:
+                    right = middle
+                else:
+                    left, fl = middle, fm
+            return {'status': 'solved', 'needed': (left + right) / 2}
+        valid = [(x, value) for x, value in zip(grid, values) if value is not None]
+        if not valid:
+            return {'status': 'not_calculated'}
+        best = max(valid, key=lambda item: item[1])
+        return {'status': 'not_reachable', 'searched': [low, high], 'highest_value': best[1] + market, 'at': best[0]}
+    def shift(field):
+        def mutate(scenario, delta):
+            scenario[field] = [value + delta for value in scenario[field]]
+        return mutate
+    def set_to(field):
+        def mutate(scenario, value):
+            scenario[field] = value
+        return mutate
+    terminal_rate = base.get('terminal_rate', base.get('wacc'))
+    rows = []
+    for name, label, mutate, low, high, house, kind in (
+            ('revenue_growth', 'Revenue growth in every forecast year', shift('growth_rates'), -.2, .3,
+             base['growth_rates'][0], 'shift'),
+            ('ebit_margin', 'EBIT margin in every forecast year', shift('ebit_margins'), -.3, .45,
+             base['ebit_margins'][0], 'shift'),
+            ('terminal_roic', 'Terminal return on new capital', set_to('terminal_roic'),
+             base['terminal_growth'] + .001, 3.0, base['terminal_roic'], 'level'),
+            ('sales_to_capital', 'Sales-to-capital (capital efficiency)', set_to('sales_to_capital'), .25, 40.0,
+             base['sales_to_capital'], 'level'),
+            ('terminal_growth', 'Terminal growth', set_to('terminal_growth'), -.03, terminal_rate - .0101,
+             base['terminal_growth'], 'level')):
+        row = {'input': name, 'label': label, 'kind': kind, 'house': house, **solve(mutate, low, high)}
+        rows.append(row)
+    return {'rows': rows, 'market_price': market,
+            'basis': 'Base scenario. One input changed at a time, all others fixed; "shift" rows add the same number of '
+                     'points to every forecast year. Rows are alternatives, not additive, and carry no probability. '
+                     'A row that is not reachable reports the highest value found in the searched range.'}
 
 
 def _roots(function, low, high, samples=160):

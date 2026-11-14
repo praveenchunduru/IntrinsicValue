@@ -502,7 +502,9 @@ class FullPipelineTests(unittest.TestCase):
             folder=next(Path(directory).glob('AAPL/full-*'))
             state=json.loads((folder/'state.json').read_text())
             visible=(folder/'memo.md').read_text()
-            self.assertIn(state['current_memo'].rstrip(),visible)
+            for line in state['current_memo'].strip().splitlines():
+                self.assertIn(line,visible)
+            self.assertIn('## Valuation summary (computed by Python)',visible)
             self.assertIn('Weighted intrinsic value per share',visible)
             self.assertIn('needs_review',visible)
             self.assertIn('Review is incomplete',visible)

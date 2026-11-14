@@ -322,6 +322,21 @@ def _assessment_answer(text):
     return 'no'
 
 
+# One quality standard, shared by the writer prompt, the deterministic checks and
+# the reviewer. Live reviews (2026-11-14) applied a private, moving standard and
+# never converged; the writer could not see what would be judged.
+RUBRIC = (
+    'Quality standard (shared by the writer, the automatic checks and the reviewer). '
+    'Blocker: a quote or fact not in its cited source; a trading-layer term (rating, target price, entry level, '
+    'margin of safety, upside or downside, position size); a valuation figure that differs from the computed output. '
+    'Major: a company fact or a number supported only by an unverified web excerpt, or an unverified excerpt used '
+    'without an inline "unverified" label; one-at-a-time rows added together or called cumulative; a number that is '
+    'neither in the evidence, nor in the computed output, nor a shown calculation from cited figures; a conclusion '
+    'that names a different driver of the gap to price than the computed tables show; a material claim contradicted '
+    'by primary evidence in the run. Minor: rounding within the last displayed digit; wording, emphasis or structure; '
+    'an omission that does not change the conclusion. Labelled unverified context and rounding are never material.')
+
+
 def assessment_findings(review):
     """Findings implied by the reviewer's own assessment of the conclusion.
 

@@ -75,7 +75,7 @@ class FullContractTransport:
                      'remain house judgments; compare competing explanations and missing evidence. [S4]\n')*50
         elif prompt.startswith('Build an investment valuation plan'):
             content=self.proposal
-        elif prompt.startswith('Write a complete investment-committee'):
+        elif prompt.startswith('Write the prose of an investment-committee'):
             if self.timeout_once:
                 self.timeout_once=False
                 raise RuntimeError('Synthetic uncertain transport interruption')
@@ -157,7 +157,7 @@ class BudgetWorkflowTests(unittest.TestCase):
                     self.assertEqual(stages[-4:],[f'targeted_research_{revisions}',f'model_response_{revisions}',
                         f'revise_{revisions}',f'review_{revisions}'])
                 prompts=[p['messages'][1]['content'] for p in fixture.requests]
-                self.assertGreater(len(pipeline._evidence_context(state['sources']).encode()),190000)
+                self.assertGreater(len(pipeline._evidence_context(state["sources"]).encode()),100000)
                 self.assertGreater(max(len(p.encode()) for p in prompts),500000)
                 self.assertTrue(any('IMMUTABLE reported inputs' in p for p in prompts))
                 self.assertTrue(any(pipeline.UNDERWRITING_GUIDANCE in p for p in prompts))

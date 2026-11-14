@@ -83,6 +83,16 @@ def _observation_key(item):
             str(item.get('fiscal_year') or ''), str(item.get('fiscal_period') or ''))
 
 
+def _baseline(payload, cutoff):
+    """Reported operating history from the full record, as filed by the cutoff."""
+    from .evidence_tables import historical_baseline
+    try:
+        baseline = historical_baseline(payload, as_of=cutoff.isoformat())
+    except (ValueError, TypeError, KeyError, AttributeError, ArithmeticError):
+        return {}
+    return {'historical_baseline': baseline} if baseline['rows'] else {}
+
+
 def normalize_companyfacts(payload, *, identity, source_id=None, as_of=None, entity_record_complete=False):
     """Return one regulatory-primary source after checking directory identity.
 
@@ -229,6 +239,7 @@ def normalize_companyfacts(payload, *, identity, source_id=None, as_of=None, ent
             'fact_origin': 'sec_companyfacts', 'canonical_payload_sha256': canonical_hash,
             'reported_facts': selected,
             'financial_context_table': context_table,
+            **_baseline(payload, cutoff),
             'reported_fact_note': ('Official SEC standardized-taxonomy entity-wide observations. Original inline context IDs and '
                                    'dimension XML are not provided by this API. Per-record filing dates and accessions remain explicit; '
                                    'missing tags remain unknown, and filing fiscal-year/frame labels do not replace fact periods.'),

@@ -199,7 +199,17 @@ _FOCUS_HEADINGS = (
      r'(?im)^[ \t]*(?:provision\s+for\s+income\s+taxes|income\s+tax\s+expense)(?:\s+and\s+effective\s+tax\s+rate)?[ \t]*$'),
     ('income-tax note disclosures', 1800, 1,
      r'(?im)^[ \t]*(?:note\s+\d+[a-z]?\s*[\u2013\u2014\-:.]\s*)?(?:income\s+taxes|taxation)[ \t]*$'),
+    # Margin, inventory, commitment and buyback disclosures carry the facts a
+    # memo needs; without them a live AAPL memo quoted them from web excerpts.
+    ('gross margin drivers', 1600, 1,
+     r'(?im)^[ \t]*(?:(?:products?|services?)\s+(?:and\s+services\s+)?)?gross\s+margins?[ \t]*$'),
+    ('inventories', 1000, 1, r'(?im)^[ \t]*(?:note\s+\d+[a-z]?\s*[\u2013\u2014\-:.]\s*)?inventor(?:y|ies)[ \t]*$'),
+    ('purchase commitments', 1200, 1,
+     r'(?im)^[ \t]*(?:(?:manufacturing|unconditional)\s+)?purchase\s+(?:obligations|commitments)[ \t]*$'),
+    ('share repurchases', 1400, 1,
+     r'(?im)^[ \t]*(?:(?:share|stock)\s+repurchase\s+programs?|issuer\s+purchases\s+of\s+equity\s+securities)[ \t]*$'),
 )
+_FOCUS_LIMIT = 12000
 
 
 def _has_prose_sentence(text):
@@ -231,8 +241,9 @@ def archive_focus_excerpts(document):
 
     Offsets are Unicode character indices in ``html_to_text(document)``; hashes
     use UTF-8 for both the decoded archive and cleaned text. At most 6,000 text
-    characters are returned. This is selected evidence, not full review of the
-    archive, and no heading or missing disclosure is invented. Substantive
+    characters are returned (the limit is ``_FOCUS_LIMIT``). This is selected evidence, not full review of the
+    archive, and no heading or missing disclosure is invented. Margin, inventory,
+    purchase-commitment and repurchase disclosures are selected the same way. Substantive
     repeated headings rank above contents entries, including later MD&A text.
     """
     if not isinstance(document, str):
@@ -260,6 +271,9 @@ def archive_focus_excerpts(document):
                 score += 8 * bool(re.search(r'\b(?:r\s*&\s*d|research\s+(?:and|&)\s+development)\s+(?:expense|cost|spending)', nearby, re.I))
                 score += 3 * bool(re.search(r'\b(?:primarily|due to|driven by|attributable|headcount)', nearby, re.I))
                 score += bool(re.search(r'\b(?:increased?|decreased?|higher|lower|compared)\b', nearby, re.I))
+            elif not label.startswith('income-tax'):
+                score += 3 * bool(re.search(r'\d', nearby))
+                score += 2 * bool(re.search(r'\b(?:primarily|due to|driven by|compared|percent|million|billion)\b', nearby, re.I))
             else:
                 score += 3 * bool(re.search(r'\b(?:effective tax rate|one.time|tax charge|tax provision|deferred tax|valuation allowance)\b', following, re.I))
                 score += 2 * bool(re.match(r'[ \t]*note\s+\d+', heading, re.I))
@@ -290,7 +304,7 @@ def archive_focus_excerpts(document):
     cleaned_hash = hashlib.sha256(cleaned.encode()).hexdigest()
     excerpts, used = [], 0
     for start, end, labels in merged:
-        end = min(end, start + 6000 - used)
+        end = min(end, start + _FOCUS_LIMIT - used)
         if end <= start:
             break
         value = cleaned[start:end]
@@ -574,11 +588,16 @@ class _InlineFactParser(HTMLParser):
         local = tag.split(':')[-1]
         if local == 'context':
             self.context = {'id': attrs.get('id'), 'period': {}, 'has_dimensions': False,
-                            'entity_identifier': None}
+                            'entity_identifier': None, 'members': {}}
         elif local == 'unit':
             self.unit = {'id': attrs.get('id'), 'simple': [], 'numerator': [], 'denominator': []}
         elif self.context is not None and local in {'explicitmember', 'typedmember'}:
             self.context['has_dimensions'] = True
+            if local == 'explicitmember' and isinstance(attrs.get('dimension'), str):
+                self.captures.append({'tag': tag, 'kind': 'member', 'dimension': attrs['dimension'],
+                                      'target': self.context, 'parts': []})
+            elif local == 'typedmember':
+                self.context['members'][str(attrs.get('dimension'))] = None
         if self.context is not None and local in {'instant', 'startdate', 'enddate', 'identifier'}:
             self.captures.append({'tag': tag, 'kind': local, 'target': self.context, 'parts': []})
         if self.unit is not None and local in {'unitnumerator', 'unitdenominator'}:
@@ -617,6 +636,8 @@ class _InlineFactParser(HTMLParser):
             target, kind = capture['target'], capture['kind']
             if kind == 'measure':
                 target[capture['area']].append(value)
+            elif kind == 'member':
+                target['members'][capture['dimension']] = value
             elif kind == 'identifier':
                 target['entity_identifier'] = value
             else:
@@ -637,6 +658,71 @@ class _InlineFactParser(HTMLParser):
                 self.facts.append(fact)
         if self._inline_tag(tag, 'exclude') and self.exclude_depth:
             self.exclude_depth -= 1
+
+
+# Axes whose members break a reported line into products, segments or regions.
+# Facts on any other axis (fair-value levels, equity components, award types)
+# are not used for these tables.
+BREAKDOWN_AXES = {'srt:ProductOrServiceAxis': 'product_or_service',
+                  'us-gaap:StatementBusinessSegmentsAxis': 'segment',
+                  'srt:StatementGeographicalAxis': 'geography'}
+# A second axis that only says the member is an operating segment does not
+# change what is measured.
+_NEUTRAL_MEMBERS = {('srt:ConsolidationItemsAxis', 'us-gaap:OperatingSegmentsMember')}
+
+
+def inline_breakdown_facts(document):
+    """Reported facts broken down by product/service, segment or geography.
+
+    Uses the same parser, concepts and number rules as ``inline_facts``. A fact
+    qualifies only when its context has exactly one breakdown axis (plus at most
+    a neutral operating-segment qualifier) and a parsed numeric value. Nothing is
+    summed or inferred here.
+    """
+    from datetime import date
+    if not isinstance(document, str):
+        raise ValueError('Inline XBRL document must be decoded text')
+    if len(document.encode()) > MAX_DOCUMENT_BYTES:
+        raise ValueError('Inline XBRL document exceeds the 3 MB source limit')
+    parser = _InlineFactParser(document)
+    parser.feed(document)
+    result, seen = [], set()
+    for frame in parser.facts:
+        attrs = frame['attrs']
+        context = parser.contexts.get(attrs.get('contextref'))
+        unit = parser.units.get(attrs.get('unitref'))
+        if context is None or unit is None or not context['has_dimensions']:
+            continue
+        members = {axis: member for axis, member in context.get('members', {}).items()
+                   if (axis, member) not in _NEUTRAL_MEMBERS}
+        if len(members) != 1:
+            continue
+        (axis, member), = members.items()
+        if axis not in BREAKDOWN_AXES or not isinstance(member, str) or not member:
+            continue
+        period = context['period']
+        try:
+            start, end = date.fromisoformat(period.get('start_date', '')), date.fromisoformat(period.get('end_date', ''))
+        except ValueError:
+            continue
+        if start > end:
+            continue
+        token = ''.join(frame['parts']).strip()
+        value, exact, status = _inline_number(token, attrs)
+        if status != 'parsed' or value is None:
+            continue
+        measures = unit['simple'] if len(unit['simple']) == 1 and not unit['numerator'] else []
+        if len(measures) != 1 or not re.fullmatch(r'iso4217:[A-Z]{3}', measures[0]):
+            continue
+        key = (attrs['name'], axis, member, period.get('start_date'), period.get('end_date'), exact)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append({'concept': attrs['name'], 'axis': BREAKDOWN_AXES[axis], 'axis_concept': axis,
+                       'member': member, 'start_date': period['start_date'], 'end_date': period['end_date'],
+                       'unit': measures[0], 'normalized_value': value, 'normalized_decimal': exact,
+                       'decimals': attrs.get('decimals'), 'context_ref': attrs.get('contextref')})
+    return result
 
 
 def inline_facts(document):

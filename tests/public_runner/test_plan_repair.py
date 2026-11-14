@@ -152,13 +152,18 @@ class OperatingUnitLabelTests(unittest.TestCase):
         self.assertEqual(evaluate(locked)['weighted_per_share_value'], evaluate(self.lock(inputs())[0])['weighted_per_share_value'])
         self.assertEqual(proposal['operating_model']['amount_unit'], 'USD')  # The proposal is not mutated.
 
-    def test_aggregate_arrays_that_disagree_with_the_operating_model_go_back_for_repair(self):
-        # Live run 2026-11-14: stated margins 3-4 points below the component
-        # arithmetic were silently replaced while the memo narrated them.
+    def test_aggregate_arrays_that_disagree_with_the_operating_model_yield_to_the_drivers(self):
+        # Live runs 2026-11-14: repairs asked to reconcile a stated margin path
+        # with the drivers invented expense levels. The drivers now govern; the
+        # stated path is recorded and disclosed in the assumption notes.
         proposal = inputs()
         proposal['scenarios']['base'].update(growth_rates=[0]*5, ebit_margins=[.34]*5)
-        with self.assertRaisesRegex(ValueError, r'base\.ebit_margins stated \[0\.34.*operating_model gives \[0\.37'):
-            self.lock(proposal)
+        locked, changes = self.lock(copy.deepcopy(proposal))
+        self.assertNotIn('ebit_margins', locked['scenarios']['base'])
+        reasons = {change['field']: change['reason'] for change in changes}
+        self.assertIn('the drivers govern', reasons['scenarios.base.ebit_margins'])
+        self.assertIn('operating drivers do not produce', locked['assumptions_label'])
+        self.assertNotIn('_derived_path_note', locked)
         proposal['scenarios']['base']['ebit_margins'] = [.37, .37, .37, .37, .3749]
         locked, changes = self.lock(proposal)
         self.assertNotIn('ebit_margins', locked['scenarios']['base'])
