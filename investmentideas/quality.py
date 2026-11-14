@@ -297,7 +297,20 @@ def parse_review(text, memo=None, *, anchor_embellished=False):
     expected = 'revise' if any(item['severity'] in {'blocker', 'major'} for item in findings) else 'pass'
     if verdict != expected:
         raise ValueError('Review verdict contradicts its unresolved blocker/major findings')
-    return {'verdict': verdict, 'findings': findings}
+    parsed = {'verdict': verdict, 'findings': findings}
+    # The reviewer's statement of the conclusion's central weakness is kept when
+    # well formed. It is reported to the reader; it is not a finding by itself.
+    weakness = review.get('central_weakness')
+    if (isinstance(weakness, dict) and all(isinstance(weakness.get(key), str) and weakness[key].strip()
+                                           for key in ('claim', 'computed_effect', 'memo_handles_it')) and
+            weakness['memo_handles_it'].strip().lower() in {'yes', 'partly', 'no'}):
+        parsed['central_weakness'] = {'claim': weakness['claim'].strip()[:1200],
+                                      'computed_effect': weakness['computed_effect'].strip()[:600],
+                                      'memo_handles_it': weakness['memo_handles_it'].strip().lower()}
+    explained = review.get('gap_explained')
+    if isinstance(explained, str) and explained.strip().lower() in {'yes', 'partly', 'no'}:
+        parsed['gap_explained'] = explained.strip().lower()
+    return parsed
 
 
 def _body(memo):

@@ -172,6 +172,22 @@ class StructuredReviewTests(unittest.TestCase):
         self.assertEqual(parsed['current_excerpt'],'billion liability is approximately $0.89 per share.')
         self.assertNotIn('12.921',parsed['current_excerpt'])
 
+    def test_central_weakness_and_gap_statement_are_kept_only_when_well_formed(self):
+        row=finding(); row['current_excerpt']='Revenue is 100 [S1].'
+        review={'verdict':'revise','findings':[row],'gap_explained':'Partly',
+                'central_weakness':{'claim':'Terminal growth below the rate the ERP assumes.',
+                                    'computed_effect':'+25 per share','memo_handles_it':'no'}}
+        parsed=parse_review(json.dumps(review),memo=MEMO)
+        self.assertEqual(parsed['central_weakness']['memo_handles_it'],'no')
+        self.assertEqual(parsed['gap_explained'],'partly')
+        for broken in ({'claim':'x','computed_effect':'y','memo_handles_it':'maybe'},
+                       {'claim':'','computed_effect':'y','memo_handles_it':'yes'}, 'text'):
+            review['central_weakness']=broken; review['gap_explained']='unclear'
+            with self.subTest(broken=broken):
+                parsed=parse_review(json.dumps(review),memo=MEMO)
+                self.assertNotIn('central_weakness',parsed)
+                self.assertNotIn('gap_explained',parsed)
+
     def test_quote_normalization_preserves_balancing_boundaries_and_code_runs(self):
         examples = [
             ('**bold** __bold__ *italic* _italic_', 'bold bold italic italic'),

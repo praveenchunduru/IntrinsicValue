@@ -134,11 +134,32 @@ class OperatingUnitLabelTests(unittest.TestCase):
         self.assertEqual(evaluate(locked)['weighted_per_share_value'], evaluate(self.lock(inputs())[0])['weighted_per_share_value'])
         self.assertEqual(proposal['operating_model']['amount_unit'], 'USD')  # The proposal is not mutated.
 
+    def test_aggregate_arrays_that_disagree_with_the_operating_model_go_back_for_repair(self):
+        # Live run 2026-11-14: stated margins 3-4 points below the component
+        # arithmetic were silently replaced while the memo narrated them.
+        proposal = inputs()
+        proposal['scenarios']['base'].update(growth_rates=[0]*5, ebit_margins=[.34]*5)
+        with self.assertRaisesRegex(ValueError, r'base\.ebit_margins stated \[0\.34.*operating_model gives \[0\.37'):
+            self.lock(proposal)
+        proposal['scenarios']['base']['ebit_margins'] = [.37, .37, .37, .37, .3749]
+        locked, changes = self.lock(proposal)
+        self.assertNotIn('ebit_margins', locked['scenarios']['base'])
+        self.assertEqual({change['field'] for change in changes},
+                         {'scenarios.base.growth_rates', 'scenarios.base.ebit_margins'})
+
+    def test_entry_policy_is_dropped_and_recorded(self):
+        proposal = inputs()
+        proposal['entry_policy'] = {'basis': 'base', 'margin_of_safety': .2, 'label': 'x', 'rationale': 'y'}
+        locked, changes = self.lock(proposal)
+        self.assertNotIn('entry_policy', locked)
+        self.assertEqual([change['field'] for change in changes], ['entry_policy'])
+
     def test_duplicates_of_governing_inputs_and_timestamps_are_normalized_and_recorded(self):
         reference = evaluate(self.lock(inputs())[0])
         proposal = inputs()
+        # Fixture components: zero growth, EBIT (700*.4 + 300*.8 - 150) / 1000 = 37%.
         for scenario in proposal['scenarios'].values():
-            scenario.update(growth_rates=[.5]*5, ebit_margins=[.9]*5, wacc=.2)
+            scenario.update(growth_rates=[0]*5, ebit_margins=[.37]*5, wacc=.2)
         proposal['discount_rate']['market_equity']['observed_at'] = '2026-01-02T21:00:01+00:00'
         untouched = copy.deepcopy(proposal)
         locked, changes = self.lock(proposal)

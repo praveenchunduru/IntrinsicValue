@@ -979,7 +979,9 @@ class ComputedMemoExhibitTests(unittest.TestCase):
         self.assertIn('9.60×',text)
         self.assertIn('7.50×',text)
         self.assertIn('7.81%',text)
-        self.assertIn('USD 11.85',text)  # Weighted15.8 * explicitly selected75%.
+        # Valuation research only: an entry threshold is never rendered, even if a plan carries one.
+        self.assertNotIn('USD 11.85',text)
+        self.assertNotIn('entry threshold',text.lower())
         self.assertIn('USD 15.58',text)  # Remaining1.48bn / remaining95m shares.
         self.assertIn('5,000,000',text)
         self.assertIn('first explicit forecast year',text)

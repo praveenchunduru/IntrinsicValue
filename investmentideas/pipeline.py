@@ -30,14 +30,29 @@ from .macro import gather_us_calibration
 from .market_beta import gather_weekly_beta
 from .prompt_context import valuation_context as render_valuation_context
 from .primary_debt import classify_primary_debt
+from .operating import derive as derive_operating
 from .valuation import evaluate, materialize, save_valuation
 
 VERSION = 'full-2'
 DEFAULT_BUDGET = 10.0
-SECTIONS = '''Executive valuation conclusion; variant thesis and what the market price implies;
-business economics and industry/competition; management and capital allocation; historical
-financial quality; operating forecast and valuation; bear/base/bull scenarios; catalysts;
-risks and disconfirming evidence; evidence gaps and unresolved questions.'''
+SECTIONS = '''Sections, in this order: (1) Valuation conclusion: house value per share, the price,
+value / price, and the one assumption family that carries most of the difference. (2) What the
+price implies, from computed output only: the implied return at the price for each scenario and
+weighted (implied_return_at_price) beside the required return, and the growth the price needs.
+(3) Where the difference comes from: the computed convention_panel and calibration comparisons,
+largest step first; say plainly when the difference rests on the discount rate or terminal
+assumptions rather than on the operating forecast. (4) Variant thesis aimed at the largest
+computed step: why the market is wrong on that step, with evidence; restating house forecasts is
+not a variant thesis, and if the operating forecast is close to consensus say so. (5) Business
+economics, industry and competition. (6) Management and capital allocation. (7) Historical
+financial quality. (8) Operating forecast against dated consensus on a matching basis. (9)
+Bear/base/bull scenarios and the basis for their weights. (10) Observations that would change the
+value. (11) Risks, including evidence that the valuation framework rather than the forecast is
+wrong. (12) Evidence gaps and unresolved questions.'''
+# Memo stages rewrite the full memo. A live revision overran a 14,000-token
+# limit as the memo grew, so the limit leaves room above the word budget.
+MEMO_TOKENS = 22000
+MEMO_WORDS = 'at most about 4,500 words including exhibits; a revision replaces text rather than adding to it'
 FORECAST_SCHEMA = """Return ONLY compact JSON for house forecasts:
 {"assumptions_label":"House forecasts, not reported facts or guidance",
  "scenario_rationales":{"bear":"Evidence and economic mechanism [S#]","base":"...","bull":"..."},
@@ -116,12 +131,8 @@ source_refs and exactly one of counterfactual(name) or calibration_comparison(na
 Python supplies each conditional value and change.
 These are analyst-selected decision thresholds, not company guidance or automatic forecasts.
 Justify reinvestment and terminal returns; avoid a hidden terminal cash discontinuity.
-For a meaningful positive valuation, select an explicit conditional research entry rule:
-"entry_policy":{"basis":"base"|"weighted","margin_of_safety":<decimal from zero to below one>,
-"label":"House valuation entry rule","rationale":"Why this valuation basis and discount are appropriate"}.
-These four fields are exact. Python computes reference value * (1 - margin_of_safety).
-Choose and justify the discount; zero is allowed and no 20% or other policy is supplied by default.
-This is a conditional valuation threshold, not personal trading, sizing or tax advice.
+This is valuation research only: do not supply entry thresholds, margins of safety or other
+trading rules.
 Optional "repurchase_tests":[{"name":"historical_price_comparison","amount":<whole currency units>,
 "price":<currency per ordinary share>,"source_refs":["S1"],"label":"Exact period/definition and conditional scope",
 "interpretation":"historical_retrospective_conditional"|"forward_conditional_illustration"}].
@@ -144,11 +155,16 @@ operating view is supported, say so and defend the actual rate/terminal/valuatio
 Represent a sourced strongest opposing economic case coherently; a broker target alone or an
 isolated rate substitution does not reconstruct its model. Do not copy issuer-specific examples.
 '''
-REVIEW_SCHEMA = '''Return ONLY {"verdict":"pass"|"revise","findings":[{"id":"F1",
+REVIEW_SCHEMA = '''Return ONLY {"verdict":"pass"|"revise","central_weakness":{"claim":"the one assumption or
+convention that, if wrong, most changes the conclusion","computed_effect":"its value effect from the
+computed output, or not computed","memo_handles_it":"yes"|"partly"|"no"},"gap_explained":"yes"|"partly"|"no",
+"findings":[{"id":"F1",
 "severity":"blocker"|"major"|"minor","issue":"precise defect and location",
 "source_refs":["S1"],"current_excerpt":"exact quote from the CURRENT draft, at most 1200 characters","fix":"specific correction or evidence needed"}]}.
 Findings are unresolved; use revise if any blocker/major exists. Use pass only when no material
-finding remains. Do not manufacture defects to fill a quota, and verify every accusation
+finding remains. If memo_handles_it or gap_explained is not "yes", include a blocker or major finding
+for it. Severity follows the computed value effect: blocker when it changes the conclusion or the
+main source of the difference between value and price; minor when under 2% of base value. Do not manufacture defects to fill a quota, and verify every accusation
 against the actual draft. Valid source IDs alone do not prove a claim is supported.'''
 
 
@@ -175,7 +191,7 @@ PLAN_FIELD_RULES = ('\nField rules: unknown fields are rejected, so use only the
                     'mode). With discount_rate, scenarios omit wacc. Every observed_at is a YYYY-MM-DD date.')
 # Diagnostics a plan may carry. Each is computed separately from the scenario
 # values, so an invalid one can be left out without changing the valuation.
-OPTIONAL_PLAN_SECTIONS = ('counterfactuals','calibration_comparisons','monitoring','repurchase_tests','entry_policy')
+OPTIONAL_PLAN_SECTIONS = ('counterfactuals','calibration_comparisons','monitoring','repurchase_tests')
 
 
 def _omit_invalid_optional_sections(plan,validated):
@@ -633,7 +649,7 @@ def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
         valuation = render_valuation_context(state['plan'],state['valuation'])
     if not supplied_memo:
         add('full_draft',strong,'Write a complete investment-committee draft.\nEvidence:\n'+
-            context+'\nValuation:\n'+valuation,14000)
+            context+'\nValuation:\n'+valuation,MEMO_TOKENS)
     add('review_'+str(state['iteration']),reviewer,'Independently audit the complete memo.\n'+
         REVIEW_SCHEMA+'\nEvidence:\n'+context+'\nValuation:\n'+valuation+
         '\nDraft:\n'+(draft or state.get('current_memo','')),12000)
@@ -662,6 +678,13 @@ def _fetch_calibration_bytes(url):
     if len(raw) > 3000000:
         raise ValueError('Calibration source exceeds 3 MB')
     return raw
+
+
+AGGREGATE_TOLERANCE=.005
+
+
+def _rounded(values):
+    return [round(v,4) if isinstance(v,(int,float)) and not isinstance(v,bool) else v for v in values] if isinstance(values,list) else values
 
 
 def _lock_plan(plan, sources):
@@ -713,16 +736,46 @@ def _lock_plan(plan, sources):
             'source_refs':[],'reason':'currency code written as the unit label; scale is verified by exact component-revenue reconciliation'})
     if isinstance(operating,dict) and isinstance(locked.get('scenarios'),dict):
         # The operating model governs revenue growth, and in gross-profit mode
-        # EBIT margins: Python derives both. A model that also writes aggregate
-        # arrays rarely matches its own component arithmetic, and a mismatch
-        # used to reject the whole plan. The redundant arrays are removed and
-        # recorded, never blended with the derived values.
-        derived=['growth_rates']+(['ebit_margins'] if operating.get('earnings_mode')=='gross_profit_less_expenses' else [])
-        for name,scenario in locked['scenarios'].items():
-            for field in derived:
-                if isinstance(scenario,dict) and field in scenario:
-                    changes.append({'field':f'scenarios.{name}.{field}','previous':scenario.pop(field),'pinned':'derived from operating_model',
-                        'source_refs':[],'reason':'aggregate forecast array duplicated the governing operating model'})
+        # EBIT margins: Python derives both. Aggregate arrays that agree with
+        # that arithmetic are redundant and removed (recorded). Arrays that
+        # disagree are the author's stated view of a different path: the plan is
+        # sent back for repair with both paths rather than silently valuing one
+        # and narrating the other (observed live 2026-11-14: 3-4 margin points).
+        fields=['growth_rates']+(['ebit_margins'] if operating.get('earnings_mode')=='gross_profit_less_expenses' else [])
+        stated={name:{field:scenario[field] for field in fields if field in scenario}
+                for name,scenario in locked['scenarios'].items() if isinstance(scenario,dict)}
+        if any(stated.values()):
+            trial=copy.deepcopy(locked)
+            for scenario in trial['scenarios'].values():
+                for field in fields:
+                    scenario.pop(field,None)
+            try:
+                derived=derive_operating(trial)
+            except (ValueError,KeyError,TypeError):
+                derived=None
+            if derived is not None:
+                conflicts=[]
+                for name,arrays in stated.items():
+                    for field,values in arrays.items():
+                        computed=derived['scenarios'][name][field]
+                        if (not isinstance(values,list) or len(values)!=len(computed) or
+                                any(not isinstance(v,(int,float)) or isinstance(v,bool) or abs(v-c)>AGGREGATE_TOLERANCE
+                                    for v,c in zip(values,computed))):
+                            conflicts.append(f'{name}.{field} stated {_rounded(values)} but the operating_model gives {_rounded(computed)}')
+                if conflicts:
+                    raise ValueError('Aggregate forecast arrays disagree with the operating_model by more than '
+                                     f'{AGGREGATE_TOLERANCE:.1%} in some year: '+'; '.join(conflicts)+
+                                     '. Omit the aggregate arrays and change the component drivers until they produce '
+                                     'the intended path, or adopt the derived path in the rationale')
+                for name,arrays in stated.items():
+                    for field in arrays:
+                        changes.append({'field':f'scenarios.{name}.{field}','previous':locked['scenarios'][name].pop(field),
+                            'pinned':'derived from operating_model','source_refs':[],
+                            'reason':'aggregate forecast array matched the governing operating model within tolerance'})
+    if 'entry_policy' in locked:
+        # Valuation research only (settled owner decision): no entry thresholds.
+        changes.append({'field':'entry_policy','previous':locked.pop('entry_policy'),'pinned':None,'source_refs':[],
+            'reason':'entry thresholds and margins of safety are outside this valuation-only research'})
     rate=locked.get('discount_rate')
     if isinstance(rate,dict):
         # Dated rate inputs govern WACC, so a scenario WACC beside them is a
@@ -837,16 +890,6 @@ def _computed_exhibits(result,currency):
             'The return comparison holds operating cash flows, opening financing/claims and shares fixed and changes only the exit valuation. '
             'All annual FCFF is distributed under the debt/claims-settled diagnostic at integer model years; this is not a common-share payout, '
             'ongoing buyback or stock-price-return forecast. Multiple/return alternatives do not change the house DCF or scenario weights.']
-    entry=diagnostics.get('entry_policy')
-    if isinstance(entry,dict):
-        policy=entry['policy']
-        price=entry.get('conditional_entry_price')
-        threshold=f'{currency} {price:,.2f}' if price is not None else 'not meaningful for this reference value'
-        lines += ['', '### Conditional research entry threshold', '',
-            f'{clean(policy["label"])}: **{threshold}**, using {clean(policy["basis"])} value and '
-            f'the explicitly selected {policy["margin_of_safety"]:.1%} valuation discount. '+clean(policy['rationale']),
-            '', 'This is a conditional house valuation rule, separate from a WACC reset or promised holding-period return. '
-                'No discount is supplied by default; this is not personal trading or portfolio advice.']
     repurchases=diagnostics.get('repurchase_tests')
     if isinstance(repurchases,list) and repurchases:
         lines += ['', '### Conditional repurchase economics', '',
@@ -957,12 +1000,22 @@ def _render(memo, sources, gaps, plan, result, state):
     if not note:
         note = ('No currently recorded material finding. This is a model assessment, not certification.'
                 if state.get('complete') else 'Review is incomplete; unresolved issues have not been determined.')
+    latest = state['review_history'][-1] if state.get('review_history') else {}
+    weakness = latest.get('central_weakness')
+    if isinstance(weakness, dict):
+        note += (f"\n\nReviewer's central weakness: {weakness['claim']} Computed effect: {weakness['computed_effect']}. "
+                 f"Memo handles it: {weakness['memo_handles_it']}. Difference between value and price explained: "
+                 f"{latest.get('gap_explained','not stated')}.")
+    if latest.get('review_model'):
+        same = latest.get('review_model') == latest.get('author_model')
+        note += (f"\n\nReview model: {latest['review_model']}" +
+                 (f"; author model: {latest['author_model']}" if latest.get('author_model') else '') +
+                 ('. The same model wrote and reviewed this memo.' if same else '.'))
     return (memo.rstrip() + '\n' + valuation_section(plan,result) + '\n## Source register\n'+refs+
             '\n\n## Evidence limitations\n'+ ('\n'.join('- '+g for g in gaps) or 'No retrieval gap recorded; source completeness still requires review.')+
             '\n\n## Review status\n'+state.get('quality_status','in_progress')+
             '\n\n'+note+
-            '\n\nThis portable research draft is separate from the OAuth system’s signed publications. '
-            'Software checks and model reviews do not establish investment truth or forecast accuracy.\n')
+            '\n\nSoftware checks and model reviews do not establish investment truth or forecast accuracy.\n')
 
 
 def run(ticker, key, *, profile='balanced', budget=DEFAULT_BUDGET, directory='research-output', evidence='',
@@ -1030,10 +1083,12 @@ def run(ticker, key, *, profile='balanced', budget=DEFAULT_BUDGET, directory='re
             # used by its old stage keys, which did not include that field.
             marker.setdefault('legacy_stage_system_sha256',_digest(core.SYSTEM))
         core.save(marker_path,marker)
-        return _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,review_notes,extra_sources or [],counterfactuals,draft,review_model,source_snapshot,forecast_plan)
+        default_reviewer=core.REVIEWERS.get(profile,strong) if not strong_model else strong
+        return _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,review_notes,extra_sources or [],counterfactuals,draft,review_model,source_snapshot,forecast_plan,default_reviewer=default_reviewer)
 
 
-def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,review_notes,extra_sources,counterfactuals,draft,review_model,source_snapshot=None,forecast_plan=None):
+def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,review_notes,extra_sources,counterfactuals,draft,review_model,source_snapshot=None,forecast_plan=None,default_reviewer=None):
+    default_reviewer=default_reviewer or strong
     notes_reopened=False
     state_path=folder/'state.json'
     state=json.loads(state_path.read_text()) if state_path.exists() else {
@@ -1074,8 +1129,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         if draft is None:
             state.pop('current_memo',None)
     previous_reviewer=state.get('review_model')
-    reviewer=review_model or previous_reviewer or strong
-    if reviewer!=state.get('review_model',strong):
+    reviewer=review_model or previous_reviewer or default_reviewer
+    if reviewer!=state.get('review_model',default_reviewer):
         if state.get('complete'):
             state['iteration']+=1
             notes_reopened=True
@@ -1480,7 +1535,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
     if not state.get('current_memo'):
         draft=call('full_draft',strong,
             'Write a complete investment-committee equity research draft for '+ticker+
-            ', roughly 3000-4500 words plus useful exhibits, with a concise decision-first opening and clear headings. '+SECTIONS+
+            ', '+MEMO_WORDS+', with clear headings. '+SECTIONS+
             '\nSupport material factual claims with [S#] references. Use the archived evidence and actual '
             'computed valuation and computed_diagnostics, not model mental arithmetic. Explain what must be true for the market price '
             'and what invalidates the thesis. Address management, governance, economic reinvestment, SBC/dilution, '
@@ -1507,11 +1562,10 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'Do not invent transcripts, guidance, consensus, exact fiscal dates, buybacks, or model features. '
             'This is valuation research only: do not give buy/sell/underweight ratings, portfolio sizing, '
             'tax or cost-basis advice. State the valuation view and what must be true instead. '
-            'When computed entry_policy is meaningful, state its numerical conditional research entry price, '
-            'valuation basis, selected discount and rationale. This is a house research threshold, not a '
-            'personal trading instruction or promised return. Do not invent a 20% discount or hide the '
-            'entry discipline behind only "wait for a lower price". If the policy/value is unavailable, '
-            'explain that precise gap rather than inventing a threshold. '
+            'Report value, its relation to the price and sensitivities only. Write value / price, not upside or '
+            'downside; give no entry thresholds, margins of safety, target prices or recommendations. The '
+            'computed implied return at the price describes what the price implies, not a forecast of '
+            'shareholder returns. '
             'Use plain analytical prose, without slogans, world-class superlatives, or rhetorical contrast formulas. '
             'Distinguish the house thesis from the competing market-pricing case; genuine falsifiers must '
             'undermine the house conclusion and change a named forecast or model assumption. '
@@ -1527,7 +1581,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'from forward illustrations, and retire cash/shares once without also paying that cash out. '
             'The executable valuation table is appended separately; discuss its economics without duplicating '
             'a conflicting numeric table. Forecasts are house assumptions, not reported facts.\nEvidence:\n'+context+
-            '\nSynthesis:\n'+thesis+'\nValuation:\n'+valuation_context+'\nGaps:\n'+gaps,tokens=14000)
+            '\nSynthesis:\n'+thesis+'\nValuation:\n'+valuation_context+'\nGaps:\n'+gaps,tokens=MEMO_TOKENS)
         state['current_memo']=draft
         checkpoint()
     revisions=folder/'revisions';revisions.mkdir(exist_ok=True)
@@ -1557,11 +1611,12 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'Preserve the genuine outside-to-house variant bridge or an honest admission of no operating '
             'edge; normalized one-off margin, inventory/procurement cash and reinvestment links; and the '
             'strongest sourced opponent across the saved quote. Explain computed market/exit multiple '
-            'and consistent return comparisons, the justified conditional entry threshold if meaningful, '
-            'and repurchase economics against current house value. Do not resolve a finding by inventing '
+            'and consistent return comparisons, and repurchase economics against current house value. '
+            'Recompute any reviewer-proposed number from the computed output before adopting it; if it '
+            'disagrees, keep the computed figure. Do not resolve a finding by inventing '
             'a policy discount, nonrecurring adjustment, source passage or double-counted cash distribution. '
-            'Return the full revised memo only, roughly 3000-4500 words plus exhibits.\nEvidence:\n'+context+
-            '\nValuation:\n'+valuation_context+'\nMemo:\n'+memo+'\nFindings:\n'+json.dumps(combined)+'\nAdjudicated model response:\n'+json.dumps(candidate),tokens=14000)
+            'Return the full revised memo only, '+MEMO_WORDS+'. Keep the required section order.\nEvidence:\n'+context+
+            '\nValuation:\n'+valuation_context+'\nMemo:\n'+memo+'\nFindings:\n'+json.dumps(combined)+'\nAdjudicated model response:\n'+json.dumps(candidate),tokens=MEMO_TOKENS)
         state['current_memo']=corrected
         state['iteration']=iteration+1
         state.pop('pending_revision',None)
@@ -1611,8 +1666,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'working capital or operating purchases twice. '
                 'Reconcile market and DCF-exit multiples using consistent earnings periods and show how '
                 'original-exit versus unchanged-entry-multiple returns differ under one fixed ownership '
-                'convention. Check a meaningful computed entry policy becomes a numeric conditional research '
-                'threshold with its disclosed basis and justification, not an invented default discount. '
+                'convention. Flag entry thresholds, margins of safety, target prices, upside/downside or '
+                'recommendation language as major: this is valuation research only. '
                 'Test repurchase prices against current house value, distinct from EPS accretion; match '
                 'historical dollars/shares/periods and distinguish retrospective conditional comparisons '
                 'from observed historical losses or future buyback forecasts. No cash may be counted twice. '
@@ -1623,6 +1678,12 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'Treat invented source assertions or unsupported valuation inputs as major; distinguish legitimate '
                 'disclosed forecasts from factual errors. If primary reports conflict with a secondary series, '
                 'require reconciliation rather than silently selecting a convenient number. '
+                'First identify, from implied_return_at_price, convention_panel and calibration comparisons, which '
+                'assumption family carries the difference between value and price, and check that the conclusion, '
+                'the price-implication section and the variant thesis name it and argue it with evidence. Check '
+                'every comparison of a number with the market price by arithmetic. Flag any number that is not in '
+                'the evidence or the computed output as major, and never write a fix that asks the author to '
+                'compute a value the engine has not computed. '
                 'Return only actionable unresolved findings. Omit withdrawn accusations, correct calculations, '
                 'and optional stylistic preferences. Check whether the allegedly missing disclosure already '
                 'appears elsewhere in the full memo before flagging it. Reserve blocker/major for errors '
@@ -1696,7 +1757,10 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             combined=review['findings']+deterministic
             effective='revise' if any(f.get('severity') in {'blocker','major'} for f in combined) else review['verdict']
             record={'iteration':iteration,'verdict':effective,'model_verdict':review['verdict'],'findings':combined,'manifest':manifest,
-                    'diagnostic_scope':DIAGNOSTIC_SCOPE,'review_model':reviewer}
+                    'diagnostic_scope':DIAGNOSTIC_SCOPE,'review_model':reviewer,'author_model':strong}
+            for key in ('central_weakness','gap_explained'):
+                if key in review:
+                    record[key]=review[key]
             state['review_history']=[r for r in state['review_history'] if r['iteration']!=iteration]+[record]
             core.save(reviews/f'review-{iteration}.json',record)
             (reviews/f'review-{iteration}.txt').write_text(raw,encoding='utf-8')
@@ -1742,12 +1806,12 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'accusations or suggested fixes instead of replacing one unsupported story with another. A valid '
             'prose-only finding may leave forecasts unchanged; label it memo_only rather than rejecting it. Include compact '
             'finding_dispositions mapping finding IDs to accepted/rejected/clarified with source-backed reasons. '
-            'Preserve or explicitly rejustify the entry policy and repurchase illustrations when forecasts change; '
+            'Preserve or explicitly rejustify the repurchase illustrations when forecasts change; '
             'do not silently drop their scope or invent a discount to satisfy a review. '
             'Forecast changes must be explicit house assumptions and economically justified. '
             +FORECAST_SCHEMA+UNDERWRITING_GUIDANCE+'\nEvidence:\n'+context+'\nCurrent memo (verify allegations against this exact text):\n'+memo+'\nCurrent forecast proposal:\n'+json.dumps({k:plan[k] for k in
                 ('assumptions_label','scenario_rationales','scenarios','operating_model','discount_rate','monitoring',
-                 'counterfactuals','calibration_comparisons','forecast_periods','entry_policy','repurchase_tests') if k in plan})+
+                 'counterfactuals','calibration_comparisons','forecast_periods','repurchase_tests') if k in plan})+
             '\nLocked actuals (reference only; omit from your proposal):\n'+json.dumps(plan.get('actuals',{}))+
             '\nComputed diagnostics for verification:\n'+json.dumps((result or {}).get('computed_diagnostics',{}))+
             '\nComputed counterfactuals:\n'+json.dumps((result or {}).get('counterfactuals',{}))+

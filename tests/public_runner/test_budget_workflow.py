@@ -19,7 +19,8 @@ from investmentideas import core, pipeline
 
 EXAMPLE = Path(__file__).resolve().parents[2]/'examples'/'AAPL-2026-11-06-revised'
 EASY, STRONG = core.MODELS['balanced']
-RATES = {EASY:(.09e-6,.30e-6), STRONG:(3e-6,15e-6)}
+REVIEWER = core.REVIEWERS['balanced']
+RATES = {EASY:(.09e-6,.30e-6), STRONG:(3e-6,15e-6), REVIEWER:(2.5e-6,15e-6)}
 
 
 class FullContractTransport:
