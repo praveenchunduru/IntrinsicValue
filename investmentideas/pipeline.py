@@ -827,6 +827,12 @@ EVIDENCE_TIER_RULE = (
     'qualitative colour; label each such use inline as unverified, and never make an unverified excerpt the only '
     'support for a company fact, a number used in a comparison, or the valuation conclusion. Prefer the primary source '
     'whenever both contain a fact.')
+# Plan text is printed in the exhibits (monitoring cases, counterfactuals,
+# repurchase tests). A live plan (2026-11-14) cited an unverified aggregator
+# beside the 10-K for buyback figures the 10-K holds, and the review flagged it.
+PLAN_SOURCE_RULE = ('\n'+EVIDENCE_TIER_RULE+' This applies to every plan field Python prints: source_refs, labels, '
+    'margin_continuity_basis, monitoring cases, counterfactuals and repurchase tests cite the primary source for '
+    'company facts and figures; an unverified excerpt appears only beside an outside view that the label names as one.')
 
 
 def _computed_tables(sources):
@@ -1074,7 +1080,7 @@ def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
         add('evidence_synthesis',easy,'Build a dated evidence table.\nEvidence:\n'+context,6500)
     if not supplied_model:
         add('valuation_plan',strong,'Build an investment valuation plan.\n'+
-            FORECAST_SCHEMA+UNDERWRITING_GUIDANCE+'\nEvidence:\n'+context,12000)
+            FORECAST_SCHEMA+UNDERWRITING_GUIDANCE+PLAN_SOURCE_RULE+'\nEvidence:\n'+context,12000)
     valuation = ''
     if state.get('valuation') is not None and state.get('plan'):
         valuation = render_valuation_context(state['plan'],state['valuation'])
@@ -2409,7 +2415,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
     if 'plan' not in state:
         prompt=('Build an investment valuation plan for '+ticker+'. Ground actuals in supplied evidence; '
                 'use primary reports where accessible, and reconcile secondary-series dates and definitions.\n'+
-                FORECAST_SCHEMA+_rate_convention(state['sources'],reported.get('currency'))+UNDERWRITING_GUIDANCE+PLAN_FIELD_RULES+'\nIMMUTABLE reported inputs (copy these values exactly; forecast judgments only):\n'+json.dumps(reported)+'\nEvidence:\n'+context+'\nDiligence synthesis:\n'+thesis+'\nRetrieval gaps:\n'+gaps)
+                FORECAST_SCHEMA+_rate_convention(state['sources'],reported.get('currency'))+UNDERWRITING_GUIDANCE+PLAN_FIELD_RULES+PLAN_SOURCE_RULE+'\nIMMUTABLE reported inputs (copy these values exactly; forecast judgments only):\n'+json.dumps(reported)+'\nEvidence:\n'+context+'\nDiligence synthesis:\n'+thesis+'\nRetrieval gaps:\n'+gaps)
         text=call('valuation_plan',strong,prompt,tokens=12000)
         failures=[]
         for repair in range(PLAN_REPAIRS+1):
@@ -2765,7 +2771,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'Preserve or explicitly rejustify the repurchase illustrations when forecasts change; '
             'do not silently drop their scope or invent a discount to satisfy a review. '
             'Forecast changes must be explicit house assumptions and economically justified. '
-            +FORECAST_SCHEMA+rate_text+UNDERWRITING_GUIDANCE+PLAN_FIELD_RULES+
+            +FORECAST_SCHEMA+rate_text+UNDERWRITING_GUIDANCE+PLAN_FIELD_RULES+PLAN_SOURCE_RULE+
             '\nEvidence:\n'+context+'\nCurrent memo (verify allegations against this exact text):\n'+memo+'\nCurrent forecast proposal:\n'+json.dumps({k:plan[k] for k in
                 ('assumptions_label','scenario_rationales','scenarios','operating_model','discount_rate','monitoring',
                  'counterfactuals','calibration_comparisons','forecast_periods','repurchase_tests',

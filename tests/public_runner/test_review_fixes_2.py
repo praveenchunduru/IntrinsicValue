@@ -510,3 +510,11 @@ class MultiplesFootnoteTimingTests(unittest.TestCase):
     def test_integer_years_are_described_without_a_stub(self):
         text = '\n'.join(pipeline._computed_exhibits(self._result(0.0), 'USD'))
         self.assertIn('at integer model years', text)
+
+
+class PlanSourceRuleTests(unittest.TestCase):
+    def test_plan_and_correction_prompts_carry_the_evidence_tiers(self):
+        import inspect
+        source = inspect.getsource(pipeline)
+        self.assertIn(pipeline.EVIDENCE_TIER_RULE, pipeline.PLAN_SOURCE_RULE)
+        self.assertEqual(source.count('PLAN_FIELD_RULES+PLAN_SOURCE_RULE'), 2)
