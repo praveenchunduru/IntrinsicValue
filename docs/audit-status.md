@@ -297,12 +297,50 @@ third too high (MSFT), a segment table dropped when two revenue concepts were ta
 one revision. All are fixed except product tables tagged on combined product and segment
 axes (GOOGL, META, WMT), which are not yet extracted. The suite has 512 offline tests.
 
+### Final live run (AAPL, balanced, $10 allowance)
+
+One folder, resumed after each fix, $7.38 charged in total against the $10 allowance:
+
+1. The plan call spent its whole 18,000-token limit on extended thinking and returned
+   no text ($0.58). The plan stage no longer thinks; a thinking stage that ends that
+   way is retried once without it.
+2. The first draft drew 3 major findings and none minor; both the central weakness
+   and the gap to price were judged handled. All three traced to code or prompts: a
+   multiples footnote that said "integer model years" under stub timing, shift rows
+   that showed year 1 only (the writer added the shift by hand), and no rule for
+   attributing model outputs. Each was fixed.
+3. The revision grew the memo to 4,284 words. The free length check sent a 1,300-word
+   cut to the fix call, which overran its limit while deleting required conclusion
+   rows, and the failure stopped the run ($0.44). Length is now left to the writing
+   stages, an incomplete fix response no longer stops a run, and the revise prompt
+   carries the shared standard and the current word count as a ceiling.
+4. On the final code (a code change discards the plan and draft and keeps the
+   evidence) the full cycle cost $3.54: plan, draft, fix call, review, targeted
+   research, forecast response, revision, fix call, review. The first draft drew 4
+   major findings and 1 minor (run 3 as run: 11 and 3), with the central weakness and
+   the gap judged "partly" handled; the revision left 3 major and 3 minor, with both
+   judged handled, at 3,731 words. The run ended
+   `unresolved_findings`.
+
+The weighted value was $237.99, $237.11 and $237.23 per share (0.67 of the price) in
+the three plans written from this evidence. The last review's majors were a house tax
+rate called unattributed although the sentence names it as a house assumption, and
+plan-written monitoring and repurchase rows that cite unverified excerpts. The plan
+and correction prompts now carry the evidence-tier rule; this change has not been
+run live. The suite has 520 offline tests.
+
 ### Still open after 2026-11-14
 
-- No live run has produced an approved memo. Review findings on evidence quality did
-  not converge within three revisions.
-- The memo overruns its word budget.
+- No live run has produced an approved memo. The final run's first draft drew 4 major
+  findings and its revision 3, against 11 before the first-shot changes.
+- The plan-prompt evidence-tier rule and the rubric clarification have not been run live.
+- The writer still occasionally does arithmetic the computed tables do not supply (a
+  net share reduction stated a thousand times too small, then corrected to a wrong
+  figure). The reported-history table carries no net share change.
+- Product tables tagged on combined product and segment axes (GOOGL, META, WMT) are not
+  extracted.
+- One review verdict carries noise: the same draft drew different majors in replays.
 - AMZN, HD, META, JPM and XOM are refused at preflight.
-- Whether 0.59 of the price is a credible value for Apple rests on the discount rate
+- Whether 0.67 of the price is a credible value for Apple rests on the discount rate
   and terminal returns, which the memo's convention panel and beta cross-checks show
   one change at a time. No value is tuned to the price.
