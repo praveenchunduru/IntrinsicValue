@@ -999,6 +999,65 @@ def _calibration_source(sources, dataset=None, kind=None):
     return None
 
 
+def _pin_financing_records(rate, reported, record):
+    """Copy debt, finance leases and market equity into the rate block from the reported bridges.
+
+    A live plan (2026-11-14) wrote Apple's $1.456 billion of separately reported
+    finance leases as a zero 'included in debt' allocation and was rejected for
+    it. These are reported amounts, so Python supplies them, as it does betas.
+    An explicit market-value debt or independent market cap is left alone.
+    """
+    debt=reported.get('net_debt_bridge') or {}
+    claims=reported.get('other_claims_bridge') or {}
+    refs={key:[ref for ref in value if isinstance(ref,str) and re.fullmatch(r'S\d+',ref)]
+          for key,value in (reported.get('source_refs') or {}).items() if isinstance(value,list)}
+    day=debt.get('as_of')
+    if isinstance(debt.get('debt'),(int,float)) and day:
+        def put(field, value, label, allocation=None, force_label=False):
+            current=rate.get(field) if isinstance(rate.get(field),dict) else {}
+            if current.get('measurement') not in (None,'book_value_proxy'):
+                return
+            pinned={k:v for k,v in current.items() if k!='allocation'}
+            pinned.update(value=value,observed_at=day,measurement='book_value_proxy',
+                          source_refs=list(dict.fromkeys(refs.get('net_debt' if field=='financial_debt' else 'other_equity_claims')
+                                                         or refs.get('net_debt') or current.get('source_refs') or [])))
+            if allocation:
+                pinned['allocation']=allocation
+            if force_label or not isinstance(pinned.get('label'),str) or not pinned['label'].strip():
+                pinned['label']=label
+            if any(current.get(key)!=pinned.get(key) for key in ('value','observed_at','allocation')):
+                record(f'discount_rate.{field}',{key:current.get(key) for key in ('value','observed_at','allocation')},
+                       {key:pinned.get(key) for key in ('value','observed_at','allocation')},'pinned from the reported equity bridge')
+            rate[field]=pinned
+        lease=claims.get('reported_finance_lease_liabilities')
+        if not debt.get('finance_leases_included_in_net_debt'):
+            put('financial_debt',debt['debt'],'Reported financial debt excluding finance leases')
+            put('finance_lease_debt',lease if isinstance(lease,(int,float)) else 0,
+                'Reported finance lease liabilities' if isinstance(lease,(int,float)) else
+                'Finance lease liabilities assumed zero: no finance-lease concept reported')
+        elif isinstance(lease,(int,float)):
+            put('financial_debt',debt['debt']-lease,'Reported combined debt less separately reported finance leases')
+            put('finance_lease_debt',lease,'Reported finance lease liabilities')
+        else:
+            put('financial_debt',debt['debt'],'Combined financial debt including finance leases',
+                'combined_debt_including_finance_leases',force_label=True)
+            put('finance_lease_debt',0,'Finance-lease zero allocation: included in combined debt',
+                'included_in_financial_debt',force_label=True)
+    price,shares=reported.get('market_price'),(reported.get('actuals') or {}).get('shares_outstanding')
+    quoted=((reported.get('input_dates') or {}).get('market_price') or {}).get('observed_at')
+    current=rate.get('market_equity') if isinstance(rate.get('market_equity'),dict) else {}
+    if (isinstance(price,(int,float)) and isinstance(shares,(int,float)) and quoted and
+            current.get('construction',current.get('measurement')) in (None,'quote_times_reported_shares')):
+        pinned={**current,'value':price*shares,'observed_at':quoted,'construction':'quote_times_reported_shares',
+                'source_refs':list(dict.fromkeys([*(refs.get('market_price') or []),*(refs.get('shares_outstanding') or [])]))}
+        pinned.pop('measurement',None)
+        pinned.setdefault('label','Saved quote times reported shares outstanding')
+        if current.get('value')!=pinned['value'] or current.get('observed_at')!=quoted:
+            record('discount_rate.market_equity',{key:current.get(key) for key in ('value','observed_at')},
+                   {key:pinned[key] for key in ('value','observed_at')},'saved quote times reported shares')
+        rate['market_equity']=pinned
+
+
 def _pin_market_conventions(locked, sources, reported, valuation_day, changes):
     """Pin the market-consistent conventions and every beta number from the run's own sources.
 
@@ -1032,6 +1091,7 @@ def _pin_market_conventions(locked, sources, reported, valuation_day, changes):
         if erp['id'] in cited:
             raise ValueError(f'The US risk-free rate and equity risk premium ({erp["id"]}) cannot discount cash flows in '
                              f'{locked.get("currency")}.'+_rate_convention(sources,locked.get('currency')))
+    _pin_financing_records(rate,reported,record)
     if erp is not None and usd:
         # The conventions rest on the premium and the Treasury rate it was
         # solved at. Python copies both from the source, as it does the betas.

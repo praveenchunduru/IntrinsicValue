@@ -239,3 +239,33 @@ class CorrectionStageTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class FinancingPinTests(unittest.TestCase):
+    REPORTED = {'net_debt_bridge': {'as_of': '2026-09-26', 'debt': 80111e6, 'finance_leases_included_in_net_debt': False},
+                'other_claims_bridge': {'as_of': '2026-09-26', 'reported_finance_lease_liabilities': 1456e6},
+                'source_refs': {'net_debt': ['S2', 'S4'], 'other_equity_claims': ['S2', 'assumption: unidentified claims are zero'],
+                                'market_price': ['S1'], 'shares_outstanding': ['S2']},
+                'market_price': 356.27, 'actuals': {'shares_outstanding': 14532182000},
+                'input_dates': {'market_price': {'observed_at': '2026-11-13'}}}
+
+    def test_reported_debt_leases_and_market_equity_replace_typed_values(self):
+        rate = {'financial_debt': {'value': 80111e6, 'observed_at': '2026-09-26', 'allocation': 'identified_components_sum', 'label': 'Debt'},
+                'finance_lease_debt': {'value': 0, 'observed_at': '2026-09-26', 'allocation': 'included_in_financial_debt', 'label': 'Leases'},
+                'market_equity': {'value': 5177.7e9, 'observed_at': '2026-11-13', 'label': 'Market cap'}}
+        changes = []
+        pipeline._pin_financing_records(rate, self.REPORTED, lambda field, old, new, reason: changes.append(field))
+        self.assertEqual(rate['finance_lease_debt']['value'], 1456e6)
+        self.assertNotIn('allocation', rate['finance_lease_debt'])
+        self.assertEqual(rate['finance_lease_debt']['source_refs'], ['S2'])
+        self.assertAlmostEqual(rate['market_equity']['value'], 356.27 * 14532182000)
+        self.assertEqual(rate['market_equity']['construction'], 'quote_times_reported_shares')
+        self.assertIn('discount_rate.finance_lease_debt', changes)
+
+    def test_explicit_market_measures_are_left_alone(self):
+        rate = {'financial_debt': {'value': 75e9, 'observed_at': '2026-11-13', 'measurement': 'market_value', 'label': 'Market debt'},
+                'market_equity': {'value': 5.2e12, 'observed_at': '2026-11-13', 'construction': 'independent_market_cap',
+                                  'reconciliation': 'Two share classes', 'label': 'Cap'}}
+        pipeline._pin_financing_records(rate, self.REPORTED, lambda *args: None)
+        self.assertEqual(rate['financial_debt']['value'], 75e9)
+        self.assertEqual(rate['market_equity']['value'], 5.2e12)
