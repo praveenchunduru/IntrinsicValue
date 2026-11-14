@@ -210,7 +210,7 @@ the price.
 
 Two independent code reviews of the change, each with adversarial verification,
 confirmed 26 and then 41 findings. All are fixed except one documented limit: the
-rate has no debt beta, so no credit spread rises with leverage. The suite has 497
+rate has no debt beta, so no credit spread rises with leverage. The suite has 512
 offline tests. Saved plans without the new fields reproduce their earlier values
 exactly, including both shipped Apple examples.
 
@@ -263,6 +263,39 @@ It ended with unresolved findings, so no memo was approved.
   against a 4,500-word budget.
 
 The three paid runs reported $15.73 in total.
+
+### First-shot changes and replays
+
+Run 3's review rounds cost $4.99 of its $6.79 and did not converge. An investigation of
+its first draft traced most findings to the inputs the writing model received:
+about 16 KB of the 232 KB 10-K reached the models, with no category, segment or margin
+tables, so the writer used 27 unverified web excerpts for company facts; the writer and
+reviewer applied different standards to those excerpts; and the writer did its own
+arithmetic (a 60.7% products margin against 39.3% reported, a $290.88 buyback price
+called "below" a $209.08 value). The changes described in the
+[underwriting guide](underwriting.md#how-the-first-draft-is-produced) followed.
+
+`tools/replay.py` re-ran the later stages on run 3's frozen evidence:
+
+| Replay | Paid stages | Cost | Review of the first draft |
+|---|---|---:|---|
+| Run 3 as run (old pipeline) | plan, draft, review | $1.80 to the first review | 11 major, 3 minor; central weakness and gap "partly" |
+| 1 | plan, draft, fix call, review | $2.90 (incl. $1.01 re-paid after a code change) | 3 major, 3 minor; both "yes"; all majors were unlabelled unverified material |
+| 2 | fix call, review | $0.40 | 3 major, 4 minor; both "yes" |
+| 3 | fix call, review (inline labels) | $0.40 | 2 major, 5 minor; both "partly"; no labelling or figure findings remained |
+
+The plan passed on its first response in every replay. With cached evidence a GPT-5.4
+review cost $0.07. The remaining major findings concern the argument (naming every
+computed driver of the gap, answering the opposing case with operating evidence); the
+memo sections now ask for both. The reviewer's verdict varied between replays of the
+same draft, so one review verdict carries noise.
+
+A four-reviewer Opus code review of these changes then reproduced 25 defects, 11 major,
+including mixed pre- and post-split per-share history (NVDA), an average buyback price a
+third too high (MSFT), a segment table dropped when two revenue concepts were tagged
+(WMT), and completed runs stranded by a same-day code update under the new default of
+one revision. All are fixed except product tables tagged on combined product and segment
+axes (GOOGL, META, WMT), which are not yet extracted. The suite has 512 offline tests.
 
 ### Still open after 2026-11-14
 

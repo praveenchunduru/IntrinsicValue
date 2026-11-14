@@ -72,10 +72,21 @@ whose own facts conflict, or that report shares only by class, are refused with 
 reason; see the [issuer sample](docs/audit-status.md#live-validation-on-2026-11-14).
 
 The workflow synthesizes evidence, builds a source-referenced forecast plan,
-computes a bear/base/bull FCFF DCF in Python and writes a memo. A different model
-reviews it in a fresh context. Review can trigger targeted research, corrections,
-recomputation and revision within the remaining budget and revision limit. Unresolved
-material findings remain visible.
+computes a bear/base/bull FCFF DCF in Python and writes a memo. The first draft is
+built to stand on its own:
+
+- Python extracts the filings' revenue, cost and operating income by product, segment
+  and geography, five years of reported history, and the 10-K's margin, inventory,
+  commitment and buyback disclosures. The models see them before any web excerpt.
+- Python renders every table and a valuation summary at the top of the memo,
+  including what the price requires of one input at a time. The model writes the
+  interpretation around them and does no arithmetic of its own.
+- Free checks trace every figure in the prose to the computed output or a primary
+  source, then one small call fixes what they find. Citations of unverified web
+  excerpts are labelled in the text.
+- A different model reviews the memo against the same written quality standard
+  the writer was given. One revision follows by default if material findings remain;
+  findings still open stay visible.
 
 The discount rate follows the conventions the equity risk premium was solved under.
 Damodaran's implied premium assumes the market grows at the Treasury rate forever; a
@@ -126,7 +137,10 @@ python -m investmentideas AAPL --quick --profile economy --budget 2
 python -m investmentideas AAPL --snapshot sources.json --forecast-plan assumptions.json --budget 10
 
 # Investigate independent review notes in the same day's saved full run
-python -m investmentideas AAPL --review-notes findings.txt --max-revisions 6 --budget 10
+python -m investmentideas AAPL --review-notes findings.txt --max-revisions 3 --budget 10
+
+# Re-run the plan, draft and review of a saved run on its frozen evidence
+python tools/replay.py research-output/AAPL/full-RUN_HASH replay-output --from draft
 
 # Choose a different final reviewer without repeating completed research
 python -m investmentideas AAPL --review-model moonshotai/kimi-k2.5 --budget 10
@@ -265,7 +279,7 @@ python -m pip install .
 investmentideas --help
 ```
 
-The current source passes **497 tests** locally on Python 3.9, 3.12 and 3.13; the
+The current source passes **512 tests** locally on Python 3.9, 3.12 and 3.13; the
 v0.2.0 release passed 268. The
 [CI matrix](https://github.com/praveenchunduru/IntrinsicValue/actions/runs/42261827883)
 tests Python 3.10, 3.12 and 3.13. CI runs synthetic evidence and mocked transports without model calls or

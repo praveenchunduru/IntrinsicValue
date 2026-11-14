@@ -36,9 +36,11 @@ The [offline budget regression](../tests/public_runner/test_budget_workflow.py) 
 fresh-from-ticker collection, complete stage contracts and zero assumed cache hits
 with large archived evidence shapes and explicitly synthetic financial-scope evidence.
 At its stated usage/rate assumptions (GPT-5.4 review at $2.50/$15 per million input/output
-tokens), the first pass needs a peak $2.86 allowance; three full revisions need $8.77.
-Simulated reported usage is $1.63 and $7.54 respectively. The fixture omits the
-calibration sources, so it does not exercise the market-consistent rate pins.
+tokens), the first pass (draft, its fix call and one review) needs a peak $3.13
+allowance and the default single revision $5.37. Simulated reported usage is $1.89
+and $4.13 respectively. The fixture omits the calibration sources, so it does not
+exercise the market-consistent rate pins, and it assumes no prompt caching; live
+GPT-5.4 reviews with cached evidence cost about $0.07 instead of $0.40.
 These simulations support the tested $10 default path, not a general price or
 completion promise. They are not observed provider bills or research-quality evidence.
 

@@ -306,6 +306,12 @@ Every plan with a market price reports:
   forecast's capital efficiency, and the whole rate path one point higher and lower.
   Rows carry no probability. The largest convention row is named; the two rate shifts
   show scale and are not ranked. Rows that need the glide appear only under it.
+- `price_requirements`: for the base case, how far one input at a time would have to
+  move for value to equal the price: revenue growth or EBIT margin in every forecast
+  year (as a shift in points), terminal return on new capital, sales-to-capital, or
+  terminal growth. Only inputs the engine accepts are searched; a row that cannot
+  reach the price reports the closest value and on which side of the price it stays.
+  Rows are alternatives, never combined.
 - `value_to_price` for each scenario and `weighted_value_to_price`. Percentage upside
   is no longer reported.
 
@@ -444,6 +450,52 @@ nonoperating cash. The calculator reduces cash and shares once while holding
 operating value fixed. Comparing historical repurchase prices with today's house
 value is a retrospective conditional comparison, not a measured historical loss.
 Forward cases are illustrations, not forecasts of future repurchase policy.
+
+## How the first draft is produced
+
+Evidence reaches every model prompt in three labelled tiers: tables computed by
+Python from reported filings, primary and official sources, and unverified web
+excerpts (at most 2,000 characters each and 30,000 in total). The computed tables are
+five years of reported history from SEC company facts (growth, gross and operating
+margins, R&D and SG&A, effective tax, capex, depreciation and amortization, stock
+compensation, buybacks and dividends, diluted EPS) and annual revenue, cost and
+operating income by product or service, segment and geography from the filing's
+inline XBRL. Per-share and share-count values reported only before a later split
+restatement, and buyback prices without a matching value and share count, are shown
+as n/a. The 10-K and 10-Q excerpts include gross-margin, inventory, purchase
+commitment and share-repurchase disclosures. Folders collected before these tables
+existed get them from their archived documents on the next run.
+
+The forecast author fills one template: an operating model when the filings report
+revenue by product, service or segment, otherwise aggregate growth and margin arrays.
+Stated aggregate paths that the operating drivers do not produce are dropped, and
+the assumption notes record the largest gap. Python fills market equity, debt and
+finance leases from the reported bridge and, for US-dollar plans, the risk-free rate
+and premium from their source. The plan and draft stages get extended thinking (6,000
+and 8,000 tokens, added to their output limits) where the model's catalog entry
+supports it.
+
+Python places a valuation summary under the memo's title: scenario values and value /
+price, what the price implies, what the price requires, the largest convention steps
+and year-1 margin against the reported results. The writer gets eight sections of
+about 3,000 words in total and the shared quality standard (`quality.RUBRIC`). It
+copies computed and reported figures exactly and does no arithmetic of its own.
+
+Before the paid review, free checks (`quality.prereview_checks`) flag figures that
+match nothing in the computed output, the reported inputs or a primary source; figures
+found only in unverified excerpts and not presented as outside context; figures cited
+to excerpts although a primary source has them; convention rows described as adding
+up; and prose over 3,600 words. One fix call returns quote-and-replacement edits that
+Python applies when the quote occurs once (deleting a duplicated passage removes its
+second copy); what remains goes to the reviewer as minor diagnostics. Python labels
+every citation of an unverified excerpt inline, as in [S16 unverified]. The review
+applies the same quality standard. By default one revision follows if material
+findings remain, and the second review checks the earlier findings rather than
+re-auditing from scratch.
+
+`tools/replay.py` re-runs the plan, draft, checks and review of a saved run on its
+frozen evidence (`--from plan`, `--from draft` or `--from review`), so a prompt or
+extraction change can be judged for a dollar or two instead of a full run.
 
 ## Replay evidence and review a supplied plan
 
