@@ -8,7 +8,8 @@ The saved folder's sources (cut to those that existed when its first draft was
 written), archived documents and paid web-research answers are copied into a
 new folder. Everything from the chosen stage onward is recomputed with the
 current code and prompts: --from plan rebuilds the forecast plan, --from draft
-keeps the saved first plan. Primary documents are re-derived from their
+keeps the saved first plan, and --from review keeps the saved plan and current
+draft so only the free checks, their fix call and the review run. Primary documents are re-derived from their
 archives by the normal per-run refresh, so evidence-extraction changes apply.
 Requires OPENROUTER_API_KEY; no SEC or web collection is repeated.
 """
@@ -47,7 +48,7 @@ def seed(saved_folder, target, *, start):
     target.mkdir(parents=True)
     if (saved_folder / 'sources_raw').is_dir():
         shutil.copytree(saved_folder / 'sources_raw', target / 'sources_raw')
-    keep = ('web_',) + (('valuation_plan',) if start == 'draft' else ())
+    keep = ('web_',) + (('valuation_plan',) if start in ('draft', 'review') else ()) + (('full_draft',) if start == 'review' else ())
     plan_notes = set(saved.get('plan_gap_notes', []))
     state = {'version': saved['version'], 'ticker': saved['ticker'], 'ledger': [],
              'stages': {key: value for key, value in saved['stages'].items() if key.startswith(keep)},
@@ -58,7 +59,12 @@ def seed(saved_folder, target, *, start):
              'workflow_contract': pipeline._workflow_contract(),
              'replay_origin': {'folder': str(saved_folder), 'from': start,
                                'state_sha256': hashlib.sha256((saved_folder / 'state.json').read_bytes()).hexdigest()}}
-    if start == 'draft':
+    if start == 'review':
+        if not saved.get('current_memo') or not saved.get('plan'):
+            raise ValueError('The saved run has no draft and plan to review')
+        plan = saved['plan']
+        state['current_memo'] = saved['current_memo']
+    if start in ('draft', 'review'):
         if not plan:
             raise ValueError('The saved run has no plan to keep')
         state['plan'] = plan
@@ -99,12 +105,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('saved')
     parser.add_argument('output')
-    parser.add_argument('--from', dest='start', choices=('plan', 'draft'), default='plan')
+    parser.add_argument('--from', dest='start', choices=('plan', 'draft', 'review'), default='plan')
     parser.add_argument('--max-revisions', type=int, default=1)
     parser.add_argument('--budget', type=float, default=4.0)
     parser.add_argument('--profile', choices=tuple(core.MODELS), default='balanced')
     parser.add_argument('--strong-model')
     parser.add_argument('--review-model')
+    parser.add_argument('--resume', action='store_true', help='continue an existing replay folder (prior charges count)')
     args = parser.parse_args()
     key = os.environ.get('OPENROUTER_API_KEY', '').strip()
     if not key:
@@ -112,7 +119,8 @@ def main():
     saved_folder = Path(args.saved).resolve()
     saved = json.loads((saved_folder / 'state.json').read_text())
     target = Path(args.output).resolve() / saved['ticker'] / 'full-replay'
-    seed(saved_folder, target, start=args.start)
+    if not (args.resume and target.exists()):
+        seed(saved_folder, target, start=args.start)
     easy, strong = core.MODELS[args.profile]
     strong = args.strong_model or strong
     reviewer = args.review_model or pipeline._default_reviewer(args.profile, strong)

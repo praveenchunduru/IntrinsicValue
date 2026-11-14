@@ -343,8 +343,9 @@ RUBRIC = (
 # catch the defects a live review spent three paid rounds on (2026-11-14).
 UNVERIFIED_SOURCE_TIERS = {'search_excerpt_unverified'}
 PROSE_WORD_LIMIT = 3600
-_NUMBER = re.compile(r'(?<![\w.\[/-])(-?\$?\d[\d,]*(?:\.\d+)?)(\s*(?:%|bps|bp|x|×|billion|bn|B|million|mm|M|trillion)\b|%)?', re.I)
-_SCALES = {'%': (1e-2, 1), 'bps': (1e-4, 1), 'bp': (1e-4, 1), 'billion': (1e9, 1e3, 1), 'bn': (1e9, 1e3, 1),
+_NUMBER = re.compile(r'(?<![\w.\[/-])(-?\$?\d[\d,]*(?:\.\d+)?)(\s*(?:%|bps|bp|x|×|billion|bn|B|million|mm|M|trillion|percentage points?|points?|pts|pp)\b|%)?', re.I)
+_SCALES = {'%': (1e-2, 1), 'points': (1e-2, 1), 'point': (1e-2, 1), 'pts': (1e-2, 1), 'pp': (1e-2, 1),
+           'percentage points': (1e-2, 1), 'percentage point': (1e-2, 1), 'bps': (1e-4, 1), 'bp': (1e-4, 1), 'billion': (1e9, 1e3, 1), 'bn': (1e9, 1e3, 1),
            'b': (1e9, 1e3, 1), 'million': (1e6, 1), 'mm': (1e6, 1), 'm': (1e6, 1), 'trillion': (1e12, 1e6, 1e3, 1),
            'x': (1,), '×': (1,)}
 _ADDITIVE = re.compile(r'\b(?:together|combined|in total|cumulative(?:ly)?|add up|sum of|more than the entire|account for (?:all|the entire|more than))\b', re.I)
@@ -402,7 +403,7 @@ def prereview_checks(memo, sources, computed=()):
     for item in computed:
         _numeric_leaves(item, primary)
     primary_pool, unverified_pool = sorted(primary), sorted(unverified)
-    untraced, unlabelled, additive = [], [], []
+    untraced, unlabelled, additive, unlabelled_claims = [], [], [], []
     for sentence in re.split(r'(?<=[.!?])\s+|\n+', body):
         line = sentence.strip()
         if not line or line.startswith('#'):
@@ -413,6 +414,9 @@ def prereview_checks(memo, sources, computed=()):
         clean = re.sub(r'\b(?:19|20)\d\d(?:-\d\d-\d\d)?\b|\bFY\s?\d+|\bQ[1-4]\b|\b\d+(?:st|nd|rd|th)\b|\(\d\)|\b\d+\.\s', '', clean)
         if _ADDITIVE.search(line) and _PANEL.search(line):
             additive.append(line[:300])
+        if (cited and all(tiers.get(ref) in UNVERIFIED_SOURCE_TIERS for ref in cited) and
+                not re.search(r'unverified', line, re.I)):
+            unlabelled_claims.append(line[:300])
         for match in _NUMBER.finditer(clean):
             raw = match.group(1).replace('$', '').replace(',', '')
             unit = match.group(2)
@@ -447,6 +451,11 @@ def prereview_checks(memo, sources, computed=()):
         add('number-unverified-only', 'minor', f'{len(unlabelled)} figures appear only in unverified web excerpts and are '
             'not labelled as unverified context or are cited to a primary source that does not contain them.',
             'Use the primary figure if one exists; otherwise label the figure as unverified context or remove it.', unlabelled)
+    if unlabelled_claims:
+        add('claim-unverified-unlabelled', 'minor', f'{len(unlabelled_claims)} sentences rest only on unverified web '
+            'excerpts and do not say so.',
+            'Cite a primary source that contains the claim, label the sentence as unverified context, or remove it.',
+            [('', text) for text in unlabelled_claims])
     if additive:
         add('convention-rows-added', 'minor', 'Convention or one-at-a-time rows are described as adding up or combining.',
             'State each row separately; rows are alternatives and are never added together.', [('', text) for text in additive])

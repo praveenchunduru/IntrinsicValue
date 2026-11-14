@@ -2468,7 +2468,12 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         computed_inputs=(result,plan,_computed_tables(state['sources']))
         issues=prereview_checks(_with_summary(memo,plan,result),state['sources'],computed_inputs) if result else []
         fixed=state.setdefault('prereview_fixes',{})
-        if issues and str(iteration) not in fixed:
+        # Keyed by the draft's own text: a contract refresh can replace the draft
+        # within one iteration, and the new draft must be checked and fixed.
+        memo_key=hashlib.sha256(memo.encode()).hexdigest()[:16]
+        done=any(memo_key in (record.get('memo_sha256'),record.get('fixed_memo_sha256'))
+                 for record in fixed.values() if isinstance(record,dict))
+        if issues and not done:
             response=call(f'draft_check_fix_{iteration}',strong,
                 'Correct only the problems listed below in this memo draft. Return ONLY JSON {"edits":[{"quote":"exact '
                 'contiguous text copied from the memo","replacement":"corrected text"}]}. Each quote must appear exactly '
@@ -2479,13 +2484,20 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'For length, cut repeated or secondary sentences (an empty replacement deletes). Change nothing else.\n'+
                 EVIDENCE_TIER_RULE+'\nProblems:\n'+json.dumps(issues)+'\nCOMPUTED SUMMARY:\n'+computed_summary(plan,result)+
                 '\nEvidence:\n'+context+'\nComputed exhibits:\n'+valuation_section(plan,result)+'\nMemo:\n'+memo,tokens=8000)
-            try:
-                value,_=_response_json(response)
+            # A live fix response (2026-11-14) gave edits, wrote "Wait, I need to
+            # re-read", and gave corrected edits. The last complete block is the
+            # model's answer; each edit is still applied only on an exact match.
+            edits=None
+            for block in reversed(re.findall(r'(?ms)^```(?:json)?[ \t]*\r?\n(.*?)\r?\n```[ \t]*$',response) or [response]):
+                try:
+                    value=parse_json(block)
+                except ValueError:
+                    continue
                 edits=value.get('edits') if isinstance(value,dict) else None
-            except ValueError:
-                edits=None
+                break
             memo,applied,skipped=_apply_edits(memo,edits)
-            fixed[str(iteration)]={'issues':[issue['id'] for issue in issues],'edits_applied':applied,'edits_skipped':skipped[:20]}
+            fixed[f'{iteration}:{memo_key}']={'memo_sha256':memo_key,'fixed_memo_sha256':hashlib.sha256(memo.encode()).hexdigest()[:16],
+                                             'issues':[issue['id'] for issue in issues],'edits_applied':applied,'edits_skipped':skipped[:20]}
             state['current_memo']=memo
             checkpoint()
             issues=prereview_checks(_with_summary(memo,plan,result),state['sources'],computed_inputs)

@@ -337,3 +337,35 @@ class ReasoningRequestTests(unittest.TestCase):
         self.assertEqual(sent['reasoning'], {'max_tokens': 8000, 'exclude': True})
         self.assertNotIn('temperature', sent)
         self.assertEqual(router.ledger[-1]['reasoning'], {'max_tokens': 8000, 'exclude': True})
+
+
+class PrereviewCheckTests(unittest.TestCase):
+    SOURCES = [{'id': 'S1', 'source_tier': 'regulatory_primary', 'data': {'excerpt': 'Revenue was 478,834 million.'}},
+               {'id': 'S2', 'source_tier': 'search_excerpt_unverified', 'data': {'excerpt': 'Street EPS 9.41; management said demand is strong.'}}]
+
+    def ids(self, memo):
+        from investmentideas.quality import prereview_checks
+        return {row['id']: row for row in prereview_checks(memo, self.SOURCES, ({'value': 0.179},))}
+
+    def test_points_units_and_index_names_are_traced(self):
+        found = self.ids('# M\nMargins would need +17.9 points in every year. The S&P 500 is the benchmark.')
+        self.assertNotIn('number-untraced', found)
+
+    def test_unverified_claims_and_figures_need_their_label(self):
+        found = self.ids('# M\nManagement said demand is strong [S2]. Street EPS is $9.41 [S2].')
+        self.assertIn('claim-unverified-unlabelled', found)
+        self.assertIn('number-unverified-only', found)
+        found = self.ids('# M\nPer unverified excerpts, management said demand is strong [S2]. Street EPS is $9.41 (unverified) [S2].')
+        self.assertNotIn('claim-unverified-unlabelled', found)
+        self.assertNotIn('number-unverified-only', found)
+
+    def test_invented_figures_and_added_rows_are_flagged(self):
+        found = self.ids('# M\nProducts margin was 60.7% [S1]. Together the convention steps account for more than the entire gap.')
+        self.assertEqual([item['figure'] for item in found['number-untraced']['items']], ['60.7%'])
+        self.assertIn('convention-rows-added', found)
+
+    def test_fix_responses_use_the_last_complete_block(self):
+        from investmentideas import pipeline
+        memo, applied, skipped = pipeline._apply_edits('Alpha beta. Gamma.', [{'quote': 'Alpha beta.', 'replacement': 'Alpha.'},
+                                                                              {'quote': 'missing', 'replacement': 'x'}])
+        self.assertEqual((memo, applied, len(skipped)), ('Alpha. Gamma.', 1, 1))
