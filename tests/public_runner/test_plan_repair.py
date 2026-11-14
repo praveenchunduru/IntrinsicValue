@@ -65,7 +65,7 @@ class PlanRepairTests(unittest.TestCase):
         self.assertIn('unknown fields are rejected', ScriptedRouter.prompts[0])
         for prompt in ScriptedRouter.prompts[1:]:
             self.assertIn('Repair this precise validation failure', prompt)
-            self.assertIn('Return the complete corrected JSON object', prompt)
+            self.assertIn('Return only the complete corrected JSON object', prompt)
             self.assertIn('never a currency code', prompt)
 
     def test_an_invalid_optional_diagnostic_is_omitted_and_disclosed_without_a_paid_repair(self):
@@ -81,6 +81,24 @@ class PlanRepairTests(unittest.TestCase):
             self.assertTrue(any('optional counterfactuals did not pass validation' in gap for gap in state['gaps']))
             self.assertIn('optional counterfactuals did not pass validation', (folder / 'memo.md').read_text())
         self.assertEqual(self.plan_calls(), ['valuation_plan'])
+
+    def test_a_valid_plan_behind_analysis_is_used_without_a_paid_repair(self):
+        class Prefaced(ScriptedRouter):
+            def complete(self, stage, model, prompt, max_tokens=6000, web=False):
+                text = super().complete(stage, model, prompt, max_tokens, web)
+                if stage.startswith('valuation_plan'):
+                    return 'I reconciled the component drivers first.\n```json\n' + text + '\n```'
+                return text
+        ScriptedRouter.responses = [plan()]
+        with patch.object(pipeline.core, 'Router', Prefaced), tempfile.TemporaryDirectory() as directory:
+            folder = pipeline.run('AAPL', 'synthetic', directory=directory)
+            state = json.loads((folder / 'state.json').read_text())
+        self.assertEqual(self.plan_calls(), ['valuation_plan'])
+        self.assertTrue(state['complete'])
+        self.assertIn('one_explicit_complete_json_fence', [row['method'] for row in state['response_normalizations']])
+        for bad in ('Two blocks:\n```json\n{}\n```\n```json\n{}\n```', '```json\n{"truncated":\n```'):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                pipeline._response_json(bad)
 
     def test_repairs_carry_every_earlier_rejection_so_a_fix_is_not_undone(self):
         first, second = invalid_plan(), invalid_plan()

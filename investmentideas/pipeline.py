@@ -1806,7 +1806,15 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         failures=[]
         for repair in range(PLAN_REPAIRS+1):
             try:
-                plan=parse_json(text)
+                # A valid plan behind a line of analysis was rejected live
+                # (2026-11-14) and cost a paid repair; accept exactly one
+                # complete fenced block, as the correction stage does.
+                plan,normalized=_response_json(text)
+                if normalized:
+                    recovery={'stage':'valuation_plan'+('' if repair==0 else '_repair'),'attempt':repair,
+                              'method':'one_explicit_complete_json_fence'}
+                    if recovery not in state.setdefault('response_normalizations',[]):
+                        state['response_normalizations'].append(recovery)
                 if not isinstance(plan,dict):
                     raise ValueError('Valuation plan must be an object')
                 if plan.get('unavailable'):
@@ -1836,7 +1844,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                           '\nRepair this precise validation failure without inventing actuals: '+str(exc)+
                           ('\nEarlier attempts were rejected for these reasons; do not reintroduce them: '+
                            ' | '.join(failures[:-1]) if failures[:-1] else '')+
-                          '\nReturn the complete corrected JSON object.'+PLAN_FIELD_RULES,tokens=12000)
+                          '\nReturn only the complete corrected JSON object, with no analysis before or after it.'+PLAN_FIELD_RULES,tokens=12000)
         checkpoint()
     if not state['plan'].get('unavailable'):
         current=not state.get('provided_forecast_digest') and state.get('plan_conventions')==PLAN_CONVENTIONS
