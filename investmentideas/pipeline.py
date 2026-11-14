@@ -51,23 +51,25 @@ value. (11) Risks, including evidence that the valuation framework rather than t
 wrong. (12) Evidence gaps and unresolved questions.'''
 # Memo stages rewrite the full memo. A live revision overran a 14,000-token
 # limit as the memo grew, so the limit leaves room above the word budget.
-MEMO_TOKENS = 22000
+MEMO_TOKENS = 18000
 MEMO_WORDS = 'at most about 4,500 words including exhibits; a revision replaces text rather than adding to it'
 FORECAST_SCHEMA = """Return ONLY compact JSON for house forecasts:
 {"assumptions_label":"House forecasts, not reported facts or guidance",
- "scenario_rationales":{"bear":"Evidence and economic mechanism [S#]","base":"...","bull":"..."},
- "scenarios":{"bear":{"probability":0.25,"growth_rates":[0.02,0.02,0.02,0.02,0.02],
- "ebit_margins":[0.15,0.15,0.15,0.15,0.15],"tax_rate":0.25,"sales_to_capital":2,
- "wacc":0.10,"terminal_growth":0.02,"terminal_roic":0.12},
- "base":{"probability":0.50,"growth_rates":[0.04,0.04,0.04,0.04,0.04],
- "ebit_margins":[0.20,0.20,0.20,0.20,0.20],"tax_rate":0.25,"sales_to_capital":2.5,
- "wacc":0.09,"terminal_growth":0.025,"terminal_roic":0.15},
- "bull":{"probability":0.25,"growth_rates":[0.06,0.06,0.06,0.06,0.06],
- "ebit_margins":[0.25,0.25,0.25,0.25,0.25],"tax_rate":0.25,"sales_to_capital":3,
- "wacc":0.08,"terminal_growth":0.03,"terminal_roic":0.20}}}.
-These numbers demonstrate the schema; they are not company assumptions to copy.
-Use 5–10 forecast years, the same horizon in all scenarios. Probabilities sum to 1;
-WACC exceeds terminal growth. All rates are decimals, not percentage integers.
+ "scenario_rationales":{"bear":"Evidence, economic mechanism and the basis for this probability [S#]","base":"...","bull":"..."},
+ "scenarios":{"bear":{"probability":<decimal>,"growth_rates":[<10 annual decimals>],
+ "ebit_margins":[<10 annual decimals>],"tax_rate":<decimal>,"sales_to_capital":<number>,
+ "terminal_roic":<decimal>},"base":{<same fields>},"bull":{<same fields>}}}.
+Placeholders mark where your evidence-based numbers go; nothing here is a default.
+Use 10 forecast years, the same horizon in all scenarios. Probabilities sum to 1 and each
+needs a stated basis in scenario_rationales (frequencies of comparable outcomes, the evidence
+that separates the states); symmetric weights are not a default. All rates are decimals.
+With a dated discount_rate (see below), omit scenario wacc and terminal_growth: Python
+discounts with the current cost of capital for years 1-5, moves to market-average business
+risk by year 10, and sets terminal growth to the risk-free rate, the long-run growth the equity
+risk premium itself assumes. State terminal_growth only below that rate, with a
+company-specific terminal_growth_basis (secular decline, shrinking market); a lower number is
+not a conservative default, it values the company below the market's own assumption. Without a
+dated discount_rate give wacc and terminal_growth for each scenario; WACC exceeds growth.
 Keep each rationale under 100 words. Do not reproduce historical actuals, cash/debt
 reconciliations, source passages, calculated cashflows or valuation targets: Python
 locks reported inputs and independently computes the outputs.
@@ -76,7 +78,9 @@ incremental revenue / sales-to-capital reinvestment. Maintenance investment offs
 D&A; GAAP EBIT already expenses SBC, R&D and operating rent. Do not deduct those
 again. Explicitly justify growth/margin fade, capital efficiency, tax, WACC,
 terminal growth and terminal ROIC. Terminal reinvestment is g/ROIC of NOPAT;
-explain a material forecast-to-terminal capital-intensity transition.
+explain a material forecast-to-terminal capital-intensity transition. A terminal ROIC above the
+market's long-run return on new capital (about 15-17% on capital) is a claim of durable advantage
+that needs evidence about returns on new investment, not the average return on existing assets.
 Optional counterfactuals map names to base-scenario forecast overrides (the same horizon).
 They are separate diagnostic cases, never probability weights or reported facts; Python computes
 their values. A plausible competing market-pricing case can be included without claiming its
@@ -98,9 +102,21 @@ Starting category revenue must reconcile exactly to reported total revenue. Gros
 are forward assumptions; never call unreported individual category margins observed facts.
 Use aggregate_ebit_margins mode without gross margins/expenses if only category revenues are supported.
 Omit main scenario growth_rates and, in gross mode, ebit_margins: Python derives them.
-If complete dated market inputs are available, provide discount_rate using the documented
-rates.py schema: matched risk_free_rate/equity_risk_premium observations, explicit unlevered_beta,
-market_equity, financial_debt, finance_lease_debt, pretax_cost_of_debt, marginal_tax_rate.
+When the evidence includes the matched risk-free rate and implied equity risk premium, a dated
+discount_rate is required, using the documented rates.py schema: matched risk_free_rate/
+equity_risk_premium observations, explicit unlevered_beta, market_equity, financial_debt,
+finance_lease_debt, pretax_cost_of_debt, marginal_tax_rate. marginal_tax_rate is the statutory
+national plus subnational rate (United States: about 25%, the 21% federal rate plus state), never
+the reported effective rate; the effective rate the evidence supports as durable belongs in
+scenario tax_rate (cite the cash tax rate and any legislated minimum such as Pillar Two).
+Build unlevered_beta bottom-up: {"calculation":"bottom_up_sector_weighted","sectors":[{"sector":
+"<exact industry name from the supplied industry beta table>","weight":<share of the business>}],
+"source_refs":["S#"],"label":"why each business maps to that industry and how weights were set"}.
+Weight by the business mix (reported segment revenue, or value if the evidence supports it);
+Python pins every industry beta from the table, so write no beta numbers. The weekly regression
+beta is computed separately as a cross-check. Python also pins the market beta used for the
+terminal cost of capital and dates the valuation; do not supply term_structure,
+terminal_unlevered_beta or valuation_timing.
 Every record needs value, observed_at, source_refs and label; currency/amount_unit match the plan,
 as_of is the valuation date, lease_convention is gaap_operating. Omit main WACC when this
 calculation governs. Label sector/yield proxies and differing dates; do not invent a calibration.
@@ -113,7 +129,7 @@ and leases; finance_lease_debt then has value:0, allocation:"included_in_financi
 a label explicitly saying zero is an allocation within the combined amount, not an absent liability.
 Both financing records use the same annual balance-sheet measurement date, currency and source
 support. Do not invent a separate lease amount or add leases twice to the canonical bridge.
-If completed-week issuer/benchmark evidence supports a historical equity beta, the unlevered_beta
+Only when no industry in the table fits the business, the unlevered_beta
 record may instead omit value and include calculation:"historical_issuer_cash_corrected" and
 historical_equity_beta:<measured value>, with observed_at, source_refs and label retained.
 Python uses the explicit nonoperating cash bridge and dated financing inputs to derive the
@@ -188,7 +204,9 @@ PLAN_FIELD_RULES = ('\nField rules: unknown fields are rejected, so use only the
                     '{"services":{"gross_margins":[0.7,0.7,0.7,0.7,0.7]}}}}}. Each case changes the base scenario only: '
                     'no bear, base or bull keys, no name or label field, and every array spans the full horizon. '
                     'With an operating_model, scenarios omit growth_rates (and ebit_margins in gross_profit_less_expenses '
-                    'mode). With discount_rate, scenarios omit wacc. Every observed_at is a YYYY-MM-DD date.')
+                    'mode). With discount_rate, scenarios omit wacc, and omit terminal_growth unless it is below the '
+                    'risk-free rate with a terminal_growth_basis. Every observed_at is a YYYY-MM-DD date, except the '
+                    'month (YYYY-MM) of an industry-table beta.')
 # Diagnostics a plan may carry. Each is computed separately from the scenario
 # values, so an invalid one can be left out without changing the valuation.
 OPTIONAL_PLAN_SECTIONS = ('counterfactuals','calibration_comparisons','monitoring','repurchase_tests')
@@ -683,6 +701,119 @@ def _fetch_calibration_bytes(url):
 AGGREGATE_TOLERANCE=.005
 
 
+MARKET_BETA_SECTOR_PREFIX='Total Market (without financial'
+
+
+def _calibration_source(sources, dataset=None, kind=None):
+    for source in sources:
+        data=source.get('data') if isinstance(source,dict) else None
+        if not isinstance(data,dict):
+            continue
+        if (dataset and data.get('dataset')==dataset) or (kind and source.get('kind')==kind):
+            return source
+    return None
+
+
+def _pin_market_conventions(locked, sources, reported, valuation_day, changes):
+    """Pin the market-consistent conventions and every beta number from the run's own sources.
+
+    The model chooses the industry mapping; Python supplies each number. Pins are
+    idempotent, and a change is recorded only when a value actually changes.
+    """
+    def record(field, previous, pinned, reason):
+        if previous!=pinned:
+            changes.append({'field':field,'previous':previous,'pinned':pinned,'source_refs':[],'reason':reason})
+    erp=_calibration_source(sources,dataset='damodaran_us_implied_erp')
+    table=_calibration_source(sources,dataset='damodaran_us_sector_betas')
+    regression=_calibration_source(sources,kind='historical_equity_beta')
+    notes=[]
+    rate=locked.get('discount_rate')
+    if rate is None:
+        if erp is not None and not locked.get('unavailable'):
+            raise ValueError('A dated discount_rate is required: the evidence includes a matched risk-free rate and '
+                             f'implied equity risk premium ({erp["id"]}). Omit scenario wacc and terminal_growth unless stated below the risk-free rate')
+        notes.append('No dated risk-free rate and equity risk premium were available, so the market-consistent rate '
+                     'glide and terminal-growth convention are not applied.')
+        return notes
+    if not isinstance(rate,dict):
+        return notes
+    marginal=(rate.get('marginal_tax_rate') or {}).get('value') if isinstance(rate.get('marginal_tax_rate'),dict) else None
+    if locked.get('currency')=='USD' and isinstance(marginal,(int,float)) and marginal<.21:
+        raise ValueError(f'discount_rate.marginal_tax_rate {marginal:.1%} is below the 21% US federal statutory rate. The '
+                         'marginal rate is the statutory federal plus state rate (about 25%), never the reported effective rate; '
+                         'the effective rate belongs in scenario tax_rate')
+    rows={row['sector']:row for row in (table or {}).get('data',{}).get('sectors',[]) if isinstance(row,dict)}
+    beta=rate.get('unlevered_beta')
+    if isinstance(beta,dict) and beta.get('calculation')=='bottom_up_sector_weighted':
+        if table is None:
+            raise ValueError('A bottom-up beta needs the supplied industry beta table; none was retrieved')
+        sectors=beta.get('sectors')
+        if not isinstance(sectors,list) or not sectors:
+            raise ValueError('bottom_up_sector_weighted needs sectors: [{"sector": <exact table name>, "weight": w}]')
+        for item in sectors:
+            row=rows.get(item.get('sector')) if isinstance(item,dict) else None
+            if row is None or row.get('is_aggregate'):
+                raise ValueError(f'Bottom-up sector {item.get("sector") if isinstance(item,dict) else item!r} is not an '
+                                 f'industry name in {table["id"]}; use the exact names in that table')
+            for key,value in (('cash_corrected_unlevered_beta',row['cash_corrected_unlevered_beta']),('firms',row.get('firms'))):
+                record(f'discount_rate.unlevered_beta.sectors.{item["sector"]}.{key}',item.get(key),value,'pinned from the industry beta table')
+                item[key]=value
+        for key,value in (('observed_at',table['data']['observed_at']),('date_precision','month')):
+            record(f'discount_rate.unlevered_beta.{key}',beta.get(key),value,'industry table observation month')
+            beta[key]=value
+        refs=list(dict.fromkeys([*(beta.get('source_refs') or []),table['id']]))
+        beta['source_refs']=refs
+        beta.pop('value',None)
+    elif isinstance(beta,dict) and beta.get('calculation')=='historical_issuer_cash_corrected' and regression is not None:
+        measured=regression['data']['beta']
+        record('discount_rate.unlevered_beta.historical_equity_beta',beta.get('historical_equity_beta'),measured,'pinned from the weekly regression source')
+        beta['historical_equity_beta']=measured
+    locked.pop('beta_cross_checks',None)
+    if regression is not None and isinstance(beta,dict):
+        measured=regression['data']['beta']
+        def case(name,label,value):
+            return {'name':name,'label':label,'unlevered_beta':{'calculation':'historical_issuer_cash_corrected',
+                'historical_equity_beta':value,'observed_at':regression['data']['last_return_week_end'],
+                'source_refs':[regression['id']],'label':label}}
+        checks=[]
+        if beta.get('calculation')!='historical_issuer_cash_corrected':
+            checks.append(case('regression_beta',f'Five-year weekly regression equity beta {measured:.3f} against '
+                               f'{regression["data"].get("benchmark_symbol","the index")}, cash-corrected and relevered',measured))
+        checks.append(case('blume_adjusted_regression_beta','Regression beta moved one third toward one (2/3 x measured + 1/3), '
+                           'the common adjustment for estimation error',2/3*measured+1/3))
+        locked['beta_cross_checks']=checks
+    market=next((row for name,row in rows.items() if name.startswith(MARKET_BETA_SECTOR_PREFIX) and row.get('is_aggregate')),None)
+    if locked.get('currency')=='USD' and erp is not None and market is not None:
+        pinned={'value':market['cash_corrected_unlevered_beta'],'observed_at':table['data']['observed_at'],
+                'date_precision':'month','source_refs':[table['id']],
+                'label':f'{market["sector"]} cash-corrected unlevered beta: the market\'s average operating-asset beta, '
+                        'relevered at this firm\'s leverage for the terminal cost of capital'}
+        record('discount_rate.term_structure',rate.get('term_structure'),'glide_to_market_v1','market-consistent rate path')
+        record('discount_rate.terminal_unlevered_beta',rate.get('terminal_unlevered_beta'),pinned,'pinned from the industry beta table')
+        rate['term_structure']='glide_to_market_v1'
+        rate['terminal_unlevered_beta']=pinned
+    else:
+        rate.pop('term_structure',None); rate.pop('terminal_unlevered_beta',None)
+        notes.append('The market-consistent rate glide and terminal-growth convention need USD cash flows, the matched '
+                     'US risk-free rate and implied equity risk premium, and the market beta from the industry table; '
+                     'they are not applied, so one constant discount rate is used.')
+    dates=reported.get('input_dates',{})
+    anchor=(dates.get('revenue') or {}).get('end_date')
+    if anchor and anchor==(dates.get('net_debt') or {}).get('instant'):
+        days=(date.fromisoformat(valuation_day)-date.fromisoformat(anchor)).days
+        if 0<=days<=366:
+            timing={'convention':'stub_v1','anchor_date':anchor}
+            record('valuation_timing',locked.get('valuation_timing'),timing,'present value dated at the valuation date')
+            locked['valuation_timing']=timing
+        else:
+            locked.pop('valuation_timing',None)
+            notes.append(f'The annual balance sheet is {days} days from the valuation date, so no stub adjustment is made; '
+                         'values are as of the fiscal year end.')
+    else:
+        locked.pop('valuation_timing',None)
+    return notes
+
+
 def _rounded(values):
     return [round(v,4) if isinstance(v,(int,float)) and not isinstance(v,bool) else v for v in values] if isinstance(values,list) else values
 
@@ -772,6 +903,7 @@ def _lock_plan(plan, sources):
                         changes.append({'field':f'scenarios.{name}.{field}','previous':locked['scenarios'][name].pop(field),
                             'pinned':'derived from operating_model','source_refs':[],
                             'reason':'aggregate forecast array matched the governing operating model within tolerance'})
+    convention_notes=_pin_market_conventions(locked,sources,reported,valuation_day,changes)
     if 'entry_policy' in locked:
         # Valuation research only (settled owner decision): no entry thresholds.
         changes.append({'field':'entry_policy','previous':locked.pop('entry_policy'),'pinned':None,'source_refs':[],
@@ -815,8 +947,14 @@ def _lock_plan(plan, sources):
         'classified as nonoperating under an explicit house policy. Omitted investment categories are '
         'not reported zeros, and required operating cash is not established as zero. '+lease_allocation+
         'Additional unidentified '
-        'claims are assumed zero, not established absent. GAAP EBIT retains operating rent, SBC and R&D. '
-        'Annual year-end cash flows are used without an interim balance-sheet roll-forward or stub-period adjustment.')
+        'claims are assumed zero, not established absent. GAAP EBIT retains operating rent, SBC and R&D. '+
+        ('Discount rates move from the current cost of capital toward market-average business risk over years 6-10, and '
+         'terminal growth defaults to the risk-free rate, the long-run growth the equity risk premium assumes. '
+         if locked.get('discount_rate',{}).get('term_structure')=='glide_to_market_v1' else '')+
+        ('Present value is dated at the valuation date with a first-year stub; net debt stays at the annual balance sheet. '
+         if locked.get('valuation_timing') else
+         'Annual year-end cash flows are used without an interim balance-sheet roll-forward or stub-period adjustment. ')+
+        ' '.join(convention_notes))
     return locked,changes
 
 
@@ -917,13 +1055,17 @@ def valuation_section(plan, result):
     currency = result.get('currency', plan['currency'])
     lines = ['\n## Executable valuation', '',
              'The following values are recomputed by Python from the editable assumptions; forecasts are house assumptions.', '',
-             '| Scenario | Probability | WACC | Terminal growth | Value per share |',
-             '|---|---:|---:|---:|---:|']
+             '| Scenario | Probability | Discount rate | Terminal growth | Value per share | Value / price |',
+             '|---|---:|---:|---:|---:|---:|']
     for name in ('bear','base','bull'):
         scenario, inputs = result['scenarios'][name], plan['scenarios'][name]
-        lines.append(f'| {name.title()} | {inputs["probability"]:.1%} | {inputs["wacc"]:.1%} | '
-                     f'{inputs["terminal_growth"]:.1%} | {currency} {scenario["per_share_value"]:,.2f} |')
-    lines += ['',f'Weighted intrinsic value per share: {currency} {result["weighted_per_share_value"]:,.2f}',
+        rate = (f'{scenario["initial_rate"]:.2%} → {scenario["terminal_rate"]:.2%}' if 'terminal_rate' in scenario and
+                abs(scenario['initial_rate']-scenario['terminal_rate'])>1e-12 else f'{scenario.get("initial_rate", inputs.get("wacc", 0)):.2%}')
+        growth = scenario.get('terminal_growth', inputs.get('terminal_growth'))
+        ratio = f'{scenario["value_to_price"]:.2f}' if 'value_to_price' in scenario else 'n/a'
+        lines.append(f'| {name.title()} | {inputs["probability"]:.1%} | {rate} | {growth:.2%} | {currency} {scenario["per_share_value"]:,.2f} | {ratio} |')
+    lines += ['',f'Weighted intrinsic value per share: {currency} {result["weighted_per_share_value"]:,.2f}'+
+              (f'; value / price {result["weighted_value_to_price"]:.2f}' if 'weighted_value_to_price' in result else ''),
               '',f'Forecast basis: {plan["assumptions_label"]}',
               '', 'Amounts use whole currency units and actual share counts. Net debt includes the selected cash deduction once. '
                   'See assumptions.json, cashflows.csv and sensitivity.csv for the inputs and calculations.']
@@ -936,8 +1078,16 @@ def valuation_section(plan, result):
         row=dates.get(field,{})
         when=(row.get('instant') or row.get('observed_at') or row.get('end_date')) if isinstance(row,dict) else None
         measurements.append(label+': '+str(when or 'not supplied'))
-    lines += ['', 'Measurement dates — '+ '; '.join(measurements)+'. '
-              'Balances are not rolled forward to the quote date; the annual cash-flow model has no stub-period adjustment.']
+    timing=(result.get('discounting') or {}).get('timing',{})
+    if timing.get('convention')=='stub_v1':
+        lines += ['', 'Measurement dates — '+ '; '.join(measurements)+'.', '',
+                  f'Valuation date {timing["valuation_date"]}: present value is discounted to this date, the first forecast '
+                  f'year counts only its unexpired {1-timing["stub_years"]:.0%}, and net debt stays at the '
+                  f'{timing["anchor_date"]} annual balance sheet.']
+    else:
+        lines += ['', 'Measurement dates — '+ '; '.join(measurements)+'. '
+                  'Balances are not rolled forward to the quote date; the annual cash-flow model has no stub-period adjustment.']
+    lines += _market_consistency_exhibits(result, currency)
     cases=result.get('counterfactuals',{})
     if cases:
         lines += ['', '### Conditional counterfactuals', '',
@@ -986,6 +1136,60 @@ def valuation_section(plan, result):
                          f'{row["conditional_per_share_value"]:,.2f} / {row["value_change"]["dollar_delta"]:+,.2f} |')
     lines += _computed_exhibits(result,currency)
     return '\n'.join(lines)+'\n'
+
+
+def _market_consistency_exhibits(result, currency):
+    """Computed exhibits for what the price implies and where the difference comes from."""
+    lines=[]
+    discounting=result.get('discounting') or {}
+    if discounting.get('convention')=='glide_to_market_v1':
+        path=', '.join(f'{rate:.2%}' for rate in discounting['base_rate_path'])
+        lines += ['', '### Discount-rate path', '',
+            f'Base case, years 1-{len(discounting["base_rate_path"])}: {path}; terminal {discounting["terminal_rate"]:.2%}. '
+            f'The terminal rate uses the market operating-asset beta {discounting["terminal_unlevered_beta"]:.2f} relevered at this '
+            f'firm\'s leverage ({discounting["terminal_relevered_beta"]:.2f}). Damodaran\'s spreadsheet default would be '
+            f'{discounting["damodaran_default_terminal_rate"]:.2%} (risk-free rate plus equity risk premium). Terminal growth '
+            f'defaults to the {discounting["risk_free_rate"]:.2%} risk-free rate, the long-run growth the equity risk premium assumes.']
+    implied=result.get('implied_return_at_price')
+    if implied:
+        lines += ['', '### What the price implies', '',
+            '| Scenario | Implied return at the price | Required return (flat equivalent) | Difference | Terminal spread at implied return |',
+            '|---|---:|---:|---:|---:|']
+        def cell(value, pattern):
+            return pattern.format(value) if isinstance(value,(int,float)) else 'not solved'
+        for name,row in implied['scenarios'].items():
+            spread=row.get('terminal_spread_at_implied_return')
+            flag=' (fragile)' if row.get('fragile') else ''
+            lines.append(f'| {name.title()} | {cell(row.get("implied_return"),"{:.2%}")} | {cell(row.get("required_return_flat_equivalent"),"{:.2%}")} | '
+                         f'{cell(row.get("gap_percentage_points"),"{:.2f} pt")} | {cell(spread,"{:.2%}")}{flag} |')
+        weighted=implied['probability_weighted_value']
+        lines.append(f'| Probability-weighted value | {cell(weighted.get("implied_return"),"{:.2%}")} | '
+                     f'{cell(weighted.get("required_return_flat_equivalent"),"{:.2%}")} | {cell(weighted.get("gap_percentage_points"),"{:.2f} pt")} | |')
+        lines += ['', 'The implied return is the one discount rate, applied in every year and in the terminal value, at which value '
+                      'equals the price; the required return is the same calculation at the house value. This describes what the '
+                      'price implies, not a forecast of shareholder returns. A terminal spread under two points marks a fragile '
+                      'result.']
+    panel=result.get('convention_panel')
+    if panel:
+        lines += ['', '### Value under alternative conventions (base case, one change at a time)', '',
+                  '| Alternative | Value per share | Change | Status |', '|---|---:|---:|---|']
+        for row in panel['rows']:
+            value=f'{currency} {row["per_share_value"]:,.2f}' if row.get('per_share_value') is not None else '—'
+            change=f'{row["dollar_delta"]:+,.2f}' if row.get('dollar_delta') is not None else '—'
+            status=row['status'].replace('_',' ')+(' (sensitivity)' if row.get('kind')=='sensitivity' else '')
+            lines.append(f'| {row["label"]} | {value} | {change} | {status} |')
+        if panel.get('largest_meaningful_step'):
+            lines += ['', f'Largest convention step: {panel["largest_meaningful_step"].replace("_"," ")}. Rows carry no probability and are never tuned to the price.']
+    checks=result.get('beta_cross_checks') or []
+    if checks:
+        lines += ['', '| Beta cross-check | Unlevered beta | Initial discount rate | Base value | Change |', '|---|---:|---:|---:|---:|']
+        for row in checks:
+            if row.get('status')=='calculated':
+                lines.append(f'| {row["label"]} | {row["unlevered_beta"]:.3f} | {row["wacc"]:.2%} | {currency} {row["per_share_value"]:,.2f} | '
+                             f'{row["value_change"]["dollar_delta"]:+,.2f} |')
+            else:
+                lines.append(f'| {row["label"]} | — | — | not calculated | — |')
+    return lines
 
 
 def _render(memo, sources, gaps, plan, result, state):
