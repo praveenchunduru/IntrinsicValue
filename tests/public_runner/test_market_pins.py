@@ -104,7 +104,7 @@ class PinTests(unittest.TestCase):
 
     def test_rate_instructions_match_the_convention_python_applies(self):
         self.assertIn('Omit scenario wacc and terminal_growth', pipeline._rate_convention([ERP, TABLE], 'USD'))
-        self.assertIn('state terminal_growth for each scenario', pipeline._rate_convention([ERP, TABLE], 'EUR'))
+        self.assertIn('terminal_growth for each scenario', pipeline._rate_convention([ERP, TABLE], 'EUR'))
         self.assertIn('state terminal_growth for each scenario', pipeline._rate_convention([ERP], 'USD'))
         self.assertIn('Give wacc and terminal_growth', pipeline._rate_convention([TABLE], 'USD'))
         self.assertNotIn('Python discounts with the current cost of capital', pipeline.FORECAST_SCHEMA)

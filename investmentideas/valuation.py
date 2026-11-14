@@ -540,9 +540,12 @@ def _fixed_exit_return(actuals, projection, price):
     exit_value=projection['terminal_enterprise_value']/shares
     cashflows[-1]+=exit_value
     solved=_cashflow_irr(cashflows,times)
+    versioned='discount_time' in rows[0]
     solved.update({'entry_price':price,'opening_bridge_distribution_per_share':opening,
                    'terminal_enterprise_value_per_share':exit_value,'cashflows_per_share':cashflows,
-                   'basis':'Illustrative debt/claims-settled cash stream: the signed opening net-asset bridge is distributed (or funded) immediately; all unlevered FCFF is paid annually; enterprise value is sold in the last explicit year at the ORIGINAL scenario terminal formula. Exit value is fixed while solving the return. No actual payout, refinancing, tax or stock-price-return forecast is established.'})
+                   'basis':('Illustrative debt/claims-settled cash stream: the signed opening net-asset bridge is distributed (or funded) immediately; each year\'s unlevered FCFF is paid at its discount time (under a valuation-date stub the first year counts only its unexpired fraction and later flows fall at year k minus the stub); enterprise value is sold at the final model year, a steady-state year when the forecast was extended, at the ORIGINAL scenario terminal formula. Exit value is fixed while solving the return. No actual payout, refinancing, tax or stock-price-return forecast is established.'
+                            if versioned else
+                            'Illustrative debt/claims-settled cash stream: the signed opening net-asset bridge is distributed (or funded) immediately; all unlevered FCFF is paid annually; enterprise value is sold in the last explicit year at the ORIGINAL scenario terminal formula. Exit value is fixed while solving the return. No actual payout, refinancing, tax or stock-price-return forecast is established.')})
     return solved
 
 
@@ -574,9 +577,10 @@ def _forecast_period(plan, index, row=None):
 def _unchanged_multiple_return(actuals, projection, price, metric, multiple):
     """Keep operations fixed and apply a like-period entry multiple at exit."""
     final_earnings = projection['cashflows'][-1][metric]
+    last_phase = projection['cashflows'][-1].get('phase')
     result = {'entry_multiple': copy.deepcopy(multiple), 'earnings_metric': metric,
               'entry_earnings_period': 'first_explicit_forecast_year',
-              'exit_earnings_period': 'last_explicit_forecast_year',
+              'exit_earnings_period': 'final_steady_state_year' if last_phase == 'steady_state' else 'last_explicit_forecast_year',
               'final_forecast_earnings': final_earnings,
               'original_dcf_terminal_enterprise_value': projection['terminal_enterprise_value'],
               'conditional_exit_enterprise_value': None}
@@ -589,6 +593,18 @@ def _unchanged_multiple_return(actuals, projection, price, metric, multiple):
         return dict(result, status='not_calculated', reason='Conditional exit arithmetic exceeds finite numeric bounds.')
     alternative = dict(projection, terminal_enterprise_value=exit_value)
     solved = _fixed_exit_return(actuals, alternative, price)
+    if 'discount_time' in projection['cashflows'][0]:
+        solved['basis'] = (
+            'Conditional debt/claims-settled owner stream at the saved market price: the signed opening '
+            'net-debt/other-claims bridge is settled immediately, each year\'s unlevered FCFF is distributed at its '
+            'discount time (under a valuation-date stub the first year counts only its unexpired fraction), and '
+            'enterprise value is sold at the final model year. The exit equals entry market EV / first-forecast-year '
+            'earnings times the same scenario final-model-year earnings (a steady-state year when the forecast was '
+            'extended), using the named EBIT or NOPAT metric consistently. Operating cash flows, taxes, reinvestment, '
+            'current shares and opening financing stay fixed; no ongoing debt or buyback schedule is assumed. This '
+            'alternative exit replaces the original terminal formula only in this return diagnostic; it is not a '
+            'common-share payout, refinancing or trading-price forecast.')
+        return dict(result, **solved, conditional_exit_enterprise_value=exit_value)
     solved['basis'] = (
         'Conditional debt/claims-settled owner stream at the saved market price: the signed opening '
         'net-debt/other-claims bridge is settled immediately, all unlevered FCFF is distributed at '
@@ -636,7 +652,9 @@ def _valuation_multiples(plan, actuals, scenarios, market):
                 'ev_to_final_forecast_ebit': _positive_multiple(projection['terminal_enterprise_value'], last['ebit']),
                 'ev_to_final_forecast_nopat': _positive_multiple(projection['terminal_enterprise_value'], last['nopat']),
                 'ev_to_terminal_year_nopat': _positive_multiple(projection['terminal_enterprise_value'], projection['terminal_nopat']),
-                'basis': 'Original scenario terminal formula, received at the end of its last explicit model year. Final-forecast-year earnings and next terminal-year NOPAT are separate denominators.',
+                'basis': ('Original scenario terminal formula, received at the final model year (a steady-state year when the forecast was extended to year 10), at its discount time. Final-model-year earnings and next terminal-year NOPAT are separate denominators.'
+                          if 'discount_time' in last else
+                          'Original scenario terminal formula, received at the end of its last explicit model year. Final-forecast-year earnings and next terminal-year NOPAT are separate denominators.'),
             },
             'unchanged_entry_multiple_exit_returns': {
                 metric: _unchanged_multiple_return(actuals, projection, market, metric, entry[metric])
@@ -1337,19 +1355,35 @@ def _calibration_comparisons(plan, actuals, base, baseline):
         for scenario in trial['scenarios'].values():
             scenario.pop('wacc',None)
         _,_,calculation=materialize(trial)
+        glide=base.get('convention')==GLIDE
         try:
-            projection=_project(actuals,_with_calculation(base,calculation))
+            scenario=_with_calculation(base,calculation)
+            projection=_project(actuals,scenario)
         except ValueError as error:
             output.append({'name':case['name'],'label':case['label'],'overrides':copy.deepcopy(overrides),
                            'status':'not_calculated','reason':str(error)[:300],'per_share_value':None,'wacc':calculation['applied_wacc']})
             continue
-        output.append({'name':case['name'],'label':case['label'],'overrides':copy.deepcopy(overrides),'status':'calculated',
-                       'discount_rate_calculation':calculation,'wacc':calculation['applied_wacc'],
-                       **({'terminal_rate':calculation['terminal_wacc']} if base.get('convention')==GLIDE else {}),
-                       'per_share_value':projection['per_share_value'],
-                       'terminal_value_fraction':projection['terminal_value_fraction'],
-                       'value_change':_value_change(projection['per_share_value'],baseline),
-                       'fixed_assumptions':'Only the listed rate-input records and their dependent calculations, including resulting constant WACC, change. Base operating cash flows, terminal growth/ROIC, equity bridge and house scenarios/weights stay fixed. Historical-fit alternatives are not forward confidence intervals.'})
+        row={'name':case['name'],'label':case['label'],'overrides':copy.deepcopy(overrides),'status':'calculated',
+             'discount_rate_calculation':calculation,'wacc':calculation['applied_wacc'],
+             **({'terminal_rate':calculation['terminal_wacc'],'terminal_growth':scenario['terminal_growth'],
+                 'terminal_growth_source':base.get('terminal_growth_source')} if glide else {}),
+             'per_share_value':projection['per_share_value'],
+             'terminal_value_fraction':projection['terminal_value_fraction'],
+             'value_change':_value_change(projection['per_share_value'],baseline),
+             'fixed_assumptions':(
+                 'Only the listed rate-input records and their dependent calculations change: the initial rate, the '
+                 'terminal rate and, where terminal growth defaults to the risk-free rate, terminal growth, which moves '
+                 'with the comparison\'s risk-free rate. Base operating cash flows, terminal ROIC, equity bridge and house '
+                 'scenarios/weights stay fixed. Historical-fit alternatives are not forward confidence intervals.' if glide else
+                 'Only the listed rate-input records and their dependent calculations, including resulting constant WACC, change. Base operating cash flows, terminal growth/ROIC, equity bridge and house scenarios/weights stay fixed. Historical-fit alternatives are not forward confidence intervals.')}
+        if glide and abs(scenario['terminal_growth']-base['terminal_growth'])>1e-12:
+            # Separates the rate effect from the growth effect for the reader.
+            try:
+                row['per_share_value_at_house_terminal_growth']=_project(
+                    actuals,dict(scenario,terminal_growth=base['terminal_growth']))['per_share_value']
+            except (ValueError,ArithmeticError):
+                row['per_share_value_at_house_terminal_growth']=None
+        output.append(row)
     return output
 
 
@@ -1596,9 +1630,12 @@ def _beta_cross_checks(plan, actuals, base, baseline):
             scenario.pop('wacc', None)
         try:
             _, _, calculation = materialize(trial)
-            value = _project(actuals, _with_calculation(base, calculation))['per_share_value']
+            scenario = _with_calculation(base, calculation)
+            value = _project(actuals, scenario)['per_share_value']
             output.append({'name': case['name'], 'label': case['label'], 'unlevered_beta': calculation['provenance']['unlevered_beta'].get('value'),
                            'wacc': calculation['applied_wacc'], 'per_share_value': value, 'status': 'calculated',
+                           **({'terminal_rate': scenario['terminal_rate'], 'terminal_growth': scenario['terminal_growth']}
+                              if base.get('convention') == GLIDE else {}),
                            'value_change': _value_change(value, baseline)})
         except (ValueError, ArithmeticError, KeyError) as error:
             output.append({'name': case['name'], 'label': case['label'], 'status': 'not_calculated', 'reason': str(error)[:300]})

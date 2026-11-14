@@ -61,7 +61,7 @@ class ContinuityCheckTests(unittest.TestCase):
         rows = result['forecast_continuity']['scenarios']
         first = result['scenarios']['base']['cashflows'][0]['ebit_margin']
         self.assertAlmostEqual(rows['base']['change_percentage_points'], (first - .30) * 100)
-        self.assertIn('Year-1 margin against the last reported year', pipeline._continuity_exhibit(result)[1])
+        self.assertIn('Year-1 margin against the last reported results', pipeline._continuity_exhibit(result)[1])
 
     def test_a_break_without_a_cited_basis_goes_back_with_the_reported_lines(self):
         value = locked_plan(.60)
@@ -75,7 +75,7 @@ class ContinuityCheckTests(unittest.TestCase):
                                             for name in ('bear', 'base', 'bull')}
         pipeline._check_continuity(value, result)
         value['margin_continuity_basis'] = 'not an object'
-        with self.assertRaisesRegex(ValueError, 'object keyed by scenario'):
+        with self.assertRaisesRegex(ValueError, 'object keyed by bear, base or bull'):
             pipeline._check_continuity(value, result)
 
     def test_plans_without_reported_lines_are_not_checked(self):

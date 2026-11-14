@@ -26,7 +26,8 @@ FINANCIAL_CONTEXT_CONCEPTS = frozenset('us-gaap:' + name for name in (
     'OperatingIncomeLoss', 'NetIncomeLoss', 'GrossProfit',
     'CostOfGoodsAndServicesSold', 'CostOfRevenue', 'ResearchAndDevelopmentExpense',
     'ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost', 'SellingGeneralAndAdministrativeExpense',
-    'OperatingExpenses', 'CostsAndExpenses',
+    'OperatingExpenses', 'CostsAndExpenses', 'SellingAndMarketingExpense', 'MarketingExpense',
+    'GeneralAndAdministrativeExpense',
     'NetCashProvidedByUsedInOperatingActivities', 'PaymentsToAcquirePropertyPlantAndEquipment',
     'ShareBasedCompensation', 'StockBasedCompensation', 'DepreciationDepletionAndAmortization',
     'DepreciationDepletionAndAmortizationPropertyPlantAndEquipment', 'InventoryNet',
@@ -36,6 +37,9 @@ FINANCIAL_CONTEXT_CONCEPTS = frozenset('us-gaap:' + name for name in (
     'WeightedAverageNumberOfShareOutstandingBasicAndDiluted',
     'EarningsPerShareBasic', 'EarningsPerShareDiluted', 'EarningsPerShareBasicAndDiluted',
 ))
+# Identifies the concept list a saved source was collected under, so a run
+# resumed after the list changes can say its reference lines may be missing.
+CONCEPT_SELECTION_SHA256 = hashlib.sha256('\n'.join(sorted(PRIMARY_INPUT_CONCEPTS | FINANCIAL_CONTEXT_CONCEPTS)).encode()).hexdigest()
 _AVERAGE_SHARES = frozenset(concept for concept in FINANCIAL_CONTEXT_CONCEPTS if 'WeightedAverage' in concept)
 _PER_SHARE = frozenset(concept for concept in FINANCIAL_CONTEXT_CONCEPTS if 'EarningsPerShare' in concept)
 
@@ -228,7 +232,7 @@ def normalize_companyfacts(payload, *, identity, source_id=None, as_of=None, ent
             'reported_fact_note': ('Official SEC standardized-taxonomy entity-wide observations. Original inline context IDs and '
                                    'dimension XML are not provided by this API. Per-record filing dates and accessions remain explicit; '
                                    'missing tags remain unknown, and filing fiscal-year/frame labels do not replace fact periods.'),
-            'selection': {'as_of': cutoff.isoformat(), 'annual_periods': [list(period) for period in annual_periods],
+            'selection': {'as_of': cutoff.isoformat(), 'concepts_sha256': CONCEPT_SELECTION_SHA256, 'annual_periods': [list(period) for period in annual_periods],
                           'protected_balance_dates': sorted(balance_dates), 'share_dates': share_dates,
                           # Every dimensionless observation of these concepts on a protected balance
                           # date is retained, so their absence there is an absence in the SEC record.

@@ -180,9 +180,16 @@ class StructuredReviewTests(unittest.TestCase):
         parsed=parse_review(json.dumps(review),memo=MEMO)
         self.assertEqual(parsed['central_weakness']['memo_handles_it'],'no')
         self.assertEqual(parsed['gap_explained'],'partly')
-        for broken in ({'claim':'x','computed_effect':'y','memo_handles_it':'maybe'},
-                       {'claim':'','computed_effect':'y','memo_handles_it':'yes'}, 'text'):
-            review['central_weakness']=broken; review['gap_explained']='unclear'
+        # An unclear answer counts against the memo rather than disappearing.
+        for answer,expected in (('maybe','no'),('Partially.','partly'),('No.','no'),('YES','yes')):
+            review['central_weakness']={'claim':'x','computed_effect':'y','memo_handles_it':answer}
+            review['gap_explained']=answer
+            with self.subTest(answer=answer):
+                parsed=parse_review(json.dumps(review),memo=MEMO)
+                self.assertEqual(parsed['central_weakness']['memo_handles_it'],expected)
+                self.assertEqual(parsed['gap_explained'],expected)
+        for broken in ({'claim':'','computed_effect':'y','memo_handles_it':'yes'}, 'text'):
+            review['central_weakness']=broken; review['gap_explained']=''
             with self.subTest(broken=broken):
                 parsed=parse_review(json.dumps(review),memo=MEMO)
                 self.assertNotIn('central_weakness',parsed)
@@ -345,6 +352,12 @@ class AssessmentFindingTests(unittest.TestCase):
         from investmentideas.quality import assessment_findings
         self.assertEqual(assessment_findings(self.review('yes', 'yes')), [])
         self.assertEqual(assessment_findings(self.review(findings=[{'severity': 'major'}])), [])
+
+    def test_each_answer_counts_on_its_own(self):
+        from investmentideas.quality import assessment_findings
+        rows = assessment_findings({'verdict': 'pass', 'findings': [], 'gap_explained': 'no'})
+        self.assertEqual([row['id'] for row in rows], ['central-weakness-unhandled'])
+        self.assertEqual(assessment_findings({'verdict': 'pass', 'findings': [], 'gap_explained': 'yes'}), [])
 
     def test_a_missing_assessment_is_recorded_without_forcing_a_revision(self):
         from investmentideas.quality import assessment_findings

@@ -7,7 +7,7 @@ changes forecasts, or asks a language model to reconcile an input bridge.
 from __future__ import annotations
 
 import copy
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import math
 import re
@@ -19,32 +19,82 @@ SHARES = {'dei:EntityCommonStockSharesOutstanding', 'us-gaap:CommonStockSharesOu
 # Reported operating lines for the anchor year. They are reference data for
 # forecast continuity, never valuation inputs. A live plan (2026-11-14) put
 # Apple's R&D at $68-96 billion against $45.8 billion reported, because no
-# reported expense level was in front of the forecast author.
+# reported expense level was in front of the forecast author. Line names match
+# the operating-model expense keys where one exists.
 OPERATING_REFERENCE = (
     ('gross_profit', ('us-gaap:GrossProfit',)),
     ('cost_of_revenue', ('us-gaap:CostOfGoodsAndServicesSold', 'us-gaap:CostOfRevenue')),
     ('research_and_development', ('us-gaap:ResearchAndDevelopmentExpense',
                                   'us-gaap:ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost')),
-    ('selling_general_and_administrative', ('us-gaap:SellingGeneralAndAdministrativeExpense',)),
-    ('operating_expenses', ('us-gaap:OperatingExpenses', 'us-gaap:CostsAndExpenses')),
+    ('selling_general_administrative', ('us-gaap:SellingGeneralAndAdministrativeExpense',)),
+    ('selling_and_marketing', ('us-gaap:SellingAndMarketingExpense', 'us-gaap:MarketingExpense')),
+    ('general_and_administrative', ('us-gaap:GeneralAndAdministrativeExpense',)),
+    # Operating expenses exclude cost of revenue; CostsAndExpenses includes it.
+    ('operating_expenses', ('us-gaap:OperatingExpenses',)),
+    ('total_costs_and_expenses', ('us-gaap:CostsAndExpenses',)),
     ('operating_income', ('us-gaap:OperatingIncomeLoss',)),
 )
+SIGNED_REFERENCE_LINES = {'gross_profit', 'operating_income'}
+LINE_SCOPES = {
+    'cost_of_revenue': "the issuer's cost of revenue; its scope follows the issuer's own definition",
+    'operating_expenses': 'operating expenses excluding cost of revenue',
+    'total_costs_and_expenses': 'total costs and expenses, including cost of revenue',
+}
 
 
-def _operating_reference(facts, start, end, currency, revenue):
-    """Unique reported operating lines for the revenue anchor's exact fiscal year."""
+def _period_line(facts, concepts, start, end, currency, signed, conflicts, label, *, annual=True):
+    """The first concept with observations for the exact period decides the line.
+
+    A conflicted preferred concept leaves the line out rather than falling back
+    to a concept with a different scope.
+    """
+    for concept in concepts:
+        items = [item for item in facts if item['concept'] == concept and item['parsed_start'] == start and
+                 item['parsed_end'] == end and item['unit'] == 'iso4217:' + currency and
+                 (not annual or item.get('fact_origin') != 'sec_companyfacts' or item.get('form') not in {'10-Q', '10-Q/A'}) and
+                 (signed or item['value'] >= 0)]
+        if not items:
+            continue
+        chosen = _unique(items, label, conflicts)
+        return (concept, chosen) if chosen else None
+    return None
+
+
+def _operating_reference(facts, start, end, currency, revenue, revenue_concept=None):
+    """Unique reported operating lines for the revenue anchor's exact fiscal year.
+
+    Also reports the latest year-to-date operating margin that begins the day
+    after the anchor, because year 1 of a forecast is that fiscal year.
+    """
     lines, conflicts = {}, []
     for name, concepts in OPERATING_REFERENCE:
-        for concept in concepts:
-            items = [item for item in facts if item['concept'] == concept and item['parsed_start'] == start and
-                     item['parsed_end'] == end and item['unit'] == 'iso4217:' + currency and
-                     (item.get('fact_origin') != 'sec_companyfacts' or item.get('form') not in {'10-Q', '10-Q/A'}) and
-                     (name == 'operating_income' or item['value'] >= 0)]
-            chosen = _unique(items, 'reported ' + name.replace('_', ' '), conflicts)
-            if chosen:
-                lines[name] = {'value': _json_number(chosen['value']), 'concept': concept,
-                               'source_refs': chosen['source_refs']}
-                break
+        found = _period_line(facts, concepts, start, end, currency, name in SIGNED_REFERENCE_LINES, conflicts,
+                             'reported ' + name.replace('_', ' '))
+        if found:
+            concept, chosen = found
+            lines[name] = {'value': _json_number(chosen['value']), 'concept': concept, 'basis': 'reported',
+                           'source_refs': chosen['source_refs']}
+    def derived(name, value, parts, basis):
+        lines[name] = {'value': _json_number(value), 'concept': None, 'basis': basis,
+                       'source_refs': sorted({ref for part in parts for ref in lines[part]['source_refs']})}
+    if 'selling_general_administrative' not in lines and {'selling_and_marketing', 'general_and_administrative'} <= set(lines):
+        derived('selling_general_administrative',
+                Decimal(str(lines['selling_and_marketing']['value'])) + Decimal(str(lines['general_and_administrative']['value'])),
+                ('selling_and_marketing', 'general_and_administrative'),
+                'derived: sum of reported selling and marketing and general and administrative')
+    if 'operating_expenses' not in lines and {'total_costs_and_expenses', 'cost_of_revenue'} <= set(lines):
+        derived('operating_expenses',
+                Decimal(str(lines['total_costs_and_expenses']['value'])) - Decimal(str(lines['cost_of_revenue']['value'])),
+                ('total_costs_and_expenses', 'cost_of_revenue'),
+                'derived: reported total costs and expenses less reported cost of revenue')
+    if 'gross_profit' not in lines and 'cost_of_revenue' in lines and revenue:
+        lines['gross_profit'] = {'value': _json_number(revenue - Decimal(str(lines['cost_of_revenue']['value']))),
+                                 'concept': None, 'source_refs': lines['cost_of_revenue']['source_refs'],
+                                 'basis': "derived: revenue less reported cost of revenue; scope follows the issuer's "
+                                          'cost-of-revenue definition'}
+    for name, scope in LINE_SCOPES.items():
+        if name in lines:
+            lines[name]['scope'] = scope
     output = {'period': {'start_date': start.isoformat(), 'end_date': end.isoformat()}, 'currency': currency,
               'lines': lines, 'conflicts': conflicts,
               'basis': ('Reported operating lines for the revenue anchor year. Reference for year-1 forecast continuity '
@@ -53,6 +103,26 @@ def _operating_reference(facts, start, end, currency, revenue):
         output['operating_margin'] = float(Decimal(str(lines['operating_income']['value'])) / revenue)
     if 'gross_profit' in lines and revenue:
         output['gross_margin'] = float(Decimal(str(lines['gross_profit']['value'])) / revenue)
+    following = end + timedelta(days=1)
+    concepts = (revenue_concept,) if revenue_concept else tuple(sorted(REVENUE))
+    ends = sorted({item['parsed_end'] for item in facts if item['concept'] in concepts and
+                   item['parsed_start'] == following and item['parsed_end'] and item['parsed_end'] > following and
+                   (item['parsed_end'] - following).days < 360 and item['unit'] == 'iso4217:' + currency}, reverse=True)
+    for latest in ends:
+        ytd_conflicts = []
+        sales = _period_line(facts, concepts, following, latest, currency, False, ytd_conflicts,
+                             'year-to-date revenue', annual=False)
+        income = _period_line(facts, ('us-gaap:OperatingIncomeLoss',), following, latest, currency, True, ytd_conflicts,
+                              'year-to-date operating income', annual=False)
+        if sales and income and sales[1]['value'] > 0:
+            output['year_to_date'] = {
+                'period': {'start_date': following.isoformat(), 'end_date': latest.isoformat()},
+                'revenue': _json_number(sales[1]['value']), 'operating_income': _json_number(income[1]['value']),
+                'operating_margin': float(income[1]['value'] / sales[1]['value']),
+                'source_refs': sorted(set(sales[1]['source_refs']) | set(income[1]['source_refs'])),
+                'basis': 'Reported year to date for the fiscal year after the anchor: the first forecast year.'}
+            break
+        conflicts.extend(ytd_conflicts)
     return output
 # Scope follows the FASB US GAAP 2026 documentation, not similar-looking names:
 # https://xbrl.fasb.org/us-gaap/2026/elts/us-gaap-doc-2026.xml
@@ -749,7 +819,7 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                 if revenue:
                     anchor = latest
                     operating_reference = _operating_reference(facts, revenue['parsed_start'], revenue['parsed_end'],
-                                                               currency, revenue['value'])
+                                                               currency, revenue['value'], revenue['concept'])
                     actuals['revenue'] = _json_number(revenue['value'])
                     refs['revenue'] = revenue['source_refs']
                     dates['revenue'] = {'start_date': revenue['start_date'], 'end_date': revenue['end_date'], 'basis': revenue_basis}

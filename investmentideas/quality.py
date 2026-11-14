@@ -302,15 +302,24 @@ def parse_review(text, memo=None, *, anchor_embellished=False):
     # well formed. It is reported to the reader; it is not a finding by itself.
     weakness = review.get('central_weakness')
     if (isinstance(weakness, dict) and all(isinstance(weakness.get(key), str) and weakness[key].strip()
-                                           for key in ('claim', 'computed_effect', 'memo_handles_it')) and
-            weakness['memo_handles_it'].strip().lower() in {'yes', 'partly', 'no'}):
+                                           for key in ('claim', 'computed_effect', 'memo_handles_it'))):
         parsed['central_weakness'] = {'claim': weakness['claim'].strip()[:1200],
                                       'computed_effect': weakness['computed_effect'].strip()[:600],
-                                      'memo_handles_it': weakness['memo_handles_it'].strip().lower()}
+                                      'memo_handles_it': _assessment_answer(weakness['memo_handles_it'])}
     explained = review.get('gap_explained')
-    if isinstance(explained, str) and explained.strip().lower() in {'yes', 'partly', 'no'}:
-        parsed['gap_explained'] = explained.strip().lower()
+    if isinstance(explained, str) and explained.strip():
+        parsed['gap_explained'] = _assessment_answer(explained)
     return parsed
+
+
+def _assessment_answer(text):
+    """Map a reviewer's yes/partly/no answer; anything short of a plain yes counts against the memo."""
+    word = re.sub(r'[^a-z ]', '', text.strip().lower()).strip()
+    if word == 'yes':
+        return 'yes'
+    if word.startswith(('partly', 'partial', 'partially', 'somewhat')):
+        return 'partly'
+    return 'no'
 
 
 def assessment_findings(review):
@@ -321,20 +330,24 @@ def assessment_findings(review):
     between value and price. That instruction alone did not bind: a reviewer
     could answer "no" and still pass the draft. This makes the statement count.
     """
-    weakness, explained = review.get('central_weakness'), review.get('gap_explained')
-    if not isinstance(weakness, dict) or explained is None:
+    weakness = review.get('central_weakness') if isinstance(review.get('central_weakness'), dict) else None
+    explained = review.get('gap_explained')
+    if weakness is None and explained is None:
         return [_finding('review-assessment-missing', 'minor',
                          'The reviewer did not state the central weakness of the conclusion and whether the memo '
                          'explains the difference between value and price in the required form.',
                          'Request a review that states both.')]
     if any(item.get('severity') in {'blocker', 'major'} for item in review.get('findings', [])):
         return []
-    if weakness['memo_handles_it'] == 'yes' and explained == 'yes':
+    handles = weakness['memo_handles_it'] if weakness else 'not stated'
+    # Each answer counts on its own: a "no" on the gap is not excused by a
+    # weakness statement that was malformed or left out.
+    if handles in {'yes', 'not stated'} and explained in {'yes', None}:
         return []
+    detail = (f" Central weakness: {weakness['claim']} Computed effect: {weakness['computed_effect']}." if weakness else '')
     return [_finding('central-weakness-unhandled', 'major',
-                     f"The reviewer judged that the memo handles its central weakness: {weakness['memo_handles_it']}; "
-                     f"and explains the difference between value and price: {explained}. Central weakness: "
-                     f"{weakness['claim']} Computed effect: {weakness['computed_effect']}.",
+                     f"The reviewer judged that the memo handles its central weakness: {handles}; and explains the "
+                     f"difference between value and price: {explained or 'not stated'}.{detail}",
                      'Address this weakness in the memo using its computed value effect, and attribute the difference '
                      'between value and price to computed steps.')]
 
