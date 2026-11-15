@@ -135,7 +135,33 @@ CASH = {
     'marketable_securities': 'MarketableSecurities',
     'current_marketable_securities': 'MarketableSecuritiesCurrent',
     'noncurrent_marketable_securities': 'MarketableSecuritiesNoncurrent',
+    # Fallback only, when none of the investment categories above is reported:
+    # NVIDIA tags its $52.0 billion balance-sheet marketable securities line with
+    # an extension that includes equity securities, leaving only cash selected.
+    'available_for_sale_debt_securities': 'AvailableForSaleSecuritiesDebtSecurities',
 }
+# Reported equity securities stay outside the selected-asset policy; their
+# amount is shown when the AFS fallback is used, so the exclusion is visible.
+EXCLUDED_EQUITY_SECURITIES = ('EquitySecuritiesFvNi', 'EquitySecuritiesFvNiCurrentAndNoncurrent')
+AFS_POLICY = ('Explicit house policy: no balance-sheet marketable-securities or short-term-investment concept is reported '
+              'on the date, so available-for-sale debt securities (us-gaap:AvailableForSaleSecuritiesDebtSecurities) are '
+              'selected. Equity securities and other investments outside that concept are excluded. The available-for-sale '
+              'total can include securities the issuer reports within cash equivalents (NVIDIA, 2026-01-25: $0.5 billion of '
+              '$39.5 billion); that overlap is not separately tagged and is not removed.')
+# LongTermDebt above the balance-sheet carrying amounts by at most this share of
+# them is read as principal before unamortized discount, issuance costs and
+# hedge adjustments. Among the 13 issuers swept on 2026-11-15, reported
+# unamortized balances ran from 0.3% (Apple) to 2.7% (Microsoft, after its
+# Activision debt exchange) of carrying long-term debt; Amazon's LongTermDebt
+# exceeds its carrying parts by 0.64% and Home Depot's by 2.2%. A larger gap is
+# more than a discount and stays a conflict, and so does a gap under 0.1%, below
+# the smallest unamortized balance seen (Apple's 0.34%): that is a disagreement
+# between reported figures, not a discount.
+PRINCIPAL_TOLERANCE = Decimal('0.03')
+PRINCIPAL_FLOOR = Decimal('0.001')
+PRINCIPAL_POLICY = ('Explicit house reading: reported LongTermDebt exceeds the balance-sheet carrying amounts by 0.1% to 3% '
+                    'of them, the range of unamortized discount, issuance costs and hedge adjustments, so it is read '
+                    'as principal and the carrying amounts are used. The difference is disclosed in the bridge.')
 DEBT = {
     'total_debt_and_finance_leases': 'DebtAndCapitalLeaseObligations',
     'financial_debt': 'DebtLongtermAndShorttermCombinedAmount',
@@ -204,8 +230,88 @@ FINANCING_ABSENCE_SCAN = frozenset(
 PRIMARY_INPUT_CONCEPTS = REVENUE | SHARES | {
     'us-gaap:' + concept for group in (CASH, DEBT, FINANCE_LEASES, UNCLASSIFIED_FINANCING, LEGACY_LEASES,
                                         DEBT_RECONCILIATION) for concept in group.values()
-}
+} | {'us-gaap:' + concept for concept in EXCLUDED_EQUITY_SECURITIES}
 STRUCTURED_FORMS = frozenset({'10-K', '10-K/A', '10-Q', '10-Q/A', '20-F', '20-F/A', '40-F', '40-F/A'})
+ANNUAL_REPORT_FORMS = STRUCTURED_FORMS - {'10-Q', '10-Q/A'}
+CLASS_OF_STOCK_AXIS = 'us-gaap:StatementClassOfStockAxis'
+CLASS_SHARES_BASIS = ('sum of cover-page outstanding shares by share class (dei:EntityCommonStockSharesOutstanding on '
+                      'us-gaap:StatementClassOfStockAxis) on one date; no entity-wide total is reported')
+
+
+def _share_class(raw, origin):
+    """The share-class member of a cover-page class count from an inline filing, else None.
+
+    Meta reports outstanding shares only by class (2,214,472,367 Class A and
+    341,768,886 Class B on its October 2026 10-Q cover), so no entity-wide count
+    existed to pin.
+    """
+    dimensions = raw.get('dimensions')
+    if (origin != 'inline_xbrl' or raw.get('dimension_filter') != 'class_of_stock_cover_shares' or
+            raw.get('concept') != 'dei:EntityCommonStockSharesOutstanding' or not isinstance(dimensions, dict) or
+            list(dimensions) != [CLASS_OF_STOCK_AXIS] or not isinstance(dimensions[CLASS_OF_STOCK_AXIS], str)):
+        return None
+    return dimensions[CLASS_OF_STOCK_AXIS] or None
+
+
+def _class_share_total(items, conflicts):
+    """The latest single-date sum of class cover counts, used only without an entity-wide count."""
+    by_date = {}
+    for item in items:
+        if item['unit'] == 'xbrli:shares' and item['parsed_instant'] and item['value'] > 0:
+            by_date.setdefault(item['parsed_instant'], []).append(item)
+    if not by_date:
+        return None
+    latest = max(by_date)
+    totals = {}
+    for item in by_date[latest]:
+        totals.setdefault(item['source_id'], {}).setdefault(item['share_class'], set()).add(item['value'])
+    sums = set()
+    for classes in totals.values():
+        if any(len(values) != 1 for values in classes.values()):
+            conflicts.append('Conflicting cover-page outstanding shares for one share class; no total was selected')
+            return None
+        sums.add(sum(next(iter(values)) for values in classes.values()))
+    if len(sums) != 1:
+        conflicts.append('Cover-page share-class totals conflict between primary sources; no total was selected')
+        return None
+    used = by_date[latest]
+    return {'value': sums.pop(), 'instant': latest.isoformat(), 'source_refs': sorted({item['source_id'] for item in used}),
+            'classes': {item['share_class']: _json_number(item['value']) for item in used}}
+
+
+def _cover_rounding(items):
+    """Keep the cover-page count when the balance-sheet counts are that count rounded.
+
+    ExxonMobil Holdings reported 4,079,222,444 shares on its cover and
+    4,079,000,000 on its balance sheet for the same date; the company-facts
+    record carries no stated precision, so the rounding is read from the
+    balance-sheet figure's trailing zeros (at least a thousand). Anything else
+    is left for ``_unique`` to judge.
+    """
+    items = list(items)
+    cover = {item['value'] for item in items if item['concept'] == 'dei:EntityCommonStockSharesOutstanding'}
+    others = [item for item in items if item['concept'] != 'dei:EntityCommonStockSharesOutstanding']
+    if len(cover) != 1 or not others or len({item['value'] for item in items}) == 1:
+        return items
+    count = next(iter(cover))
+    def rounded(value):
+        unit = 1
+        while unit < 10**9 and value % (unit * 10) == 0:
+            unit *= 10
+        return unit >= 1000 and abs(value - count) * 2 <= unit
+    if all(item['value'] == count or rounded(item['value']) for item in others):
+        return [item for item in items if item['value'] == count]
+    return items
+
+
+def _no_annual_report_note(statements):
+    note = ('No annual report is in the primary record: every SEC filing and company fact collected for this registrant '
+            'is quarterly (10-Q), so no annual revenue, balance-sheet anchor or net-debt bridge can be pinned')
+    if statements:
+        note += ('. The registrant\'s filing states that it is a successor registrant ("' + statements[0] + '"); the '
+                 'predecessor\'s annual reports are filed under a different SEC CIK and were not collected. Use the '
+                 'predecessor\'s annual report as reviewed primary evidence, or wait for the successor\'s first 10-K')
+    return note
 
 
 def _subtotal(items, total, current, noncurrent, label, conflicts):
@@ -231,33 +337,62 @@ def _components_public(components):
                       if item.get('classification_evidence') else {})} for name, item in components.items()}
 
 
-def _reconcile_gross_term_debt(items, reconciliation):
+def _reconcile_gross_term_debt(items, reconciliation, leases=None):
     """Return items without a LongTermDebt fact that is reported gross principal.
 
     Some issuers tag the debt-note total before unamortized discount and
-    issuance costs as LongTermDebt. It is set aside only on exact reported
+    issuance costs as LongTermDebt. It is set aside on exact reported
     arithmetic: it equals DebtInstrumentCarryingAmount, and less the reported
-    unamortized amount it equals current plus noncurrent carrying debt. The
-    balance-sheet carrying parts are then used. Nothing is estimated.
+    unamortized amount it equals current plus noncurrent carrying debt.
+    Otherwise it is set aside when it exceeds the balance-sheet carrying amounts
+    by ``PRINCIPAL_FLOOR`` to ``PRINCIPAL_TOLERANCE`` of them, and the difference is disclosed:
+    Amazon reports no unamortized amount on the date, and Home Depot reports its
+    carrying debt only together with finance leases, which are then subtracted.
+    The balance-sheet carrying parts are used either way. Nothing is estimated.
     """
     whole, first, second = (items.get(key) for key in ('term_debt', 'current_term_debt', 'noncurrent_term_debt'))
     gross = reconciliation.get('gross_long_term_debt')
     unamortized = reconciliation.get('unamortized_discount_and_issuance_costs')
-    if not (whole and first and second and gross and unamortized):
-        return items, None
-    carrying = first['value'] + second['value']
-    if (whole['value'] == carrying or gross['value'] != whole['value'] or
-            whole['value'] - abs(unamortized['value']) != carrying):
+    if not whole:
         return items, None
     adjusted = dict(items)
     adjusted['term_debt'] = None
+    if first and second and gross and unamortized:
+        carrying = first['value'] + second['value']
+        if (whole['value'] != carrying and gross['value'] == whole['value'] and
+                whole['value'] - abs(unamortized['value']) == carrying):
+            return adjusted, {
+                'basis': 'Reported LongTermDebt equals gross principal before unamortized discount and issuance costs; '
+                         'current plus noncurrent carrying amounts are used',
+                'gross_principal': _json_number(whole['value']),
+                'unamortized_discount_and_issuance_costs': _json_number(abs(unamortized['value'])),
+                'carrying_amount': _json_number(carrying),
+                'source_facts': [fact for item in (whole, gross, unamortized) for fact in item['facts']]}
+    lease_parts = (leases or {}).get('reconciled')
+    combined = (items.get('current_term_debt_and_finance_leases'), items.get('noncurrent_term_debt_and_finance_leases'))
+    if first and second:
+        carrying, parts = first['value'] + second['value'], (first, second)
+        scope = 'current plus noncurrent long-term debt'
+    elif all(combined) and lease_parts:
+        carrying = combined[0]['value'] + combined[1]['value'] - _amount(lease_parts)
+        parts = (*combined, *lease_parts.values())
+        scope = 'current plus noncurrent long-term debt and finance leases, less reported finance lease liabilities'
+    else:
+        return items, None
+    difference = whole['value'] - carrying
+    if carrying <= 0 or not PRINCIPAL_FLOOR * carrying <= difference <= PRINCIPAL_TOLERANCE * carrying:
+        return items, None
     return adjusted, {
-        'basis': 'Reported LongTermDebt equals gross principal before unamortized discount and issuance costs; '
-                 'current plus noncurrent carrying amounts are used',
+        'basis': f'Reported LongTermDebt exceeds the balance-sheet carrying amount ({scope}) by '
+                 f'{float(difference / carrying):.2%} of it, within the {float(PRINCIPAL_TOLERANCE):.0%} bound for '
+                 'unamortized discount, issuance costs and hedge adjustments; it is read as principal and the carrying '
+                 'amounts are used',
+        'policy': PRINCIPAL_POLICY,
         'gross_principal': _json_number(whole['value']),
-        'unamortized_discount_and_issuance_costs': _json_number(abs(unamortized['value'])),
         'carrying_amount': _json_number(carrying),
-        'source_facts': [fact for item in (whole, gross, unamortized) for fact in item['facts']]}
+        'difference': _json_number(difference),
+        **({'reported_unamortized_discount_and_issuance_costs': _json_number(abs(unamortized['value']))} if unamortized else {}),
+        'source_facts': [fact for item in (whole, *parts) for fact in item['facts']]}
 
 
 def _validate_scopes(items, scopes, label, conflicts):
@@ -418,6 +553,8 @@ def _cash_selection(items, conflicts):
     else:
         selected.update({key: items[key] for key in ('current_marketable_securities',
                         'noncurrent_marketable_securities') if items[key]})
+    if len(selected) == 1 and items.get('available_for_sale_debt_securities'):
+        selected['available_for_sale_debt_securities'] = items['available_for_sale_debt_securities']
     return selected
 
 
@@ -701,6 +838,7 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
     today = datetime.now(timezone.utc).date()
     cutoff = min(_day(as_of) or today, today)
     conflicts, skipped, facts, source_ids, scanned_dates = [], [], [], set(), set()
+    annual_forms_seen, successor_statements = False, []
     for source in sources:
         if not isinstance(source, dict) or not (source.get('kind')=='regulatory_primary' or
                                                 source.get('source_tier')=='regulatory_primary'):
@@ -714,6 +852,9 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
         metadata = data.get('metadata') if isinstance(data.get('metadata'), dict) else {}
         source_filed = _day(metadata.get('filingDate'))
         expected_entity = _cik(metadata.get('cik'))
+        annual_forms_seen = annual_forms_seen or metadata.get('form') in ANNUAL_REPORT_FORMS
+        if isinstance(metadata.get('successor_registrant_statement'), str):
+            successor_statements.append(metadata['successor_registrant_statement'][:400])
         collections = []
         if isinstance(data.get('inline_facts'), list) and not (source_filed and source_filed > cutoff):
             collections.append((data['inline_facts'], 'inline_xbrl'))
@@ -730,8 +871,12 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
             else:
                 skipped.append('Structured primary facts lack a recognized SEC companyfacts origin and issuer endpoint')
         for raw, origin in ((raw, origin) for rows, origin in collections for raw in rows):
-            if not isinstance(raw, dict) or raw.get('is_nil') or raw.get('dimensions') != {}:
+            if not isinstance(raw, dict) or raw.get('is_nil'):
                 continue
+            share_class = _share_class(raw, origin)
+            if raw.get('dimensions') != {} and not share_class:
+                continue
+            annual_forms_seen = annual_forms_seen or (origin == 'sec_companyfacts' and raw.get('form') in ANNUAL_REPORT_FORMS)
             filed = source_filed
             if origin == 'sec_companyfacts':
                 filed = _day(raw.get('filing_date'))
@@ -773,20 +918,27 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                                                           'original_unit', 'frame', 'source_url', 'source_record')})
             item.update(source_id=sid, entity_identifier=entity, value=value, parsed_instant=instant,
                         parsed_start=start, parsed_end=end)
+            if share_class:
+                item['share_class'] = share_class
             facts.append(item)
             source_ids.add(sid)
     entities = {item['entity_identifier'] for item in facts}
+    # Class-level cover counts serve only the share total below.
+    class_shares = [item for item in facts if item.get('share_class')]
+    facts = [item for item in facts if not item.get('share_class')]
     actuals, refs, dates, bridge, claims_bridge = {}, {}, {}, {}, {}
     operating_reference = None
     fields = {key: 'unavailable' for key in ('revenue', 'net_debt', 'other_equity_claims', 'shares_outstanding')}
     if len(entities) > 1:
         conflicts.append('Primary reported facts identify multiple issuers; no reported actuals were pinned')
-        facts = []
+        facts, class_shares = [], []
     annual = [item for item in facts if item['concept'] in REVENUE and
               (item.get('fact_origin') != 'sec_companyfacts' or item.get('form') not in {'10-Q', '10-Q/A'}) and item['parsed_start'] and item['parsed_end'] and
               320 <= (item['parsed_end'] - item['parsed_start']).days <= 400 and item['value'] > 0 and
               isinstance(item['unit'], str) and re.fullmatch(r'iso4217:[A-Z]{3}', item['unit'])]
     anchor = None
+    if facts and not annual and not annual_forms_seen:
+        skipped.append(_no_annual_report_note(successor_statements))
     if annual:
         latest = max(item['parsed_end'] for item in annual)
         latest_facts = [item for item in annual if item['parsed_end'] == latest]
@@ -859,7 +1011,7 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                            if item['concept'] == 'us-gaap:' + concept and item['parsed_instant'] == anchor and
                            item['unit'] == 'iso4217:' + currency], name, [])
             for name, concept in DEBT_RECONCILIATION.items()}
-        debt_items, term_reconciliation = _reconcile_gross_term_debt(debt_items, reconciliation_items)
+        debt_items, term_reconciliation = _reconcile_gross_term_debt(debt_items, reconciliation_items, lease)
         debt_items, excluded_totals = _set_aside_narrow_totals(debt_items, lease)
         # The absence assumptions need an entity-wide record that attests it
         # looked for every modelled financing concept on this exact date.
@@ -892,6 +1044,14 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                                         'missing_investment_categories': [name for name in CASH if not cash_items[name]]},
                       'explanation': 'Exact sum of disjoint reported debt components minus selected cash and investments. Totals replace their components; no rounding residual or second cash add-back is permitted.',
                       'lease_policy': LEASE_POLICY}
+            available_for_sale = 'available_for_sale_debt_securities' in cash
+            if available_for_sale:
+                equity = [(concept, item) for concept in EXCLUDED_EQUITY_SECURITIES
+                          if (item := pick('us-gaap:' + concept, 'equity securities ' + concept))]
+                bridge['cash_coverage']['available_for_sale_fallback'] = {
+                    'basis': AFS_POLICY,
+                    'excluded_reported_equity_securities': [{'concept': 'us-gaap:' + concept, 'value': _json_number(item['value']),
+                                                             'source_refs': item['source_refs']} for concept, item in equity]}
             assumed = short_basis == 'identified_categories_house_assumption'
             identified = [name for name in ('commercial_paper', 'other_short_term_borrowings') if name in debt]
             bridge['short_term_financing'] = {
@@ -907,7 +1067,8 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                 bridge['long_term_debt_reconciliation'] = term_reconciliation
             if excluded_totals:
                 bridge['excluded_scope_inconsistent_totals'] = excluded_totals
-            fields['net_debt'] = 'pinned_with_disclosed_assumption' if assumed else 'pinned'
+            principal = bool((bridge.get('long_term_debt_reconciliation') or {}).get('policy'))
+            fields['net_debt'] = 'pinned_with_disclosed_assumption' if assumed or available_for_sale or principal else 'pinned'
         else:
             if not cash:
                 skipped.append('Net-debt cash selection unavailable or conflicting on the annual balance-sheet date')
@@ -960,14 +1121,22 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
             fields['other_equity_claims'] = 'pinned_with_disclosed_assumption'
     outstanding = [item for item in facts if item['concept'] in SHARES and item['unit'] == 'xbrli:shares' and
                    item['parsed_instant'] and item['value'] > 0]
+    class_total = None if outstanding else _class_share_total(class_shares, conflicts)
     if outstanding:
         latest = max(item['parsed_instant'] for item in outstanding)
-        chosen = _unique([item for item in outstanding if item['parsed_instant'] == latest], 'latest reported outstanding shares', conflicts)
+        chosen = _unique(_cover_rounding(item for item in outstanding if item['parsed_instant'] == latest),
+                         'latest reported outstanding shares', conflicts)
         if chosen:
             actuals['shares_outstanding'] = _json_number(chosen['value'])
             refs['shares_outstanding'] = chosen['source_refs']
             dates['shares_outstanding'] = {'instant': latest.isoformat(), 'basis': 'latest reported ordinary shares outstanding; never annual average or issued shares'}
             fields['shares_outstanding'] = 'pinned'
+    elif class_total:
+        actuals['shares_outstanding'] = _json_number(class_total['value'])
+        refs['shares_outstanding'] = class_total['source_refs']
+        dates['shares_outstanding'] = {'instant': class_total['instant'], 'basis': CLASS_SHARES_BASIS,
+                                       'classes': class_total['classes']}
+        fields['shares_outstanding'] = 'pinned'
     else:
         skipped.append('Outstanding shares are not reported as one entity-wide amount (for example, only by share class); '
                        'supply a reviewed primary total')
@@ -988,7 +1157,10 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                            'missing_fields': [field for field in fields if field not in actuals],
                            'conflicts': conflicts, 'notes': sorted(set(skipped))},
               'notes': [CASH_POLICY, CLAIMS_POLICY, LEASE_POLICY,
-                        *([SHORT_TERM_POLICY] if fields['net_debt'] == 'pinned_with_disclosed_assumption' else []),
+                        *([SHORT_TERM_POLICY] if (bridge.get('short_term_financing') or {}).get('basis') ==
+                          'identified_categories_house_assumption' else []),
+                        *([AFS_POLICY] if (bridge.get('cash_coverage') or {}).get('available_for_sale_fallback') else []),
+                        *([PRINCIPAL_POLICY] if (bridge.get('long_term_debt_reconciliation') or {}).get('policy') else []),
                         *([LEASE_ABSENCE_POLICY] if claims_bridge.get('finance_lease_amount_basis') == LEASE_ABSENCE_POLICY else []),
                         'Reported shares can postdate the balance sheet and predate the quote; the dates remain distinct.',
                         'Missing primary facts are not zero; unsupported or ambiguous inputs remain unpinned.']}
@@ -1041,3 +1213,60 @@ def pin_reported_inputs(plan, sources):
                             'source_refs': refs['market_price'], 'reason': 'dated non-future regular-session observation'})
     corrected['reported_inputs'] = canonical
     return corrected, changes
+
+
+# SEC industry codes whose firms fund operations with deposits or policyholder
+# float, where debt and investment income are operating items and a free cash
+# flow to the firm with net debt subtracted does not value the equity.
+# Depository institutions 6000-6099 (JPMorgan: 6021, national commercial banks)
+# and insurance carriers 6300-6399. Health plans (6324) report operating income
+# and finance with ordinary debt, so they are left to the operating-income test.
+BANK_SIC = range(6000, 6100)
+INSURER_SIC = range(6300, 6400)
+OPERATING_SIC_EXCEPTIONS = frozenset({'6324'})
+
+
+def operating_company_gate(sources):
+    """Whether the operating-company model applies, from free primary data only.
+
+    Reads the SEC industry code that research.gather_primary keeps in filing
+    metadata, and looks for an annual us-gaap:OperatingIncomeLoss in the primary
+    facts. ``refuse`` is True for a bank or insurer by industry code, or when no
+    annual operating income is reported (JPMorgan reports neither an operating
+    income line nor capital expenditure; ExxonMobil reports no operating income).
+    A run should check it before any paid stage; nothing here makes a request.
+    """
+    sic = description = None
+    operating_income = False
+    for source in sources if isinstance(sources, list) else []:
+        if not isinstance(source, dict) or source.get('source_tier') != 'regulatory_primary':
+            continue
+        data = source.get('data') if isinstance(source.get('data'), dict) else {}
+        metadata = data.get('metadata') if isinstance(data.get('metadata'), dict) else {}
+        if sic is None and isinstance(metadata.get('sic'), str) and re.fullmatch(r'\d{4}', metadata['sic']):
+            sic = metadata['sic']
+            description = metadata.get('sicDescription') if isinstance(metadata.get('sicDescription'), str) else None
+        for fact in [*(data.get('inline_facts') or []), *(data.get('reported_facts') or [])]:
+            if not isinstance(fact, dict) or fact.get('concept') != 'us-gaap:OperatingIncomeLoss' or fact.get('dimensions') != {}:
+                continue
+            start, end = _day(fact.get('start_date')), _day(fact.get('end_date'))
+            if (start and end and 320 <= (end - start).days <= 400 and
+                    (fact.get('fact_origin') != 'sec_companyfacts' or fact.get('form') in ANNUAL_REPORT_FORMS)):
+                operating_income = True
+    financial = bool(sic and sic not in OPERATING_SIC_EXCEPTIONS and
+                     (int(sic) in BANK_SIC or int(sic) in INSURER_SIC))
+    kind = None
+    if financial:
+        kind = 'bank' if int(sic) in BANK_SIC else 'insurer'
+    reasons = []
+    if financial:
+        reasons.append(f'the issuer is a {kind} by SEC industry code {sic}' + (f' ({description})' if description else '') +
+                       '; deposits or policyholder funds are operating liabilities, so a free cash flow to the firm '
+                       'less net debt does not value its equity')
+    if not operating_income:
+        reasons.append('no annual operating income (us-gaap:OperatingIncomeLoss) is reported in the primary record, and '
+                       'the operating model anchors its margins to it')
+    return {'refuse': bool(reasons), 'financial_institution': kind, 'sic': sic, 'sic_description': description,
+            'operating_income_reported': operating_income, 'reasons': reasons,
+            'message': ('The operating-company valuation model does not apply: ' + '; and '.join(reasons) + '.')
+            if reasons else None}

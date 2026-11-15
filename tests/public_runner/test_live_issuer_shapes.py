@@ -11,8 +11,8 @@ from unittest.mock import patch
 
 from investmentideas import core, pipeline
 from investmentideas.companyfacts import normalize_companyfacts
-from investmentideas.inputs import (FINANCING_ABSENCE_SCAN, LEASE_ABSENCE_POLICY, SHORT_TERM_POLICY,
-                                    canonical_reported_inputs)
+from investmentideas.inputs import (AFS_POLICY, FINANCING_ABSENCE_SCAN, LEASE_ABSENCE_POLICY, PRINCIPAL_POLICY,
+                                    SHORT_TERM_POLICY, canonical_reported_inputs, operating_company_gate)
 
 IDENTITY = {'cik_str': 123456, 'ticker': 'TEST', 'title': 'Test Issuer'}
 END = '2026-06-30'
@@ -169,14 +169,27 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(bridge['long_term_debt_reconciliation']['unamortized_discount_and_issuance_costs'], 542)
         self.assertEqual(bridge['long_term_debt_reconciliation']['carrying_amount'], 48543)
 
-    def test_an_unreconciled_or_inexact_total_stays_a_conflict(self):
-        # Amazon: no reported amount explains the difference.
+    def test_a_total_within_the_principal_bound_is_read_as_principal_and_disclosed(self):
+        # Amazon reports no unamortized amount on the date; its LongTermDebt exceeds
+        # the carrying parts by 0.64%. Here the gap is 542 on 48,543 (1.1%).
         cases = {'no unamortized amount': self.ALPHABET,
                  'inexact unamortized amount': {**self.ALPHABET, 'DebtInstrumentUnamortizedDiscountPremiumAndDebtIssuanceCostsNet': 541},
                  'total is not the reported gross principal': {**self.ALPHABET, 'DebtInstrumentCarryingAmount': 49000,
                      'DebtInstrumentUnamortizedDiscountPremiumAndDebtIssuanceCostsNet': 542}}
         for name, balance in cases.items():
             result = report(balance)
+            with self.subTest(name):
+                bridge = result['net_debt_bridge']
+                self.assertTrue(result['coverage']['complete'])
+                self.assertEqual(result['coverage']['fields']['net_debt'], 'pinned_with_disclosed_assumption')
+                self.assertEqual(bridge['debt'], 48543)
+                self.assertEqual(bridge['long_term_debt_reconciliation']['difference'], 542)
+                self.assertIn('within the 3% bound', bridge['long_term_debt_reconciliation']['basis'])
+                self.assertIn(PRINCIPAL_POLICY, result['notes'])
+
+    def test_a_total_outside_the_principal_bound_stays_a_conflict(self):
+        for name, total in {'more than 3% above': 50100, 'below the parts': 48000, 'a rounding-sized gap': 48544}.items():
+            result = report({**self.ALPHABET, 'LongTermDebt': total, 'DebtInstrumentCarryingAmount': total})
             with self.subTest(name):
                 self.assertEqual(result['coverage']['status'], 'conflicted')
                 self.assertFalse(result['net_debt_bridge'])
@@ -200,13 +213,28 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(report({**balance, 'ShortTermBorrowings': 6596,
                                  'DebtLongtermAndShorttermCombinedAmount': 40000})['coverage']['status'], 'conflicted')
 
+    HOME_DEPOT = {'CommercialPaper': 4464, 'DebtAndCapitalLeaseObligations': 51308, 'LongTermDebt': 49397,
+                  'LongTermDebtAndCapitalLeaseObligations': 46341,
+                  'LongTermDebtAndCapitalLeaseObligationsCurrent': 4967,
+                  'FinanceLeaseLiability': 2963, 'FinanceLeaseLiabilityCurrent': 288,
+                  'FinanceLeaseLiabilityNoncurrent': 2675}
+
+    def test_principal_above_carrying_debt_net_of_finance_leases_is_set_aside(self):
+        # Home Depot: notes principal of 49,397 against 48,345 carrying (combined family
+        # 51,308 less finance leases 2,963), a 2.2% gap; its whole-debt tag equals the
+        # long-term family while commercial paper is reported separately.
+        result = report(self.HOME_DEPOT)
+        bridge = result['net_debt_bridge']
+        self.assertTrue(result['coverage']['complete'])
+        self.assertEqual(bridge['debt'], 4464 + 51308)
+        self.assertTrue(bridge['finance_leases_included_in_net_debt'])
+        reconciliation = bridge['long_term_debt_reconciliation']
+        self.assertEqual((reconciliation['carrying_amount'], reconciliation['difference']), (48345, 1052))
+        self.assertEqual(bridge['excluded_scope_inconsistent_totals'][0]['concept'], 'us-gaap:DebtAndCapitalLeaseObligations')
+
     def test_self_inconsistent_long_term_facts_remain_rejected(self):
-        # Home Depot: long-term debt excluding leases exceeds the combined family less reported leases.
-        result = report({'CommercialPaper': 4464, 'DebtAndCapitalLeaseObligations': 51308, 'LongTermDebt': 49397,
-                         'LongTermDebtAndCapitalLeaseObligations': 46341,
-                         'LongTermDebtAndCapitalLeaseObligationsCurrent': 4967,
-                         'FinanceLeaseLiability': 2963, 'FinanceLeaseLiabilityCurrent': 288,
-                         'FinanceLeaseLiabilityNoncurrent': 2675})
+        # The same family with principal 4% above carrying debt is not a discount.
+        result = report({**self.HOME_DEPOT, 'LongTermDebt': 50300})
         self.assertEqual(result['coverage']['status'], 'conflicted')
         self.assertIn('net_debt', result['coverage']['missing_fields'])
 
@@ -319,6 +347,123 @@ class PromptSizeTests(unittest.TestCase):
 
     def test_search_lanes_reserve_the_headroom_they_request(self):
         self.assertGreaterEqual(pipeline.WEB_RESEARCH_TOKENS, 6000)
+
+
+
+class SweepShapeTests(unittest.TestCase):
+    """Patterns from the free 13-issuer sweep of 2026-11-15."""
+
+    def test_available_for_sale_debt_securities_are_a_disclosed_fallback(self):
+        # NVIDIA tags its marketable securities line with an extension that includes equity securities.
+        result = report({**TERM, **LEASES, 'AvailableForSaleSecuritiesDebtSecurities': 395, 'EquitySecuritiesFvNi': 129})
+        bridge = result['net_debt_bridge']
+        self.assertEqual(bridge['selected_cash_and_nonoperating_investments'], 10 + 395)
+        self.assertEqual(result['coverage']['fields']['net_debt'], 'pinned_with_disclosed_assumption')
+        fallback = bridge['cash_coverage']['available_for_sale_fallback']
+        self.assertEqual(fallback['basis'], AFS_POLICY)
+        self.assertEqual(fallback['excluded_reported_equity_securities'][0]['value'], 129)
+        self.assertIn(AFS_POLICY, result['notes'])
+        # Any reported marketable or short-term category decides instead.
+        direct = report({**TERM, **LEASES, 'AvailableForSaleSecuritiesDebtSecurities': 395, 'MarketableSecuritiesCurrent': 300,
+                         'MarketableSecuritiesNoncurrent': 80})
+        self.assertEqual(direct['net_debt_bridge']['selected_cash_and_nonoperating_investments'], 390)
+        self.assertNotIn('available_for_sale_fallback', direct['net_debt_bridge']['cash_coverage'])
+        self.assertNotIn(AFS_POLICY, direct['notes'])
+
+    def test_cover_and_balance_sheet_counts_that_agree_within_rounding_are_one_count(self):
+        # ExxonMobil Holdings: 4,079,222,444 on the cover, 4,079,000,000 on the balance sheet.
+        data = issuer({**TERM, **LEASES}, shares=None)
+        data['facts']['dei'] = {'EntityCommonStockSharesOutstanding': {'units': {'shares': [row(4079222444, '2026-07-20')]}}}
+        data['facts']['us-gaap']['CommonStockSharesOutstanding'] = {'units': {'shares': [row(4079000000, '2026-07-20')]}}
+        def pinned(payload):
+            source = normalize_companyfacts(payload, identity=IDENTITY, as_of='2026-11-06', entity_record_complete=True)
+            return canonical_reported_inputs([source], as_of='2026-11-06')
+        result = pinned(data)
+        self.assertEqual(result['actuals']['shares_outstanding'], 4079222444)
+        self.assertEqual(result['coverage']['conflicts'], [])
+        # A balance-sheet count outside its own rounding stays a conflict.
+        data['facts']['us-gaap']['CommonStockSharesOutstanding']['units']['shares'][0]['val'] = 4078000000
+        self.assertIn('Conflicting primary values for latest reported outstanding shares; no value was selected',
+                      pinned(data)['coverage']['conflicts'])
+
+    def test_class_cover_counts_are_summed_only_without_an_entity_total(self):
+        # Meta's October 2026 10-Q cover: Class A and Class B, no entity-wide count.
+        def cover(member, value):
+            return {'concept': 'dei:EntityCommonStockSharesOutstanding', 'instant': '2026-10-16', 'unit': 'xbrli:shares',
+                    'normalized_value': value, 'normalized_decimal': str(value), 'parse_status': 'parsed',
+                    'entity_identifier': '123456', 'context_ref': member, 'decimals': 'INF',
+                    'dimensions': {'us-gaap:StatementClassOfStockAxis': member},
+                    'dimension_filter': 'class_of_stock_cover_shares'}
+        filing = {'id': 'S9', 'kind': 'sec_filing', 'source_tier': 'regulatory_primary',
+                  'data': {'metadata': {'cik': 123456, 'form': '10-Q', 'filingDate': '2026-10-22'},
+                           'inline_facts': [cover('us-gaap:CommonClassAMember', 2214472367),
+                                            cover('us-gaap:CommonClassBMember', 341768886)]}}
+        source = normalize_companyfacts(issuer({**TERM, **LEASES}, shares=None), identity=IDENTITY, as_of='2026-11-06',
+                                        entity_record_complete=True)
+        result = canonical_reported_inputs([source, filing], as_of='2026-11-06')
+        self.assertEqual(result['actuals']['shares_outstanding'], 2556241253)
+        self.assertEqual(result['input_dates']['shares_outstanding']['instant'], '2026-10-16')
+        self.assertIn('by share class', result['input_dates']['shares_outstanding']['basis'])
+        # An entity-wide count, when reported, decides.
+        source = normalize_companyfacts(issuer({**TERM, **LEASES}), identity=IDENTITY, as_of='2026-11-06',
+                                        entity_record_complete=True)
+        self.assertEqual(canonical_reported_inputs([source, filing], as_of='2026-11-06')['actuals']['shares_outstanding'], 1000)
+
+    def test_a_quarterly_only_record_names_the_missing_annual_report_and_successor(self):
+        data = issuer({**TERM, **LEASES}, revenue={'RevenueFromContractWithCustomerExcludingAssessedTax': 1000})
+        for tag in [*data['facts']['us-gaap'].values(), *data['facts']['dei'].values()]:
+            for rows in tag['units'].values():
+                for item in rows:
+                    item.update(form='10-Q', fp='Q3')
+        source = normalize_companyfacts(data, identity=IDENTITY, as_of='2026-11-06', entity_record_complete=True)
+        statement = 'EMHC became the successor registrant of EMC common stock pursuant to Rule 12g-3(a).'
+        filing = {'id': 'S9', 'kind': 'sec_filing', 'source_tier': 'regulatory_primary',
+                  'data': {'metadata': {'cik': 123456, 'form': '10-Q', 'filingDate': '2026-11-02',
+                                        'successor_registrant_statement': statement}, 'inline_facts': []}}
+        result = canonical_reported_inputs([source, filing], as_of='2026-11-06')
+        self.assertIn('revenue', result['coverage']['missing_fields'])
+        note = next(note for note in result['coverage']['notes'] if note.startswith('No annual report'))
+        self.assertIn(statement, note)
+        self.assertIn('different SEC CIK', note)
+        # An issuer with an annual report gets no such note.
+        self.assertFalse(any(note.startswith('No annual report') for note in report({**TERM, **LEASES})['coverage']['notes']))
+
+
+class OperatingCompanyGateTests(unittest.TestCase):
+    def sources(self, sic, operating_income=True):
+        revenue = {'RevenueFromContractWithCustomerExcludingAssessedTax': 1000}
+        if operating_income:
+            revenue['OperatingIncomeLoss'] = 300
+        source = normalize_companyfacts(issuer({**TERM, **LEASES}, revenue=revenue), identity=IDENTITY, as_of='2026-11-06')
+        filing = {'id': 'S4', 'kind': 'sec_filing', 'source_tier': 'regulatory_primary',
+                  'data': {'metadata': {'cik': 123456, 'form': '10-K', 'sic': sic, 'sicDescription': 'Description'},
+                           'inline_facts': []}}
+        return [source, filing]
+
+    def test_banks_and_insurers_are_refused_by_industry_code(self):
+        # JPMorgan: SIC 6021, national commercial banks.
+        bank = operating_company_gate(self.sources('6021', operating_income=False))
+        self.assertTrue(bank['refuse'])
+        self.assertEqual((bank['financial_institution'], bank['sic']), ('bank', '6021'))
+        self.assertIn('bank by SEC industry code 6021', bank['message'])
+        self.assertIn('no annual operating income', bank['message'])
+        insurer = operating_company_gate(self.sources('6331'))
+        self.assertEqual(insurer['financial_institution'], 'insurer')
+        self.assertTrue(insurer['refuse'])
+
+    def test_operating_companies_pass_and_missing_operating_income_is_named(self):
+        operating = operating_company_gate(self.sources('3571'))
+        self.assertFalse(operating['refuse'])
+        self.assertIsNone(operating['message'])
+        # Health plans report operating income and are left to that test.
+        self.assertFalse(operating_company_gate(self.sources('6324'))['refuse'])
+        # ExxonMobil reports no operating income line.
+        missing = operating_company_gate(self.sources('2911', operating_income=False))
+        self.assertTrue(missing['refuse'])
+        self.assertIsNone(missing['financial_institution'])
+        self.assertIn('OperatingIncomeLoss', missing['message'])
+        # Without an industry code only the operating-income test applies.
+        self.assertFalse(operating_company_gate(self.sources(None))['refuse'])
 
 
 if __name__ == '__main__':
