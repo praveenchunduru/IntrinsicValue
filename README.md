@@ -194,6 +194,7 @@ reapprove a previous memo. Generate/review a revised memo when inputs change.
 |---|---|---|---|
 | `balanced` (default) | Claude Haiku 5.5 | Claude Opus 5.5 | GPT-5.6 Sol |
 | `economy` | DeepSeek V4.1 Flash, open-weight | DeepSeek V4 Pro, open-weight | Kimi K3.1 Pro, open-weight |
+| `dev` (pipeline testing only) | Claude Haiku 5.5 | Claude Haiku 5.5 | GPT-5.6 Luna |
 
 Each slot uses the newest model generation in the OpenRouter catalog (checked
 2026-11-15); the tier follows the job. On the same Microsoft plan and evidence, Claude
@@ -219,8 +220,9 @@ frontier; see the [measurement limits](docs/underwriting.md#costs-and-context-si
 
 As listed on 2026-11-15, Claude Haiku 5.5 cost $0.10/$0.50, Claude Opus 5.5 $4/$20 and
 GPT-5.6 Sol $4.40/$22 per million input/output tokens; Exa Auto search cost $0.007 per
-request. At those prices a balanced first draft through review costs about $3.50 and a
-run with one revision about $7, estimated from measured token counts.
+request. With the evidence cached across stages, a balanced first draft through review
+and its finding check is estimated at about $3 and a run with one revision at about
+$4.50, from measured token counts; not yet observed on a bill.
 Prices change. A four-call AAPL economy overview reported **$0.00757138** but had
 factual/date errors. It establishes transport/cost functionality, not memo quality
 or a promised full-run price. Full-memo cost depends on evidence and revisions.

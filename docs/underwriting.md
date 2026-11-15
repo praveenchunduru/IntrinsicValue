@@ -156,6 +156,33 @@ one point of the plan it replaces keeps that plan's basis. Plans supplied with
 the pipeline carries `forecast_continuity`, and the memo shows year-1 margin against
 the reported results with any stated basis.
 
+Two more anchors work the same way, each with its reference computed by Python from
+the reported history, shown to the plan author and printed in the exhibits:
+
+- **Reinvestment.** Net reinvestment is capital expenditure less depreciation and
+  amortization, plus acquisitions and finance-lease additions where reported. A
+  scenario whose year-1 net reinvestment is below two thirds of the last reported figure,
+  with sales-to-capital above 1.5 times the reported three-year incremental rate, needs
+  `capital_efficiency_basis`. Businesses whose depreciation exceeds capital spending, or
+  whose revenue fell, are not checked.
+- **Cost path.** R&D and SG&A grow with revenue at about the reported ratio of their
+  growth to revenue growth (capped at one for one, with 0.25 tolerance), and final-year
+  EBIT margins stay within 5 points of the highest reported operating margin, unless
+  `cost_path_basis` cites evidence. Plans had let expenses fall to half their share of
+  revenue, raising margins in every scenario.
+
+## House conventions the plan does not choose
+
+- **Terminal return on new capital is 15%** in every scenario, about the market's
+  long-run return on new capital. The convention panel shows the value at the terminal
+  discount rate (no excess return) and at 25%.
+- **Scenario weights are 25/50/25** unless `weights_basis` (at least 40 characters)
+  cites evidence in the run that makes one state more likely. Plans may not cite
+  frequencies or base rates the evidence does not contain.
+
+Both are owner choices made on 2026-11-15, after same-evidence plans set terminal
+returns of 20-30% and different weights, moving value by several percent between runs.
+
 ## Date the required-return inputs
 
 Optional `discount_rate` computes WACC for all house scenarios: one constant rate
@@ -491,22 +518,39 @@ Before the paid review, free checks (`quality.prereview_checks`) flag figures th
 match nothing in the computed output, the reported inputs or a primary source; figures
 found only in unverified excerpts and not presented as outside context; figures cited
 to excerpts although a primary source has them; convention rows described as adding
-up; and prose over 3,600 words. One fix call returns quote-and-replacement edits that
+up; prose that assigns the gap to price a cause; table rows in the prose; a rise or
+fall word whose own figures move the other way; uncited frequency claims; mentions of
+Python or instructions; and prose over 3,600 words. One fix call returns quote-and-replacement edits that
 Python applies when the quote occurs once (deleting a duplicated passage removes its
 second copy); what remains goes to the reviewer as minor diagnostics. Python labels
 every citation of an unverified excerpt inline, as in [S16 unverified], and the source
 register carries the same label. The review applies the same quality standard, whose
 rules carry IDs (B1-B3 blockers, M1-M6 majors, N1-N3 minors); each finding names the
 rule it breaks and is graded no higher than that rule's class. Every blocker or major
-the reviewer raises, and its judgment of the central weakness and the gap to price, is
-then checked once more in a fresh context (`finding_check_N`). A finding is removed
-only when that check refutes it with a stated reason; refuted findings are listed in
-the memo's review status. Python settles one kind itself: a finding under M3 (a number
-in no source) whose quoted figures all trace to the computed output, the reported tables
-or a primary source is refuted without a paid check. A historical repurchase case whose
+the reviewer raises is then checked once more in a fresh context (`finding_check_N`). A
+finding is removed only when that check refutes it with a stated reason; refuted
+findings are listed in the memo's review status. Python settles some kinds without a
+paid check: an M3 finding (a number in no source) whose quoted figures all trace to the
+computed output, the reported tables or a primary source; a B2 finding whose quoted text
+contains none of the trading-layer terms the rule names; an M6 finding whose text names
+the figure as a house or computed one; and a finding refuted in an earlier review on the
+same text under the same rule. The reviewer's answers on the central weakness and the gap
+to price are recorded for the reader, not findings: Python's summary states which inputs
+alone can and cannot bring value to the price, and the conclusion does not restate it. A historical repurchase case whose
 amount is within 3% of a reported year's buybacks takes that year's program value and
 average price, so the exhibits and the history table quote one price. By default one revision follows if material findings remain,
 and the second review checks the earlier findings rather than re-auditing from scratch.
+
+Python prints the reported history (one column per year) and the segment tables after
+the exhibits, with a scale check of the final forecast year against today; writers no
+longer re-type them.
+
+The evidence is sent first in every Claude stage, marked for one-hour provider caching,
+and the review and its finding check share one prefix of evidence, valuation and the
+draft between markers, so later stages read the evidence at the cache price. GPT-5.6
+caching is explicit, each run keeps one provider through a session id, and reservations
+count the prefix at the cache-write price. A plan repair that returns the rejected plan
+unchanged ends the loop, and repair reasons are saved with the run.
 
 `tools/replay.py` re-runs the plan, draft, checks and review of a saved run on its
 frozen evidence (`--from plan`, `--from draft` or `--from review`), so a prompt or

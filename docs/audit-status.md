@@ -406,6 +406,39 @@ says naming the most sensitive convention step is not an attribution of the gap.
 attribution findings (rule M4) recur in every Sonnet draft and in the revision, and the
 revision did not resolve them. One draft per arm is a small sample.
 
+### One change set from a full investigation (2026-11-15)
+
+Instead of more paid tests, five agents read every saved run (8 memos, 11 reviews, the
+plans and ledgers) and swept 13 companies' SEC data, with no OpenRouter calls. Of 40
+material findings, 14 concerned how the memo explains the gap to price and were mostly
+induced by the prompts; most of the rest were writer slips, evidence-tier labelling and
+re-typed tables. An independent memo audit found what no review had flagged: plans
+forecast expenses in dollars and let them fall to half their share of revenue, so
+margins rose in every scenario, bear included. The valuation audit found same-evidence
+reruns agreeing within 4% only because 6-17% movements in individual inputs cancelled.
+No stage reused a provider cache.
+
+The change set, all offline and tested:
+
+- Python states which inputs alone can and cannot bring value to the price; the
+  conclusion does not restate it; rule M4 is only a contradiction of it; the reviewer's
+  central-weakness and gap answers are recorded, not findings.
+- House conventions by owner choice: terminal return on new capital 15%; weights
+  25/50/25 unless cited; costs grow at about the reported ratio to revenue (capped at
+  one for one) and final margins stay within 5 points of the reported peak unless
+  cited; finance-lease additions count as reinvestment.
+- Python refutes B2, M3 and M6 findings it can settle and findings refuted earlier on
+  the same text; the draft is fenced in the review prompt.
+- Python prints the reported history and segment tables and a scale check; free checks
+  catch table rows, direction words, uncited frequencies and mentions of Python.
+- Monitoring rows state the direction of their linked case.
+- The evidence is a cached prefix for every Claude stage, and the review and finding
+  check share one prefix (estimated $3 saving on a run with one revision); identical
+  plan repairs stop; a dev profile runs the flow cheaply.
+- A bug in summary removal could delete a memo written with ### sections; fixed.
+
+None of this has been run against a paid model.
+
 ### Still open after 2026-11-14
 
 - No live run has produced an approved memo. The final run's first draft drew 4 major
