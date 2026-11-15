@@ -146,8 +146,8 @@ EXCLUDED_EQUITY_SECURITIES = ('EquitySecuritiesFvNi', 'EquitySecuritiesFvNiCurre
 AFS_POLICY = ('Explicit house policy: no balance-sheet marketable-securities or short-term-investment concept is reported '
               'on the date, so available-for-sale debt securities (us-gaap:AvailableForSaleSecuritiesDebtSecurities) are '
               'selected. Equity securities and other investments outside that concept are excluded. The available-for-sale '
-              'total can include securities the issuer reports within cash equivalents (NVIDIA, 2026-01-25: $0.5 billion of '
-              '$39.5 billion); that overlap is not separately tagged and is not removed.')
+              'total can include securities the issuer reports within cash equivalents; that overlap is not separately '
+              'tagged and is not removed.')
 # LongTermDebt above the balance-sheet carrying amounts by at most this share of
 # them is read as principal before unamortized discount, issuance costs and
 # hedge adjustments. Among the 13 issuers swept on 2026-11-15, reported
@@ -1221,7 +1221,7 @@ def pin_reported_inputs(plan, sources):
 # Depository institutions 6000-6099 (JPMorgan: 6021, national commercial banks)
 # and insurance carriers 6300-6399. Health plans (6324) report operating income
 # and finance with ordinary debt, so they are left to the operating-income test.
-BANK_SIC = range(6000, 6100)
+BANK_SIC = range(6011, 6037)  # Depository institutions; 6099 (money transmitters) is not a bank
 INSURER_SIC = range(6300, 6400)
 OPERATING_SIC_EXCEPTIONS = frozenset({'6324'})
 

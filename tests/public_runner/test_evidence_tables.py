@@ -325,7 +325,8 @@ class FilingSupplementTests(unittest.TestCase):
         self.assertEqual(row['finance_lease_additions'], 3e9)
         self.assertEqual(row['lease_commitments_not_commenced'], 329.1e9)
         text = self.latest(additions, supplement_=supplement(*facts), render=True)
-        self.assertIn('| 3.0', text.splitlines()[-3])
+        # The latest fiscal year's row, wherever basis notes fall after it.
+        self.assertIn('| 3.0', next(line for line in reversed(text.splitlines()) if line.startswith('20')))
         self.assertIn('Leases signed but not yet commenced at 2025-09-27: 329.1 billion', text)
         # Alphabet: current plus noncurrent extension amounts.
         split = [inline('goog:LesseeLeaseNotYetCommencedCurrentAmount', 5.8e9, start=None),

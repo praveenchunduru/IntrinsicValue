@@ -225,6 +225,9 @@ FINDING_CHECK = ('Check each review finding below against the draft, the evidenc
     '{"checks":[{"id":"F1","upheld":true|false,"reason":"one sentence naming the draft text, source or computed '
     'figure that decides it"}]}.')
 FINDING_CHECK_TOKENS = 4000
+# Broker-dealers, card issuers and money transmitters run as operating companies
+# only when they report an operating-income line (Goldman Sachs does not).
+FINANCIAL_SIC_NEEDING_OPERATING_INCOME = frozenset({'6099', '6141', '6153', '6199', '6211'})
 EVIDENCE_ABOVE = '\nEvidence: in the evidence block above.'
 
 
@@ -2145,11 +2148,15 @@ def reported_tables_section(sources):
         baseline=source.get('historical_baseline') or data.get('historical_baseline')
         if baseline and baseline.get('rows'):
             text=render_baseline(baseline,source.get('id')).split('\n')
-            caption,header,rows=text[0],text[1].split(' | '),[row.split(' | ') for row in text[2:]]
+            notes=text[text.index('Basis notes:'):] if 'Basis notes:' in text else []
+            text=text[:len(text)-len(notes)]
+            caption,header,rows=text[0],text[1].split(' | '),[row.split(' | ') for row in text[2:] if row.strip()]
             lines+=['', caption, '', '| Measure | '+' | '.join(row[0] for row in rows)+' |',
                     '|---|'+'---:|'*len(rows)]
             for index,name in enumerate(header[1:],1):
                 lines.append(f'| {name} | '+' | '.join(row[index] if index<len(row) else 'n/a' for row in rows)+' |')
+            if notes:
+                lines+=['']+notes
         breakdowns=source.get('breakdown_tables') or data.get('breakdown_tables')
         if breakdowns:
             lines+=['', render_breakdowns(breakdowns,source.get('id'))]
@@ -2847,7 +2854,9 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
     # model does not value them (JPMorgan reached the plan prompt's own refusal only
     # after four paid web calls). A missing operating-income line alone is not refused.
     gate=operating_company_gate(state['sources'],reported)
-    if gate.get('financial_institution'):
+    gate['refused']=bool(gate.get('financial_institution') or
+                         (gate.get('sic') in FINANCIAL_SIC_NEEDING_OPERATING_INCOME and gate.get('operating_income_reported') is False))
+    if gate['refused']:
         coverage={**coverage,'complete':False,'conflicts':[gate['message'],*coverage.get('conflicts',[])]}
     if coverage.get('conflicts') or not coverage.get('complete'):
         state['coverage_preflight_failed']=True
@@ -2867,7 +2876,9 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         details='; '.join(coverage.get('conflicts',[])) or ', '.join(coverage.get('missing_fields',[]))
         notes='; '.join(coverage.get('notes',[]))
         message='Reported-input preflight stopped before paid research: '+details+'. '+notes
-        recovery=('Supply primary disclosures with --sources, or start a fresh non-snapshot run with --sec-contact'
+        recovery=('This issuer needs a financial-institution valuation model, which this tool does not provide'
+            if gate.get('refused') else
+            'Supply primary disclosures with --sources, or start a fresh non-snapshot run with --sec-contact'
             if source_snapshot is not None else 'Supply primary disclosures with --sources or retry SEC access with --sec-contact')
         (folder/'memo.md').write_text('# '+ticker+' — financial input coverage incomplete\n\n'+message+
             '\n\n'+recovery+'. '

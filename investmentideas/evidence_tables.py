@@ -482,6 +482,17 @@ def _share_tolerance(shares, decimals):
     return Decimal(5).scaleb(-decimals - 1) / shares
 
 
+def _trailing_precision(value):
+    """Decimals implied by trailing zeros (2,000,000 -> -6), a conservative reading of an untagged count."""
+    number = int(Decimal(str(value)))
+    if number <= 0:
+        return None
+    for decimals in (-6, -3):
+        if number % 10 ** -decimals == 0:
+            return decimals
+    return None
+
+
 def _repurchase(gaap, supplement, start, end, currency, as_of, split):
     """(price, shares, basis, tolerance) for one fiscal year, or Nones.
 
@@ -508,6 +519,11 @@ def _repurchase(gaap, supplement, start, end, currency, as_of, split):
             if found:
                 shares, share_decimals, share_basis = found
                 shares_filed = supplement_filed
+        elif shares:
+            # Company facts carry no precision; Home Depot's FY2024 count of 2,000,000
+            # is rounded to millions (a 25% price error) and was treated as exact.
+            found = _supplement_amount(supplement, share_concept, start, end, 'shares')
+            share_decimals = found[1] if found and Decimal(str(found[0])) == Decimal(str(shares)) else _trailing_precision(shares)
         if value and shares and value > 0 and shares > 0:
             pair = (Decimal(str(value)), Decimal(str(shares)), share_decimals, shares_filed,
                     f'{value_concept} / {share_concept}' + ''.join(

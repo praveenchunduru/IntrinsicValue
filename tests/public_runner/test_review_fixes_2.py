@@ -845,3 +845,35 @@ class OpusChangeSetFixTests(unittest.TestCase):
         from investmentideas import quality
         self.assertIsNone(quality.HOUSE_ATTRIBUTION.search('The subscription business model is forecast to reach USD 612 billion [S2].'))
         self.assertIsNotNone(quality.HOUSE_ATTRIBUTION.search('The house tax rate is 17.5%.'))
+
+
+class DataReviewFixTests(unittest.TestCase):
+    def test_untagged_round_share_counts_are_read_as_rounded(self):
+        from investmentideas import evidence_tables
+        self.assertEqual(evidence_tables._trailing_precision(2_000_000), -6)
+        self.assertEqual(evidence_tables._trailing_precision(31_000_000), -6)
+        self.assertEqual(evidence_tables._trailing_precision(296_995_325), None)
+        self.assertGreater(evidence_tables._share_tolerance(evidence_tables.Decimal(2_000_000), -6), .02)
+
+    def test_basis_notes_stay_below_the_transposed_table(self):
+        rows = [{'fiscal_year_end': '2025-06-30', 'currency': 'USD', 'revenue': 100e9, 'revenue_growth': .1, 'gross_margin': .6,
+                 'operating_margin': .3, 'research_and_development_to_revenue': .1, 'selling_general_administrative_to_revenue': .1,
+                 'effective_tax_rate': .2, 'capital_expenditure_to_revenue': .05, 'depreciation_amortization_to_revenue': .04,
+                 'stock_compensation_to_revenue': .02, 'repurchases': 5e9, 'average_repurchase_price': None, 'dividends': 2e9,
+                 'diluted_eps': 3.0}]
+        source = {'id': 'S2', 'data': {}, 'historical_baseline': {'rows': rows, 'concepts': {},
+                                                                 'notes': ['D&A column: depreciation only before FY2024.']}}
+        from investmentideas.evidence_tables import render_baseline
+        rendered = render_baseline(source['historical_baseline'], 'S2')
+        text = '\n'.join(pipeline.reported_tables_section([source]))
+        self.assertIn('| Measure | 2025-06-30 |', text)
+        self.assertNotIn('| Basis notes:', text)
+        if 'Basis notes:' in rendered:
+            self.assertIn('Basis notes:', text)
+
+    def test_the_gate_codes(self):
+        from investmentideas import inputs
+        self.assertIn(6021, inputs.BANK_SIC)
+        self.assertNotIn(6099, inputs.BANK_SIC)
+        self.assertNotIn('NVIDIA', inputs.AFS_POLICY)
+        self.assertIn('6211', pipeline.FINANCIAL_SIC_NEEDING_OPERATING_INCOME)
