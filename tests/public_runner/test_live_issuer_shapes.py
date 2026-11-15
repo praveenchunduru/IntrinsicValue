@@ -305,7 +305,8 @@ class PromptSizeTests(unittest.TestCase):
             core.run('TEST', 'key', profile='economy', budget=2, directory=folder)
         self.assertEqual([request['max_tokens'] for request in requests], [8000, 8000, 6000, 9000])
         for request in requests:
-            prompt = request['messages'][1]['content']
+            content = request['messages'][1]['content']
+            prompt = ''.join(part['text'] for part in content) if isinstance(content, list) else content
             self.assertNotIn('source_record', prompt)
             self.assertIn('us-gaap:LongTermDebt', prompt)
             self.assertIn('at most', prompt)

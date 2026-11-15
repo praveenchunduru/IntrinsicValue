@@ -24,8 +24,8 @@ from .costs import cost_summary
 from .analytics import annual_metrics
 from .fundamentals import yahoo_financials
 from .inputs import canonical_reported_inputs, pin_reported_inputs
-from .quality import (DIAGNOSTIC_SCOPE, RUBRIC, assessment_findings, claim_ledger, inspect_memo, parse_json, parse_review,
-                      prereview_checks, prose_words, trace_pools, untraced_figures)
+from .quality import (DIAGNOSTIC_SCOPE, HOUSE_ATTRIBUTION, RUBRIC, TRADING_TERMS, assessment_findings, claim_ledger,
+                      inspect_memo, parse_json, parse_review, prereview_checks, prose_words, trace_pools, untraced_figures)
 from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_breakdown_facts, inline_facts, archive_focus_excerpts
 from .evidence_tables import breakdown_tables, historical_baseline, render_baseline, render_breakdowns
 from .macro import gather_us_calibration
@@ -216,6 +216,18 @@ FINDING_CHECK = ('Check each review finding below against the draft, the evidenc
     '{"checks":[{"id":"F1","upheld":true|false,"reason":"one sentence naming the draft text, source or computed '
     'figure that decides it"}]}.')
 FINDING_CHECK_TOKENS = 4000
+EVIDENCE_ABOVE = '\nEvidence: in the evidence block above.'
+
+
+def _evidence_prefix(context):
+    """The evidence block every Claude stage shares, first in the prompt so the provider can cache it."""
+    return 'Evidence:\n'+context+'\n'
+
+
+def _review_prefix(context, valuation_context, visible):
+    """Evidence, valuation and the fenced draft: identical for the review and its finding check."""
+    return (_evidence_prefix(context)+'Valuation:\n'+valuation_context+
+            '\nDraft (quote only text between the markers):\n<<<DRAFT\n'+visible+'\nDRAFT>>>\n')
 
 
 def _check_ids(material):
@@ -2618,6 +2630,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         checkpoint()
     try:
         router=core.Router(key,budget,state['ledger'],checkpoint)
+        # One provider per run keeps the cached evidence prefix warm across stages.
+        router.session='iv-'+_digest(str(folder.resolve()))[:24]
         router.validate_models((easy,strong,reviewer))
     except (ValueError,RuntimeError) as exc:
         exc.folder=folder
@@ -2648,9 +2662,10 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         if state.get('quality_status')=='budget_paused':
             state['quality_status']='in_progress'
         checkpoint()
-    def call(name,model,prompt,tokens=6000,web=False):
+    def call(name,model,prompt,tokens=6000,web=False,prefix=None):
         thinking=core.reasoning_budget(name)
-        cache=name+':'+_digest([prompt,model,tokens,web,core.SYSTEM]+([thinking] if thinking else []))[:12]
+        cache=name+':'+_digest([prompt,model,tokens,web,core.SYSTEM]+([thinking] if thinking else [])+
+                               (['prefix',_digest(prefix)] if prefix else []))[:12]
         legacy=name+':'+_digest([prompt,model,tokens,web])[:12]
         # The old digest omitted SYSTEM. It is reusable only when the saved
         # contract proves that its system instructions are still identical.
@@ -2661,13 +2676,14 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             return state['stages'][cache]
         progress(name+': '+model)
         try:
+            extra={'prefix':prefix} if prefix else {}
             try:
-                value=router.complete(name,model,prompt,max_tokens=tokens,web=web)
+                value=router.complete(name,model,prompt,max_tokens=tokens,web=web,**extra)
             except core.ReasoningExhausted:
                 # Spent and recorded; one retry without thinking rather than a stopped run.
                 checkpoint()
                 progress(name+core.WITHOUT_REASONING+': '+model)
-                value=router.complete(name+core.WITHOUT_REASONING,model,prompt,max_tokens=tokens,web=web)
+                value=router.complete(name+core.WITHOUT_REASONING,model,prompt,max_tokens=tokens,web=web,**extra)
             state['stages'][cache]=value
             return value
         except core.BudgetExceeded as exc:
@@ -2745,8 +2761,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 FORECAST_SCHEMA+_rate_convention(state['sources'],reported.get('currency'))+UNDERWRITING_GUIDANCE+PLAN_FIELD_RULES+PLAN_SOURCE_RULE+'\nIMMUTABLE reported inputs (copy these values exactly; forecast judgments only):\n'+json.dumps(reported)+
                 (('\nReported reinvestment (reference for year-1 reinvestment and sales_to_capital):\n'+
                   json.dumps(reinvestment_reference(state['sources']))) if reinvestment_reference(state['sources']) else '')+
-                '\nEvidence:\n'+context+'\nDiligence synthesis:\n'+thesis+'\nRetrieval gaps:\n'+gaps)
-        text=call('valuation_plan',strong,prompt,tokens=12000)
+                EVIDENCE_ABOVE+'\nDiligence synthesis:\n'+thesis+'\nRetrieval gaps:\n'+gaps)
+        text=call('valuation_plan',strong,prompt,tokens=12000,prefix=_evidence_prefix(context))
         failures=[]
         for repair in range(PLAN_REPAIRS+1):
             try:
@@ -2789,7 +2805,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                           '\nRepair this precise validation failure without inventing actuals: '+str(exc)+
                           ('\nEarlier attempts were rejected for these reasons; do not reintroduce them: '+
                            ' | '.join(failures[:-1]) if failures[:-1] else '')+
-                          '\nReturn only the complete corrected JSON object, with no analysis before or after it.'+PLAN_FIELD_RULES,tokens=12000)
+                          '\nReturn only the complete corrected JSON object, with no analysis before or after it.'+PLAN_FIELD_RULES,tokens=12000,
+                          prefix=_evidence_prefix(context))
         checkpoint()
     if not state['plan'].get('unavailable'):
         current=not state.get('provided_forecast_digest') and state.get('plan_conventions')==PLAN_CONVENTIONS
@@ -2829,7 +2846,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'target prices, entry levels, margins of safety, upside or downside, or position sizing; write value / '
             'price. Plain analytical prose without slogans, superlatives or rhetorical contrast formulas.'
             '\nCOMPUTED SUMMARY (placed above your text):\n'+computed_summary(plan,result)+
-            '\nEvidence:\n'+context+'\nSynthesis:\n'+thesis+'\nValuation:\n'+valuation_context+'\nGaps:\n'+gaps,tokens=MEMO_TOKENS)
+            EVIDENCE_ABOVE+'\nSynthesis:\n'+thesis+'\nValuation:\n'+valuation_context+'\nGaps:\n'+gaps,tokens=MEMO_TOKENS,
+            prefix=_evidence_prefix(context))
         state['current_memo']=_label_unverified(draft,state['sources'])
         checkpoint()
     revisions=folder/'revisions';revisions.mkdir(exist_ok=True)
@@ -2868,11 +2886,12 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'a policy discount, nonrecurring adjustment, source passage or double-counted cash distribution. '
             'Return the full revised memo only, '+MEMO_WORDS+'. The current prose is '+str(prose_words(memo))+
             ' words; the revision must not be longer, and should be shorter where the current prose exceeds 3,000 words. '
-            'Keep the required section order.\n'+EVIDENCE_TIER_RULE+'\n'+RUBRIC+'\nEvidence:\n'+context+
+            'Keep the required section order.\n'+EVIDENCE_TIER_RULE+'\n'+RUBRIC+EVIDENCE_ABOVE+
             ('\nThe forecast correction for these findings was rejected; the valuation below is unchanged. Do not '
              'describe any forecast change as made.' if isinstance(candidate,dict) and candidate.get('correction_rejected') else '')+
             ('\nNotes on the plan now valued:\n'+'\n'.join(state.get('plan_gap_notes',[])) if state.get('plan_gap_notes') else '')+
-            '\nValuation:\n'+valuation_context+'\nMemo:\n'+memo+'\nFindings:\n'+json.dumps(combined)+'\nAdjudicated model response:\n'+json.dumps(candidate),tokens=MEMO_TOKENS)
+            '\nValuation:\n'+valuation_context+'\nMemo:\n'+memo+'\nFindings:\n'+json.dumps(combined)+'\nAdjudicated model response:\n'+json.dumps(candidate),tokens=MEMO_TOKENS,
+            prefix=_evidence_prefix(context))
         state['current_memo']=_label_unverified(corrected,state['sources'])
         state['iteration']=iteration+1
         state.pop('pending_revision',None)
@@ -2916,7 +2935,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'it, label it as unverified context, or remove it. Describe convention rows separately, never as adding up. '
                 'Change nothing else.\n'+
                 EVIDENCE_TIER_RULE+'\nProblems:\n'+json.dumps(fixable)+'\nCOMPUTED SUMMARY:\n'+computed_summary(plan,result)+
-                '\nEvidence:\n'+context+'\nComputed exhibits:\n'+valuation_section(plan,result)+'\nMemo:\n'+memo,tokens=8000)
+                EVIDENCE_ABOVE+'\nComputed exhibits:\n'+valuation_section(plan,result)+'\nMemo:\n'+memo,tokens=8000,
+                prefix=_evidence_prefix(context))
             except core.IncompleteResponse as exc:
                 # The fix is a free-check convenience; the review still sees the draft
                 # and the same checks. A charged but unusable answer does not stop the run.
@@ -2962,8 +2982,9 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 if earlier else '')
         prompt=('Review this equity memo against its supplied evidence and the Python valuation, using the shared quality '
                 'standard below, and classify each defect as blocker, major or minor by that standard. Rounding within '
-                'the last displayed digit and context labelled as unverified are never material; style preferences are '
-                'not findings. Check: (1) every figure in the prose against the computed summary, the computed tables, the '
+                'the last displayed digit is never material; an unverified excerpt used only as attributed outside view '
+                'or context is not material, but a company fact or number resting only on one is (rule M1); style '
+                'preferences are not findings. Check: (1) every figure in the prose against the computed summary, the computed tables, the '
                 'valuation output or the cited source, and every comparison with the price by arithmetic; (2) that the '
                 'memo does not contradict the computed account of which inputs alone can and cannot bring value to the '
                 'price (explaining why the house forecast differs from what the price requires is the variant view, not '
@@ -2975,12 +2996,12 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'unexplained. Never write a fix that asks the author to compute a value the engine has not computed. '
                 'Before flagging an omission, check the whole memo. Report every material defect you find and at most '
                 'three minor ones; there is no target number of findings. '
-                'Every finding must quote one contiguous passage of the CURRENT draft verbatim, without added quotation '
+                'Every finding must quote one contiguous passage of the CURRENT draft (between the draft markers) verbatim, without added quotation '
                 'marks or ellipses; for an omission, quote the heading or sentence where the missing content belongs and '
                 'name the omission in issue. Earlier notes can be stale; never report an accusation that the current '
                 'draft already resolves. Keep each issue under 100 words and each fix under 70.\n'+
                 EVIDENCE_TIER_RULE+'\n'+RUBRIC+ledger+'\n'+REVIEW_SCHEMA+
-                '\nEvidence:\n'+context+'\nValuation:\n'+valuation_context+'\nDraft:\n'+visible+
+                '\nThe evidence, the valuation and the draft are in the blocks above.'+
                 '\nDeterministic diagnostics (not semantic proof):\n'+json.dumps(deterministic)+
                 '\nNew external notes for this draft only; verify against the CURRENT wording and omit resolved allegations:\n'+fresh_notes+
                 ('\nArtifact integrity recheck record: '+state['artifact_review_record']+
@@ -2998,7 +3019,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             record=prior_review
             combined=record['findings']
         else:
-            raw=call(f'review_{iteration}',reviewer,prompt,tokens=12000)
+            review_prefix=_review_prefix(context,valuation_context,visible)
+            raw=call(f'review_{iteration}',reviewer,prompt,tokens=12000,prefix=review_prefix)
             try:
                 review_value,normalized=_response_json(raw)
                 # Live GPT-5.4 reviews (2026-11-14) wrapped quotes in quotation
@@ -3062,19 +3084,32 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             # (2026-11-15) called a figure from the reported-history table absent,
             # and the model check upheld it.
             pools=trace_pools(state['sources'],computed_inputs)
+            # A finding the check refuted earlier on the same text under the same
+            # rule is not paid for again (the check flip-flopped between reviews).
+            earlier_refuted={(f.get('rule'),f.get('current_excerpt')):f'Refuted in review {r["iteration"]}: {f.get("check_reason","")}'
+                             for r in state.get('review_history',[]) if r['iteration']<iteration
+                             for f in (r.get('finding_check') or {}).get('refuted',[]) if f.get('current_excerpt')}
             for index,finding in enumerate(material):
-                if finding.get('rule')=='M3':
-                    missing=untraced_figures(finding.get('current_excerpt'),pools)
+                rule,excerpt=finding.get('rule'),finding.get('current_excerpt') or ''
+                if rule=='M3':
+                    missing=untraced_figures(excerpt,pools)
                     if missing==[]:
                         refuted[index]=('Python traced every figure in the quoted text to the computed output, the reported '
                                         'tables or a primary source.')
+                elif rule=='B2' and excerpt and not TRADING_TERMS.search(excerpt):
+                    refuted[index]='The quoted text contains none of the trading-layer terms the standard names.'
+                elif rule=='M6' and HOUSE_ATTRIBUTION.search(excerpt):
+                    refuted[index]='The quoted text names the figure as a house, computed or forecast figure.'
+                if index not in refuted and (rule,excerpt) in earlier_refuted:
+                    refuted[index]=earlier_refuted[(rule,excerpt)]
             pending=[f for index,f in enumerate(material) if index not in refuted]
             if pending:
                 try:
                     check=call(f'finding_check_{iteration}',reviewer,FINDING_CHECK+'\n'+EVIDENCE_TIER_RULE+'\n'+RUBRIC+
                         '\nFindings:\n'+json.dumps([dict({key:f.get(key) for key in ('severity','rule','issue','current_excerpt','fix','source_refs')},id=check_id)
                                                     for f,check_id in zip(pending,_check_ids(pending))])+
-                        '\nEvidence:\n'+context+'\nValuation:\n'+valuation_context+'\nDraft:\n'+visible,tokens=FINDING_CHECK_TOKENS)
+                        '\nThe evidence, the valuation and the draft are in the blocks above.',tokens=FINDING_CHECK_TOKENS,
+                        prefix=review_prefix)
                     for index,reason in _refuted_findings(check,pending).items():
                         refuted[material.index(pending[index])]=reason
                 except core.IncompleteResponse as exc:
@@ -3151,7 +3186,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'do not silently drop their scope or invent a discount to satisfy a review. '
             'Forecast changes must be explicit house assumptions and economically justified. '
             +FORECAST_SCHEMA+rate_text+UNDERWRITING_GUIDANCE+PLAN_FIELD_RULES+PLAN_SOURCE_RULE+
-            '\nEvidence:\n'+context+'\nCurrent memo (verify allegations against this exact text):\n'+memo+'\nCurrent forecast proposal:\n'+json.dumps({k:plan[k] for k in
+            EVIDENCE_ABOVE+'\nCurrent memo (verify allegations against this exact text):\n'+memo+'\nCurrent forecast proposal:\n'+json.dumps({k:plan[k] for k in
                 ('assumptions_label','scenario_rationales','scenarios','operating_model','discount_rate','monitoring',
                  'counterfactuals','calibration_comparisons','forecast_periods','repurchase_tests',
                  'margin_continuity_basis','capital_efficiency_basis','weights_basis','valuation_timing') if k in plan})+
@@ -3163,7 +3198,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             '\nComputed diagnostics for verification:\n'+json.dumps((result or {}).get('computed_diagnostics',{}))+
             '\nComputed counterfactuals:\n'+json.dumps((result or {}).get('counterfactuals',{}))+
             '\nComputed reverse-DCF projections:\n'+json.dumps((result or {}).get('reverse_dcf',{}).get('solution_projections',[]))+
-            '\nFindings:\n'+json.dumps(combined),tokens=12000)
+            '\nFindings:\n'+json.dumps(combined),tokens=12000,prefix=_evidence_prefix(context))
         def parsed(text, stage):
             try:
                 value,normalized=_response_json(text)

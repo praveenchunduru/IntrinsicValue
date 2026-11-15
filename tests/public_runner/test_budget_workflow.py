@@ -23,6 +23,17 @@ REVIEWER = core.REVIEWERS['balanced']
 RATES = {EASY:(.09e-6,.30e-6), STRONG:(3e-6,15e-6), REVIEWER:(2.5e-6,15e-6)}
 
 
+def instructions(payload):
+    """The stage's own text: the last content part when the evidence travels as a cached prefix."""
+    content = payload['messages'][1]['content']
+    return content[-1]['text'] if isinstance(content, list) else content
+
+
+def full_text(payload):
+    content = payload['messages'][1]['content']
+    return ''.join(part['text'] for part in content) if isinstance(content, list) else content
+
+
 class FullContractTransport:
     def __init__(self, *, revisions=0, timeout_once=False):
         self.sources=json.loads((EXAMPLE/'sources.json').read_text())
@@ -61,7 +72,7 @@ class FullContractTransport:
                 for model,(pin,pout) in RATES.items()]}
         if url!=core.BASE+'/chat/completions':
             raise AssertionError('Unexpected network request in offline fixture')
-        prompt=payload['messages'][1]['content']
+        prompt=instructions(payload)
         self.requests.append(copy.deepcopy(payload))
         annotations=[]
         if prompt.startswith('Research '):
@@ -104,7 +115,7 @@ class FullContractTransport:
         # Explicit simulation assumptions: input bytes/3.05 approximates the
         # audited large-review ratio; prose/JSON outputs use bytes/4. Neither
         # assumption changes Router's conservative byte-based reservations.
-        prompt_tokens=math.ceil(len((core.SYSTEM+prompt).encode())/3.05)
+        prompt_tokens=math.ceil(len((core.SYSTEM+full_text(payload)).encode())/3.05)
         completion_tokens=math.ceil(len(content.encode())/4)
         if completion_tokens>payload['max_tokens']:
             raise AssertionError('Fixture response exceeds its actual stage output contract')
@@ -163,7 +174,7 @@ class BudgetWorkflowTests(unittest.TestCase):
                 if revisions:
                     self.assertEqual(stages[-5:],[f'targeted_research_{revisions}',f'model_response_{revisions}',
                         f'revise_{revisions}',f'draft_check_fix_{revisions}',f'review_{revisions}'])
-                prompts=[p['messages'][1]['content'] for p in fixture.requests]
+                prompts=[full_text(p) for p in fixture.requests]
                 self.assertGreater(len(pipeline._evidence_context(state["sources"]).encode()),100000)
                 self.assertGreater(max(len(p.encode()) for p in prompts),500000)
                 self.assertTrue(any('IMMUTABLE reported inputs' in p for p in prompts))
@@ -283,7 +294,7 @@ class IncompleteFixTransport(FullContractTransport):
 
     def transport(self, url, *, key=None, payload=None, timeout=90):
         response = super().transport(url, key=key, payload=payload, timeout=timeout)
-        if url.endswith('/chat/completions') and payload['messages'][1]['content'].startswith('Correct only the problems listed below'):
+        if url.endswith('/chat/completions') and instructions(payload).startswith('Correct only the problems listed below'):
             response['choices'][0]['finish_reason'] = 'length'
             response['choices'][0]['message']['content'] = '```json\n{"edits":[{"quote":"cut'
         return response
@@ -308,8 +319,8 @@ class FixStageTests(unittest.TestCase):
         fixture = FullContractTransport(revisions=1)
         with tempfile.TemporaryDirectory() as directory, fixture.installed():
             pipeline.run('AAPL', 'synthetic-key', directory=directory)
-        revise = next(p['messages'][1]['content'] for p in fixture.requests
-                      if p['messages'][1]['content'].startswith('Revise the complete memo'))
+        revise = next(instructions(p) for p in fixture.requests
+                      if instructions(p).startswith('Revise the complete memo'))
         self.assertRegex(revise, r'The current prose is \d+ words; the revision must not be longer')
         self.assertIn(pipeline.RUBRIC, revise)
         self.assertNotIn('Recompute any reviewer-proposed number', revise)
@@ -325,7 +336,7 @@ class FixStageTests(unittest.TestCase):
             folder = pipeline.run('AAPL', 'synthetic-key', directory=directory)
             state = json.loads((folder/'state.json').read_text())
         self.assertTrue(state['complete'])
-        self.assertFalse(any(p['messages'][1]['content'].startswith('Correct only the problems listed below')
+        self.assertFalse(any(instructions(p).startswith('Correct only the problems listed below')
                              for p in fixture.requests))
         self.assertNotIn('draft_check_fix_0', [row['stage'] for row in state['ledger']])
 
@@ -335,7 +346,7 @@ class RefutingCheckTransport(FullContractTransport):
 
     def transport(self, url, *, key=None, payload=None, timeout=90):
         response = super().transport(url, key=key, payload=payload, timeout=timeout)
-        if url.endswith('/chat/completions') and payload['messages'][1]['content'].startswith('Check each review finding'):
+        if url.endswith('/chat/completions') and instructions(payload).startswith('Check each review finding'):
             response['choices'][0]['message']['content'] = json.dumps({'checks': [
                 {'id': 'C1', 'upheld': False, 'reason': 'The draft already states the dated monitoring condition.'}]})
         return response
@@ -369,7 +380,7 @@ class FindingCheckTests(unittest.TestCase):
 class IncompleteCheckTransport(FullContractTransport):
     def transport(self, url, *, key=None, payload=None, timeout=90):
         response = super().transport(url, key=key, payload=payload, timeout=timeout)
-        if url.endswith('/chat/completions') and payload['messages'][1]['content'].startswith('Check each review finding'):
+        if url.endswith('/chat/completions') and instructions(payload).startswith('Check each review finding'):
             response['choices'][0]['finish_reason'] = 'length'
             response['choices'][0]['message']['content'] = '{"checks":[{"id":"C1","upheld":fal'
         return response
@@ -379,7 +390,7 @@ class CollidingIdTransport(FullContractTransport):
     """The reviewer reuses the assessment finding's ID for its own major; the check refutes only the assessment."""
 
     def transport(self, url, *, key=None, payload=None, timeout=90):
-        prompt = payload['messages'][1]['content'] if url.endswith('/chat/completions') else ''
+        prompt = instructions(payload) if url.endswith('/chat/completions') else ''
         response = super().transport(url, key=key, payload=payload, timeout=timeout)
         if prompt.startswith('Review this equity memo') and self.review_count == 1:
             review = json.loads(response['choices'][0]['message']['content'])
@@ -421,7 +432,7 @@ class TracedM3Transport(FullContractTransport):
     """The reviewer's only major is an M3 accusation about figures Python can trace."""
 
     def transport(self, url, *, key=None, payload=None, timeout=90):
-        prompt = payload['messages'][1]['content'] if url.endswith('/chat/completions') else ''
+        prompt = instructions(payload) if url.endswith('/chat/completions') else ''
         response = super().transport(url, key=key, payload=payload, timeout=timeout)
         if prompt.startswith('Review this equity memo') and self.review_count == 1:
             review = json.loads(response['choices'][0]['message']['content'])
@@ -443,3 +454,39 @@ class TracedM3Tests(unittest.TestCase):
         refuted = state['review_history'][0]['finding_check']['refuted']
         self.assertEqual([f['id'] for f in refuted], ['F1'])
         self.assertIn('Python traced every figure', refuted[0]['check_reason'])
+
+
+class SharedPrefixTests(unittest.TestCase):
+    def test_review_and_check_share_one_cached_prefix_and_claude_stages_another(self):
+        fixture = FullContractTransport(revisions=1)
+        with tempfile.TemporaryDirectory() as directory, fixture.installed():
+            pipeline.run('AAPL', 'synthetic-key', directory=directory)
+        def prefix_of(start):
+            payload = next(p for p in fixture.requests if instructions(p).startswith(start))
+            content = payload['messages'][1]['content']
+            return content[0]['text'] if isinstance(content, list) else None
+        review, check = prefix_of('Review this equity memo'), prefix_of('Check each review finding')
+        self.assertIsNotNone(review)
+        self.assertEqual(review, check)
+        self.assertIn('<<<DRAFT', review)
+        self.assertEqual(prefix_of('Write the prose of'), prefix_of('Build an investment valuation plan'))
+
+
+class PrefilterPipelineTests(unittest.TestCase):
+    def test_a_b2_finding_without_trading_terms_is_refuted_without_a_paid_check(self):
+        class B2Transport(FullContractTransport):
+            def transport(self, url, *, key=None, payload=None, timeout=90):
+                prompt = instructions(payload) if url.endswith('/chat/completions') else ''
+                response = super().transport(url, key=key, payload=payload, timeout=timeout)
+                if prompt.startswith('Review this equity memo') and self.review_count == 1:
+                    review = json.loads(response['choices'][0]['message']['content'])
+                    review['findings'][0].update(severity='blocker', rule='B2')
+                    response['choices'][0]['message']['content'] = json.dumps(review)
+                return response
+        fixture = B2Transport(revisions=1)
+        with tempfile.TemporaryDirectory() as directory, fixture.installed():
+            folder = pipeline.run('AAPL', 'synthetic-key', directory=directory)
+            state = json.loads((folder/'state.json').read_text())
+        excerpt = state['review_history'][0]['finding_check']['refuted'][0]
+        self.assertIn('trading-layer terms', excerpt['check_reason'])
+        self.assertNotIn('finding_check_0', [row['stage'] for row in state['ledger']])

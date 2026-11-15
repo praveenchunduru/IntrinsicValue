@@ -30,7 +30,8 @@ class ScriptedRouter(full_pipeline.FakeRouter):
     responses = []
     prompts = []
 
-    def complete(self, stage, model, prompt, max_tokens=6000, web=False):
+    def complete(self, stage, model, prompt, max_tokens=6000, web=False, prefix=None):
+        prompt = (prefix or '') + prompt  # Evidence now arrives as a cached prefix.
         if not stage.startswith('valuation_plan'):
             return super().complete(stage, model, prompt, max_tokens, web)
         self.calls.append(stage)
@@ -84,7 +85,8 @@ class PlanRepairTests(unittest.TestCase):
 
     def test_a_valid_plan_behind_analysis_is_used_without_a_paid_repair(self):
         class Prefaced(ScriptedRouter):
-            def complete(self, stage, model, prompt, max_tokens=6000, web=False):
+            def complete(self, stage, model, prompt, max_tokens=6000, web=False, prefix=None):
+                prompt = (prefix or '') + prompt  # Evidence now arrives as a cached prefix.
                 text = super().complete(stage, model, prompt, max_tokens, web)
                 if stage.startswith('valuation_plan'):
                     return 'I reconciled the component drivers first.\n```json\n' + text + '\n```'
@@ -241,7 +243,8 @@ def corrected_plan():
 class CorrectionRouter(full_pipeline.FakeRouter):
     responses = []
 
-    def complete(self, stage, model, prompt, max_tokens=6000, web=False):
+    def complete(self, stage, model, prompt, max_tokens=6000, web=False, prefix=None):
+        prompt = (prefix or '') + prompt  # Evidence now arrives as a cached prefix.
         if not stage.startswith('model_response'):
             return super().complete(stage, model, prompt, max_tokens, web)
         self.calls.append(stage)

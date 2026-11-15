@@ -252,6 +252,32 @@ def _text_price_caps(pricing):
     return max(prompt_rates), max(completion_rates)
 
 
+def _cache_write_cap(pricing):
+    """Highest declared cache-write price across tiers, or None when the model declares none."""
+    rates = []
+    for tier in [pricing, *(pricing.get('overrides') or [])] if isinstance(pricing, dict) else []:
+        for name in ('input_cache_write', 'input_cache_write_1h'):
+            try:
+                value = float(tier.get(name)) if isinstance(tier, dict) and tier.get(name) is not None else None
+            except (TypeError, ValueError):
+                value = None
+            if value is not None and math.isfinite(value) and value >= 0:
+                rates.append(value)
+    return max(rates) if rates else None
+
+
+# Long shared prefixes (the evidence, and for the reviewer the valuation and
+# draft) are sent first and marked for caching. OpenRouter turns the Anthropic
+# marker into a GPT-5.6 cache breakpoint; the TTL applies to Anthropic only.
+# No stage reused a cache before (investigation, 2026-11-15): every prompt
+# opened with its own instructions.
+CACHE_MARKER_MODELS = ('anthropic/', 'openai/gpt-5.6')
+
+
+def cache_markers_supported(model):
+    return isinstance(model, str) and model.startswith(CACHE_MARKER_MODELS)
+
+
 class BudgetExceeded(ValueError):
     """A local spending allowance rejected a request before transport."""
 
@@ -271,28 +297,36 @@ class Router:
         for model in dict.fromkeys(models):
             self.estimate(model,'',0)
 
-    def estimate(self, model, prompt, max_tokens=3500, *, web=False):
+    def estimate(self, model, prompt, max_tokens=3500, *, web=False, prefix=''):
         """Return the unchanged uncached reservation without adding a charge.
 
         A partial prompt gives only a planning floor. Actual calls always price
         their complete prompt again, including all generated intermediate data.
+        A cached prefix is reserved at the higher of the input and cache-write
+        prices, since the first request writes it.
         """
         if model not in self.catalog:
             raise ValueError(f'Model unavailable: {model}. Choose another profile or override the model.')
         catalog_model = self.catalog[model]
         pin, pout = _text_price_caps(catalog_model['pricing'])
+        if prefix:
+            write = _cache_write_cap(catalog_model['pricing']) if cache_markers_supported(model) else None
+            prefix_cost = len(prefix.encode()) * max(pin, write or 0)
+        else:
+            prefix_cost = 0.0
         # UTF-8 byte count bounds token counts conservatively, with chat-template allowance.
         # Exa Auto is $0.007/request (OpenRouter docs checked 2026-11-06).
         # Reserve $0.02 plus bounded search-context allowance; provider key cap is authoritative.
         web_context_bytes, web_fee_reserve = (100000, 0.02) if web else (0, 0.0)
-        return (len((SYSTEM + prompt).encode()) + 4096 + web_context_bytes) * pin + max_tokens * pout + web_fee_reserve
+        return ((len((SYSTEM + prompt).encode()) + 4096 + web_context_bytes) * pin + prefix_cost +
+                max_tokens * pout + web_fee_reserve)
 
-    def complete(self, stage, model, prompt, max_tokens=3500, *, web=False):
+    def complete(self, stage, model, prompt, max_tokens=3500, *, web=False, prefix=None):
         reasoning = reasoning_request(self.catalog.get(model), model, reasoning_budget(stage))
         if reasoning is not None:
             # Reasoning tokens are billed as output and count against the limit.
             max_tokens += reasoning_budget(stage)
-        reserve = self.estimate(model, prompt, max_tokens, web=web)
+        reserve = self.estimate(model, prompt, max_tokens, web=web, prefix=prefix or '')
         catalog_model = self.catalog[model]
         pin, pout = _text_price_caps(catalog_model['pricing'])
         spent = sum(row['charged_or_reserved_usd'] for row in self.ledger)
@@ -305,11 +339,24 @@ class Router:
             row['reasoning'] = dict(reasoning)
         self.ledger.append(row)
         self.checkpoint()  # Persist reservation before any potentially billed request.
+        if prefix and cache_markers_supported(model):
+            content = [{'type': 'text', 'text': prefix, 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}},
+                       {'type': 'text', 'text': prompt}]
+            row['cached_prefix_utf8_bytes'] = len(prefix.encode())
+        else:
+            content = (prefix or '') + prompt
         payload = {
-            'model': model, 'messages': [{'role':'system','content':SYSTEM}, {'role':'user','content':prompt}],
+            'model': model, 'messages': [{'role':'system','content':SYSTEM}, {'role':'user','content':content}],
             'max_tokens': max_tokens,
             'provider': {'allow_fallbacks': True, 'max_price': {'prompt': pin * 1e6, 'completion': pout * 1e6}},
             'usage': {'include': True}}
+        if model.startswith('openai/gpt-5.6'):
+            # GPT-5.6 charges 1.25x for automatic cache writes; only marked prefixes are cached.
+            payload['prompt_cache_options'] = {'mode': 'explicit'}
+        session = getattr(self, 'session', None)
+        if isinstance(session, str) and session:
+            # Keeps one run on one provider so its cached prefix is found.
+            payload['session_id'] = session[:256]
         if reasoning is not None:
             payload['reasoning'] = reasoning
         parameters = catalog_model.get('supported_parameters')

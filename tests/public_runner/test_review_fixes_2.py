@@ -277,7 +277,8 @@ LONG_MEMO = ('# Executive valuation\nThe house value rests on terminal returns w
 
 
 class QuotedExcerptRouter(full_pipeline.FakeRouter):
-    def complete(self, stage, model, prompt, max_tokens=6000, web=False):
+    def complete(self, stage, model, prompt, max_tokens=6000, web=False, prefix=None):
+        prompt = (prefix or '') + prompt  # Evidence now arrives as a cached prefix.
         text = super().complete(stage, model, prompt, max_tokens, web)
         if stage == 'full_draft' or stage.startswith('revise_'):
             return LONG_MEMO
@@ -685,3 +686,56 @@ class CauseWordingTests(unittest.TestCase):
         self.assertIn('gap-cause-wording', [f['id'] for f in quality.prereview_checks(memo, [], ())])
         calm = '# T\n\n## (1) Conclusion\nThe house concludes the value is below the price.\n'
         self.assertNotIn('gap-cause-wording', [f['id'] for f in quality.prereview_checks(calm, [], ())])
+
+
+class CachedPrefixRouterTests(unittest.TestCase):
+    CATALOG = {
+        'anthropic/claude-opus-5.5': {'pricing': {'prompt': '0.000004', 'completion': '0.00002', 'input_cache_read': '0.0000002',
+                                                  'input_cache_write': '0.000005', 'input_cache_write_1h': '0.000008'},
+                                      'supported_parameters': ['reasoning', 'response_format']},
+        'openai/gpt-5.6-sol': {'pricing': {'prompt': '0.0000044', 'completion': '0.000022', 'input_cache_read': '0.00000044',
+                                           'input_cache_write': '0.0000055'}, 'supported_parameters': ['reasoning']},
+        'deepseek/deepseek-v4-pro-0813': {'pricing': {'prompt': '0.000000111', 'completion': '0.00000444',
+                                                      'input_cache_read': '0.000000097'}, 'supported_parameters': ['temperature']}}
+
+    def router(self):
+        from investmentideas import core
+        router = core.Router.__new__(core.Router)
+        router.key, router.budget, router.ledger, router.checkpoint = 'k', 10.0, [], lambda: None
+        router.catalog, router.session = self.CATALOG, 'iv-test-session'
+        return router
+
+    def send(self, model, prefix):
+        from investmentideas import core
+        sent = []
+        def transport(url, *, key=None, payload=None, timeout=90):
+            sent.append(payload)
+            return {'choices': [{'finish_reason': 'stop', 'message': {'content': 'ok'}}], 'usage': {'cost': 0.01}}
+        with patch.object(core, 'request_json', transport):
+            self.router().complete('review_0', model, 'Instructions.', max_tokens=100, prefix=prefix)
+        return sent[0]
+
+    def test_claude_and_gpt_get_a_marked_prefix_and_others_a_plain_prompt(self):
+        claude = self.send('anthropic/claude-opus-5.5', 'Evidence:\nlong text\n')
+        self.assertEqual(claude['messages'][1]['content'][0]['cache_control'], {'type': 'ephemeral', 'ttl': '1h'})
+        self.assertEqual(claude['messages'][1]['content'][1]['text'], 'Instructions.')
+        self.assertEqual(claude['session_id'], 'iv-test-session')
+        gpt = self.send('openai/gpt-5.6-sol', 'Evidence:\nlong text\n')
+        self.assertEqual(gpt['prompt_cache_options'], {'mode': 'explicit'})
+        self.assertIn('cache_control', gpt['messages'][1]['content'][0])
+        plain = self.send('deepseek/deepseek-v4-pro-0813', 'Evidence:\nlong text\n')
+        self.assertEqual(plain['messages'][1]['content'], 'Evidence:\nlong text\nInstructions.')
+
+    def test_the_prefix_is_reserved_at_the_cache_write_price(self):
+        router = self.router()
+        without = router.estimate('anthropic/claude-opus-5.5', 'x' * 1000, 100)
+        with_prefix = router.estimate('anthropic/claude-opus-5.5', 'x' * 1000, 100, prefix='y' * 100000)
+        self.assertAlmostEqual(with_prefix - without, 100000 * 0.000008)
+
+
+class ReviewPrefilterTests(unittest.TestCase):
+    def test_trading_and_house_attribution_terms(self):
+        from investmentideas import quality
+        self.assertIsNone(quality.TRADING_TERMS.search('The repurchase was accretive to remaining holders.'))
+        self.assertIsNotNone(quality.TRADING_TERMS.search('This implies 20% upside.'))
+        self.assertIsNotNone(quality.HOUSE_ATTRIBUTION.search('The house uses a 17.5% tax rate.'))

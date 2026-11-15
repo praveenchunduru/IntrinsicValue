@@ -44,7 +44,8 @@ class FakeRouter:
         return .01
     def validate_models(self,models):
         pass
-    def complete(self,stage,model,prompt,max_tokens=6000,web=False):
+    def complete(self,stage,model,prompt,max_tokens=6000,web=False, prefix=None):
+        prompt = (prefix or '') + prompt  # Evidence now arrives as a cached prefix.
         self.calls.append(stage)
         self.ledger.append({'stage':stage,'model':model,'status':'pending','charged_or_reserved_usd':.01})
         self.checkpoint()
@@ -225,7 +226,7 @@ class FullPipelineTests(unittest.TestCase):
         prompts={}
         original=FakeRouter.complete
         def capture(router,stage,model,prompt,**kwargs):
-            prompts[stage]=prompt
+            prompts[stage]=(kwargs.get('prefix') or '')+prompt
             return original(router,stage,model,prompt,**kwargs)
         with tempfile.TemporaryDirectory() as directory,patch.object(FakeRouter,'complete',capture):
             folder=pipeline.run('AAPL','synthetic',directory=directory,evidence=evidence)
@@ -239,7 +240,7 @@ class FullPipelineTests(unittest.TestCase):
         prompts={}
         original=FakeRouter.complete
         def capture(router,stage,model,prompt,**kwargs):
-            prompts[stage]=prompt
+            prompts[stage]=(kwargs.get('prefix') or '')+prompt
             return original(router,stage,model,prompt,**kwargs)
         with tempfile.TemporaryDirectory() as directory,patch.object(FakeRouter,'complete',capture):
             folder=pipeline.run('AAPL','synthetic',directory=directory,source_snapshot=[SOURCE],
@@ -255,7 +256,7 @@ class FullPipelineTests(unittest.TestCase):
         original=FakeRouter.complete
         prompts={}
         def capture(router,stage,model,prompt,**kwargs):
-            prompts[stage]=prompt
+            prompts[stage]=(kwargs.get('prefix') or '')+prompt
             return original(router,stage,model,prompt,**kwargs)
         with tempfile.TemporaryDirectory() as directory,patch.object(FakeRouter,'complete',capture):
             kwargs={'source_snapshot':[SOURCE],'forecast_plan':plan(),'draft':MEMO,'evidence':marker}
@@ -328,17 +329,18 @@ class FullPipelineTests(unittest.TestCase):
     def test_legacy_current_system_folder_preserves_spend_and_reuses_proven_unchanged_stages(self):
         prompts={}
         original=FakeRouter.complete
-        def capture(router,stage,model,prompt,max_tokens=6000,web=False):
-            prompts[stage]=(model,prompt,max_tokens,web)
-            return original(router,stage,model,prompt,max_tokens=max_tokens,web=web)
+        def capture(router,stage,model,prompt,max_tokens=6000,web=False,prefix=None):
+            prompts[stage]=(model,prompt,max_tokens,web,prefix)
+            return original(router,stage,model,prompt,max_tokens=max_tokens,web=web,prefix=prefix)
         with tempfile.TemporaryDirectory() as directory,patch.object(FakeRouter,'complete',capture):
             folder=pipeline.run('AAPL','synthetic',directory=directory)
             state=json.loads((folder/'state.json').read_text())
             old_stages={}
-            for stage,(model,prompt,tokens,web) in prompts.items():
+            for stage,(model,prompt,tokens,web,prefix) in prompts.items():
                 old=stage+':'+pipeline._digest([prompt,model,tokens,web])[:12]
                 thinking=pipeline.core.reasoning_budget(stage)
-                current=stage+':'+pipeline._digest([prompt,model,tokens,web,pipeline.core.SYSTEM]+([thinking] if thinking else []))[:12]
+                current=stage+':'+pipeline._digest([prompt,model,tokens,web,pipeline.core.SYSTEM]+([thinking] if thinking else [])+
+                                                   (['prefix',pipeline._digest(prefix)] if prefix else []))[:12]
                 old_stages[old]=state['stages'][current]
             state['stages']=old_stages
             state.pop('workflow_contract')
@@ -361,7 +363,7 @@ class FullPipelineTests(unittest.TestCase):
         prompts={}
         def malformed(router,stage,model,prompt,**kwargs):
             result=original(router,stage,model,prompt,**kwargs)
-            prompts[stage]=prompt
+            prompts[stage]=(kwargs.get('prefix') or '')+prompt
             if stage in ('review_0','review_format_0'):
                 finding={'id':'F1','severity':'major','issue':'Synthetic unresolved economics',
                          'source_refs':['S1'],'fix':'Investigate the forecast',

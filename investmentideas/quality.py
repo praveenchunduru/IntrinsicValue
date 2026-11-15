@@ -364,6 +364,11 @@ RUBRIC_RULES = (
     ('N3', 'minor', 'an omission that does not change the conclusion'),
 )
 RULE_SEVERITY = {rule: severity for rule, severity, _ in RUBRIC_RULES}
+# The trading-layer terms rule B2 names. A B2 finding whose quoted text has none
+# of them is refuted by Python ("accretive" was graded a blocker, 2026-11-15).
+TRADING_TERMS = re.compile(r'\b(?:ratings?|rated|buy|sell|overweight|underweight|outperform|underperform|target price|'
+                           r'price target|entry (?:price|level|point)|margin of safety|upside|downside|position siz\w*)\b', re.I)
+HOUSE_ATTRIBUTION = re.compile(r'\b(?:house|computed|model(?:led)?|forecast|assum\w+)\b', re.I)
 _SEVERITY_RANK = {'minor': 0, 'major': 1, 'blocker': 2}
 
 
