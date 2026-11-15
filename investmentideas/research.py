@@ -15,7 +15,6 @@ import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request
-from xml.etree import ElementTree as ET
 
 from .sec_directory import load_directory, snapshot_metadata
 from .sec_http import MAX_SOURCE_BYTES, open_http as urlopen, user_agent
@@ -25,8 +24,9 @@ from .companyfacts import FINANCIAL_CONTEXT_CONCEPTS
 MAX_DOCUMENT_BYTES = MAX_SOURCE_BYTES
 MAX_EXCERPT_CHARS = 16_000
 SEC_HOST = 'www.sec.gov'
-APPLE_FEED = 'https://www.apple.com/newsroom/rss-feed.rss'
-ALLOWED_TEXT_HOSTS = {SEC_HOST, 'www.apple.com'}
+ALLOWED_TEXT_HOSTS = {SEC_HOST}
+RELEASE_INTERPRETATION = ('Issuer statements, including forward-looking and promotional statements, require attribution; '
+                          'they are not independent evidence of adoption or economic returns.')
 
 
 class _PlainText(HTMLParser):
@@ -130,7 +130,8 @@ def _matched_headings(headings, pattern):
     """Match lines, allowing a bounded heading split by HTML block breaks."""
     beginning = {'business', 'risk', "management's", 'management’s', 'management',
                  'segment', 'consolidated', 'note', 'research', 'r', 'r&',
-                 'provision', 'income', 'taxation'}
+                 'provision', 'income', 'taxation', 'leases', 'lease', 'commitments',
+                 'contractual', 'property', 'property,'}
     expression = re.compile(pattern)
     for index, (start, end, line) in enumerate(headings):
         if expression.fullmatch(line):
@@ -208,8 +209,26 @@ _FOCUS_HEADINGS = (
      r'(?im)^[ \t]*(?:(?:manufacturing|unconditional)\s+)?purchase\s+(?:obligations|commitments)[ \t]*$'),
     ('share repurchases', 1400, 1,
      r'(?im)^[ \t]*(?:(?:share|stock)\s+repurchases?(?:\s+programs?)?|issuer\s+purchases\s+of\s+equity\s+securities)[ \t]*$'),
+    # Lease, commitment and fixed-asset notes. Two live memos (2026-11-15)
+    # deducted Microsoft's $66.6 billion of finance leases while its datacenter
+    # leases signed but not commenced reached the evidence only through an
+    # unverified web excerpt.
+    ('leases', 1600, 1,
+     r'(?im)^[ \t]*(?:note\s+\d+[a-z]?\s*[–—\-:.]\s*)?leases?(?:\s+and\s+(?:contractual\s+)?commitments)?[ \t]*$'),
+    ('commitments', 1200, 1,
+     r'(?im)^[ \t]*(?:note\s+\d+[a-z]?\s*[–—\-:.]\s*)?(?:commitments(?:\s+and\s+contingencies)?|'
+     r'contractual\s+obligations(?:\s+and\s+commitments)?)[ \t]*$'),
+    ('property and equipment', 1000, 1,
+     r'(?im)^[ \t]*(?:note\s+\d+[a-z]?\s*[–—\-:.]\s*)?property,?\s+(?:plant,?\s+)?and\s+equipment(?:,?\s+net)?[ \t]*$'),
 )
-_FOCUS_LIMIT = 12000
+# A lease note puts its not-yet-commenced amount after the maturity table, past
+# a heading window (Microsoft: "had not yet commenced of $329.1 billion"), so
+# that sentence is selected by its own wording.
+_FOCUS_PHRASES = (
+    ('leases signed but not yet commenced', 400, 600,
+     r'(?i)\b(?:not\s+yet|have\s+not|had\s+not|has\s+not)\s+(?:yet\s+)?commenced\b'),
+)
+_FOCUS_LIMIT = 16000
 
 
 def _has_prose_sentence(text):
@@ -240,11 +259,13 @@ def archive_focus_excerpts(document):
     """Select exact R&D/tax windows from an already archived public document.
 
     Offsets are Unicode character indices in ``html_to_text(document)``; hashes
-    use UTF-8 for both the decoded archive and cleaned text. At most 6,000 text
-    characters are returned (the limit is ``_FOCUS_LIMIT``). This is selected evidence, not full review of the
+    use UTF-8 for both the decoded archive and cleaned text. At most
+    ``_FOCUS_LIMIT`` text characters are returned. This is selected evidence, not full review of the
     archive, and no heading or missing disclosure is invented. Margin, inventory,
-    purchase-commitment and repurchase disclosures are selected the same way. Substantive
-    repeated headings rank above contents entries, including later MD&A text.
+    purchase-commitment, repurchase, lease, commitment and property disclosures
+    are selected the same way, plus the first sentence stating leases signed but
+    not yet commenced. Substantive repeated headings rank above contents entries,
+    including later MD&A text.
     """
     if not isinstance(document, str):
         raise ValueError('Document must be decoded text')
@@ -274,6 +295,9 @@ def archive_focus_excerpts(document):
             elif not label.startswith('income-tax'):
                 score += 3 * bool(re.search(r'\d', nearby))
                 score += 2 * bool(re.search(r'\b(?:primarily|due to|driven by|compared|percent|million|billion)\b', nearby, re.I))
+                if label == 'leases':
+                    # The note with lease costs and maturities, not an accounting-policy paragraph.
+                    score += 3 * bool(re.search(r'\b(?:finance\s+leases?|lease\s+(?:cost|liabilit))', following, re.I))
             else:
                 score += 3 * bool(re.search(r'\b(?:effective tax rate|one.time|tax charge|tax provision|deferred tax|valuation allowance)\b', following, re.I))
                 score += 2 * bool(re.match(r'[ \t]*note\s+\d+', heading, re.I))
@@ -287,6 +311,13 @@ def archive_focus_excerpts(document):
             selected.append((start, end))
             windows.append((start, end, label))
             if len(selected) >= count:
+                break
+    for label, before, after, pattern in _FOCUS_PHRASES:
+        # The first stated amount: a later repetition adds nothing.
+        for match in re.finditer(pattern, cleaned):
+            start, end = max(0, match.start() - before), min(len(cleaned), match.end() + after)
+            if re.search(r'\$\s?\d', cleaned[match.start():end]) and _has_prose_sentence(cleaned[start:end]):
+                windows.append((start, end, label))
                 break
 
     # Merge overlap between neighboring R&D and tax discussions, preserving
@@ -340,7 +371,28 @@ def _source(title, url, document, *, kind, source_tier, metadata, max_chars=MAX_
                                        'Missing sections are not evidence that an issue is immaterial.')}}
 
 
+def _filing_record(recent, index, form):
+    """One validated submission-history row, or None."""
+    try:
+        record = {key: recent[key][index] for key in ('filingDate', 'reportDate', 'accessionNumber', 'primaryDocument')}
+        if (not re.fullmatch(r'\d{10}-\d{2}-\d{6}', record['accessionNumber']) or
+                not re.fullmatch(r'[A-Za-z0-9_.-]+', record['primaryDocument'])):
+            return None
+        for key in ('filingDate', 'reportDate'):
+            datetime.strptime(record[key], '%Y-%m-%d')
+    except (KeyError, IndexError, ValueError, TypeError):
+        return None
+    record['form'] = form
+    return record
+
+
 def _filing_records(submissions):
+    """The latest annual report and the latest quarterly report after it.
+
+    A 10-Q whose period ends on or before the latest annual report's is older
+    evidence than that report and is skipped: Apple's June 2026 10-Q and
+    Costco's May 2026 10-Q were selected beside 10-Ks for later fiscal years.
+    """
     recent = submissions.get('filings', {}).get('recent', {})
     if not isinstance(recent, dict):
         raise ValueError('SEC submission history is malformed')
@@ -349,46 +401,112 @@ def _filing_records(submissions):
         for index, form in enumerate(recent.get('form', [])):
             if form not in desired:
                 continue
-            try:
-                record = {key: recent[key][index] for key in ('filingDate', 'reportDate', 'accessionNumber', 'primaryDocument')}
-                if (not re.fullmatch(r'\d{10}-\d{2}-\d{6}', record['accessionNumber']) or
-                        not re.fullmatch(r'[A-Za-z0-9_.-]+', record['primaryDocument'])):
-                    continue
-                for key in ('filingDate', 'reportDate'):
-                    datetime.strptime(record[key], '%Y-%m-%d')
-            except (KeyError, IndexError, ValueError, TypeError):
+            record = _filing_record(recent, index, form)
+            if record is None:
                 continue
-            record['form'] = form
+            if form == '10-Q' and selected and record['reportDate'] <= selected[0]['reportDate']:
+                break
             selected.append(record)
             break
     return selected
 
 
-def _apple_feed_entries(feed):
-    try:
-        root = ET.fromstring(feed)
-    except ET.ParseError:
-        raise RuntimeError('Apple issuer feed is malformed') from None
-    ns = '{http://www.w3.org/2005/Atom}'
-    entries = []
-    for entry in root.findall(ns + 'entry'):
-        title = entry.findtext(ns + 'title') or ''
-        links = entry.findall(ns + 'link')
-        link = next((item.get('href', '') for item in links if item.get('rel') in {None, 'alternate'}), '')
-        parsed = urlparse(link)
-        if parsed.scheme != 'https' or parsed.hostname != 'www.apple.com' or not parsed.path.startswith('/newsroom/'):
+def _earnings_release_record(submissions):
+    """The latest 8-K reporting results of operations (Item 2.02), or None."""
+    recent = submissions.get('filings', {}).get('recent', {})
+    items = recent.get('items') if isinstance(recent, dict) else None
+    if not isinstance(items, list):
+        return None
+    for index, form in enumerate(recent.get('form', [])):
+        if form != '8-K' or index >= len(items) or not isinstance(items[index], str):
             continue
-        entries.append({'title': title.strip(), 'url': link,
-                        'published_at': entry.findtext(ns + 'published') or entry.findtext(ns + 'updated')})
-    return entries
+        if '2.02' not in [item.strip() for item in items[index].split(',')]:
+            continue
+        record = _filing_record(recent, index, form)
+        if record is not None:
+            record['items'] = items[index]
+            return record
+    return None
+
+
+class _FilingIndex(HTMLParser):
+    """Rows of an EDGAR filing index: cell texts and the first link in each row."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.rows, self.row, self.cell = [], None, None
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'tr':
+            self.row = {'cells': [], 'href': None}
+        elif tag in {'td', 'th'} and self.row is not None:
+            self.cell = []
+        elif tag == 'a' and self.row is not None and self.row['href'] is None:
+            self.row['href'] = dict(attrs).get('href')
+
+    def handle_data(self, data):
+        if self.cell is not None:
+            self.cell.append(data)
+
+    def handle_endtag(self, tag):
+        if tag in {'td', 'th'} and self.row is not None and self.cell is not None:
+            self.row['cells'].append(' '.join(''.join(self.cell).split()))
+            self.cell = None
+        elif tag == 'tr' and self.row is not None:
+            self.rows.append(self.row)
+            self.row = None
+
+
+def _release_exhibit(index_html, cik, accession):
+    """(exhibit type, document name) of the earnings release in a filing index, or None.
+
+    EX-99.1 is preferred; a filing whose only press-release exhibit is EX-99 or
+    EX-99.01 is accepted. The link must stay inside the filing's own folder.
+    """
+    parser = _FilingIndex()
+    parser.feed(index_html)
+    folder = f'/Archives/edgar/data/{cik}/{accession}/'
+    found = {}
+    for row in parser.rows:
+        kind = next((cell.upper() for cell in row['cells'] if re.fullmatch(r'EX-99(?:\.0?1)?', cell, re.I)), None)
+        href = row['href'] or ''
+        if href.startswith('/ix?doc='):
+            href = href[len('/ix?doc='):]
+        name = href[len(folder):] if href.startswith(folder) else ''
+        if kind and re.fullmatch(r'[A-Za-z0-9_.-]+\.(?:htm|html|txt)', name):
+            found.setdefault(kind.replace('EX-99.01', 'EX-99.1'), name)
+    for kind in ('EX-99.1', 'EX-99'):
+        if kind in found:
+            return kind, found[kind]
+    return None
+
+
+_SUCCESSOR = re.compile(r'(?i)\bsuccessor\s+(?:registrant|issuer)\b|\bRule\s+12g-3\b')
+
+
+def _successor_statement(document):
+    """The filing's own sentence naming it a successor registrant, bounded, or None.
+
+    ExxonMobil Holdings (CIK 2115436) replaced Exxon Mobil Corporation as the
+    registrant of XOM in 2026 and had filed only 10-Qs: no annual report exists
+    under its CIK until its first 10-K.
+    """
+    text = html_to_text(document)
+    match = _SUCCESSOR.search(text)
+    if not match:
+        return None
+    start = max(text.rfind('.', 0, match.start()), text.rfind('\n', 0, match.start())) + 1
+    end = text.find('.', match.end())
+    sentence = ' '.join(text[start:end + 1 if end >= 0 else len(text)].split())
+    return sentence[:400]
 
 
 def gather_primary(ticker, fetch_json, fetch_text=None):
     """Return public primary source records and specific unresolved retrieval gaps.
 
-    At most two SEC filings are retrieved. AAPL additionally has discovered
-    recent issuer releases, retaining up to three results periods for comparison;
-    no fabricated per-company URLs are used.
+    At most two SEC filings are retrieved, plus the exhibit-99.1 earnings release
+    of the latest 8-K reporting results (Item 2.02), for every issuer; no
+    fabricated per-company URLs are used. The SEC industry code (SIC) from the
+    submission history is kept in each record's metadata.
     The caller assigns final source IDs, archives ``raw_document`` outside model
     context, and may request supplementary research for gaps reported here.
     """
@@ -406,9 +524,17 @@ def gather_primary(ticker, fetch_json, fetch_text=None):
             raise ValueError('SEC submission response is not an object')
         if int(submissions.get('cik', cik)) != cik:
             raise ValueError('SEC submission issuer does not match requested CIK')
+        issuer = submissions.get('name') or company['title']
+        # The industry code identifies banks and insurers before any paid stage
+        # (inputs.operating_company_gate); JPMorgan reached a paid draft.
+        industry = {key: submissions[key] for key, check in (('sic', r'\d{4}'), ('sicDescription', r'[^\x00-\x1f]{1,200}'))
+                    if isinstance(submissions.get(key), str) and re.fullmatch(check, submissions[key])}
         records = _filing_records(submissions)
         if not records:
             gaps.append('No usable recent annual or quarterly SEC filing was identified.')
+        elif not any(record['form'] != '10-Q' for record in records):
+            gaps.append(f'The SEC filing history of {issuer} (CIK {cik}) holds no annual report (10-K, 20-F or 40-F); '
+                        'annual figures were not reviewed.')
         for record in records:
             accession = record['accessionNumber'].replace('-', '')
             url = f'https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{record["primaryDocument"]}'
@@ -416,48 +542,62 @@ def gather_primary(ticker, fetch_json, fetch_text=None):
                 # Low volume, sequential fetching stays well below SEC's 10/s ceiling.
                 time.sleep(.15)
                 document = fetch_text(url)
-                metadata = dict(record, issuer=submissions.get('name') or company['title'], cik=cik,
-                                source_url=submissions_url, ticker_mapping_snapshot_used=snapshot_used)
+                metadata = dict(record, issuer=issuer, cik=cik, source_url=submissions_url,
+                                ticker_mapping_snapshot_used=snapshot_used, **industry)
                 if snapshot_used:
                     metadata['ticker_mapping_snapshot'] = snapshot_metadata()
+                if not any(other['form'] != '10-Q' for other in records):
+                    metadata['annual_report_on_file'] = False
+                    statement = _successor_statement(document)
+                    if statement:
+                        metadata['successor_registrant_statement'] = statement
+                        gaps.append(f'{issuer} states that it is a successor registrant ("{statement}"); the predecessor\'s '
+                                    'annual reports are filed under a different CIK and were not collected.')
                 sources.append(_source(f'SEC {record["form"]}: {metadata["issuer"]}; filed {record["filingDate"]}',
                                        url, document, kind='sec_filing', source_tier='regulatory_primary', metadata=metadata))
             except (RuntimeError, ValueError, OSError, TypeError):
                 gaps.append(f'SEC {record["form"]} filed {record["filingDate"]} was identified but its document was unavailable; it was not reviewed.')
+        release = _earnings_release_record(submissions)
+        if release is None:
+            gaps.append('No 8-K reporting results of operations (Item 2.02) is in the recent SEC filing history; '
+                        'no issuer earnings release was reviewed.')
+        else:
+            sources_before = len(sources)
+            try:
+                sources.extend(_earnings_release(release, cik, issuer, submissions_url, fetch_text, industry))
+            except (RuntimeError, ValueError, OSError, TypeError):
+                pass
+            if len(sources) == sources_before:
+                gaps.append(f'The 8-K earnings release filed {release["filingDate"]} was identified but its exhibit was '
+                            'unavailable; it was not reviewed.')
     except (RuntimeError, ValueError, KeyError, TypeError, StopIteration, OSError):
         gaps.append('SEC filing history could not be retrieved or the issuer was not mapped; annual and quarterly filings were not reviewed.')
-
-    if ticker == 'AAPL':
-        try:
-            entries = _apple_feed_entries(fetch_text(APPLE_FEED))
-            financial = []
-            for entry in entries:
-                if (re.search(r'\breports?\b.*\bresults\b', entry['title'], re.I) and
-                        not any(prior['url']==entry['url'] for prior in financial)):
-                    financial.append(entry)
-                if len(financial)==3:
-                    break
-            operating = next((entry for entry in entries if re.search(r'\b(unveils|introduces|launches)\b', entry['title'], re.I)), None)
-            if not financial:
-                gaps.append('The current Apple feed contained no discoverable financial-results release.')
-            for entry in [*financial, operating]:
-                if entry is None:
-                    continue
-                try:
-                    document = fetch_text(entry['url'])
-                    metadata = {'issuer': 'Apple Inc.', 'ticker': 'AAPL', 'published_at': entry['published_at'],
-                                'discovered_at': APPLE_FEED,
-                                'interpretation': 'Issuer statements, including forward-looking and promotional statements, require attribution; they are not independent evidence of adoption or economic returns.'}
-                    sources.append(_source(entry['title'], entry['url'], document,
-                                           kind='issuer_release', source_tier='issuer_primary', metadata=metadata,
-                                           max_chars=16000 if entry in financial else 10000))
-                except (RuntimeError, ValueError, OSError, TypeError):
-                    gaps.append(f'Official Apple release "{entry["title"]}" was discovered but unavailable; it was not reviewed.')
-        except (RuntimeError, ValueError, OSError, TypeError):
-            gaps.append('The official Apple newsroom feed was unavailable; issuer releases were not reviewed.')
-    elif not sources:
-        gaps.append('No additional issuer-specific release feed is configured for this ticker; supply dated primary evidence or research further.')
     return sources, gaps
+
+
+def _earnings_release(record, cik, issuer, submissions_url, fetch_text, industry):
+    """The earnings-release exhibit of one 8-K as an issuer-primary source (a list of at most one).
+
+    A release is the issuer's own dated statement of results: issuer primary,
+    not regulatory primary, and bounded like other primary excerpts. A live
+    Microsoft run (2026-11-15) had its earnings release only as an unverified
+    web excerpt.
+    """
+    accession = record['accessionNumber'].replace('-', '')
+    index_url = f'https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{record["accessionNumber"]}-index.htm'
+    time.sleep(.15)
+    exhibit = _release_exhibit(fetch_text(index_url), cik, accession)
+    if exhibit is None:
+        return []
+    kind, name = exhibit
+    url = f'https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{name}'
+    time.sleep(.15)
+    document = fetch_text(url)
+    metadata = dict(record, issuer=issuer, cik=cik, exhibit=kind, document=name, filing_index_url=index_url,
+                    source_url=submissions_url, published_at=record['filingDate'],
+                    interpretation=RELEASE_INTERPRETATION, **industry)
+    return [_source(f'{issuer} earnings release (8-K Item 2.02, {kind}); filed {record["filingDate"]}', url, document,
+                    kind='issuer_release', source_tier='issuer_primary', metadata=metadata, max_chars=MAX_EXCERPT_CHARS)]
 
 
 # Selected concepts are not interchangeable: e.g. weighted-average shares are
@@ -671,13 +811,21 @@ BREAKDOWN_AXES = {'srt:ProductOrServiceAxis': 'product_or_service',
 _NEUTRAL_MEMBERS = {('srt:ConsolidationItemsAxis', 'us-gaap:OperatingSegmentsMember')}
 
 
+SEGMENT_AXIS = 'us-gaap:StatementBusinessSegmentsAxis'
+
+
 def inline_breakdown_facts(document):
     """Reported facts broken down by product/service, segment or geography.
 
     Uses the same parser, concepts and number rules as ``inline_facts``. A fact
-    qualifies only when its context has exactly one breakdown axis (plus at most
-    a neutral operating-segment qualifier) and a parsed numeric value. Nothing is
-    summed or inferred here.
+    qualifies when its context has exactly one breakdown axis (plus at most a
+    neutral operating-segment qualifier) and a parsed numeric value, or when it
+    has two breakdown axes of which one is the segment axis. Alphabet, Meta,
+    Walmart and Home Depot report product revenue only within a segment; such a
+    fact is filed under its product or geography axis with the member keyed
+    "<member> within <segment member>", since one product name can recur in
+    two segments (Walmart's grocery in Walmart U.S. and in Sam's Club). Nothing
+    is summed or inferred here.
     """
     from datetime import date
     if not isinstance(document, str):
@@ -695,9 +843,14 @@ def inline_breakdown_facts(document):
             continue
         members = {axis: member for axis, member in context.get('members', {}).items()
                    if (axis, member) not in _NEUTRAL_MEMBERS}
-        if len(members) != 1:
+        if (len(members) == 2 and SEGMENT_AXIS in members and all(axis in BREAKDOWN_AXES for axis in members) and
+                all(isinstance(member, str) and member for member in members.values())):
+            axis = next(axis for axis in members if axis != SEGMENT_AXIS)
+            member = members[axis] + ' within ' + members[SEGMENT_AXIS]
+        elif len(members) == 1:
+            (axis, member), = members.items()
+        else:
             continue
-        (axis, member), = members.items()
         if axis not in BREAKDOWN_AXES or not isinstance(member, str) or not member:
             continue
         period = context['period']
@@ -725,12 +878,25 @@ def inline_breakdown_facts(document):
     return result
 
 
+CLASS_OF_STOCK_AXIS = 'us-gaap:StatementClassOfStockAxis'
+
+
+def _class_cover_shares(name, context):
+    """A cover-page outstanding count for one share class (Meta reports no entity total)."""
+    members = context.get('members', {})
+    return (isinstance(name, str) and name.split(':', 1)[-1] == 'EntityCommonStockSharesOutstanding' and
+            list(members) == [CLASS_OF_STOCK_AXIS] and isinstance(members[CLASS_OF_STOCK_AXIS], str) and
+            bool(members[CLASS_OF_STOCK_AXIS]))
+
+
 def inline_facts(document):
-    """Return at most 100 recent selected nondimensional inline-XBRL facts.
+    """Return at most 100 recent selected inline-XBRL facts.
 
     Values retain exact concepts, contexts, dates, units, transformations and raw
     locations; no concepts are aggregated and missing or nil values never become
-    zero. Dimensional contexts are explicitly excluded. A numeric zero is emitted
+    zero. Dimensional contexts are excluded, except cover-page outstanding
+    shares by share class, which keep their dimension and are marked
+    ``class_of_stock_cover_shares``. A numeric zero is emitted
     only for a stated zero or an explicit XBRL zero transform. Offsets/columns are
     Unicode-character positions in the original decoded HTML, with 1-based lines.
     """
@@ -746,7 +912,10 @@ def inline_facts(document):
         attrs = frame['attrs']
         context = parser.contexts.get(attrs.get('contextref'))
         unit = parser.units.get(attrs.get('unitref'))
-        if context is None or context['has_dimensions'] or unit is None:
+        if context is None or unit is None:
+            continue
+        by_class = context['has_dimensions'] and _class_cover_shares(attrs.get('name'), context)
+        if context['has_dimensions'] and not by_class:
             continue
         period = context['period']
         try:
@@ -777,7 +946,8 @@ def inline_facts(document):
                        'scale': scale, 'sign': attrs.get('sign'), 'decimals': attrs.get('decimals'),
                        'format': attrs.get('format'), 'normalized_value': value, 'normalized_decimal': exact,
                        'is_nil': is_nil, 'parse_status': status, 'raw_token': token,
-                       'dimensions': {}, 'dimension_filter': 'nondimensional_only',
+                       'dimensions': dict(context['members']) if by_class else {},
+                       'dimension_filter': 'class_of_stock_cover_shares' if by_class else 'nondimensional_only',
                        'location': {'fact_id': attrs.get('id'), 'start_char': frame['start_char'],
                                     'end_char': frame['end_char'], 'line': frame['line'], 'column': frame['column'],
                                     'raw_html': document[frame['start_char']:frame['end_char']]}})
