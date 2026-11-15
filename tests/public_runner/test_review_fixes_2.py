@@ -593,3 +593,22 @@ class OpusPhaseOneFixTests(unittest.TestCase):
         source = inspect.getsource(pipeline._workflow_contract)
         self.assertIn("'evidence_tables.py'", source)
         self.assertIn("'research.py'", source)
+
+
+class GapAttributionTests(unittest.TestCase):
+    def test_the_summary_states_which_inputs_alone_can_close_the_gap(self):
+        value = plan()
+        result = valuation.evaluate(value)
+        summary = pipeline.computed_summary(value, result)
+        rows = result['price_requirements']['rows']
+        solved = [row for row in rows if row['status'] == 'solved']
+        self.assertIn('Inputs that alone can bring the base value to the price: ', summary)
+        if len(solved) != 1:
+            self.assertIn('one cause only when one input alone can close it', summary)
+        for row in [row for row in rows if row['status'] == 'not_reachable']:
+            self.assertIn('Inputs that cannot', summary)
+
+    def test_sections_and_review_use_the_computed_attribution(self):
+        self.assertIn('computed sentence on which inputs alone can and cannot bring', pipeline.SECTIONS)
+        self.assertNotIn('Say plainly whether the', pipeline.SECTIONS)
+        self.assertIn('Scenario drivers are house assumptions', pipeline.SECTIONS)

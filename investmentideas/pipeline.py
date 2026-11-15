@@ -39,22 +39,25 @@ VERSION = 'full-2'
 DEFAULT_BUDGET = 10.0
 SECTIONS = '''Write these sections, in this order, as prose around the computed valuation summary that
 Python places above your text (do not re-type its tables; refer to its rows by name):
-(1) Valuation conclusion (about 250 words): value, price and value / price as computed, and what
-the price requires: name each "What the price requires" row, how far it must move or that no value
-reaches the price, and the implied return against the required return. Say plainly whether the
-difference rests on the operating forecast, the discount rate or terminal returns; convention rows
-are one change at a time and are never added together.
-(2) Variant view (about 400 words): on the inputs that carry the difference, why the house view
-differs from what the price requires, with primary evidence. Answer the strongest sourced opposing
-case with operating evidence (demand, pricing, margins, capital needs), not with scenario values.
-If the operating forecast is close to consensus, say so.
+(1) Valuation conclusion (about 250 words): value, price and value / price as computed; what the
+price requires, in the terms of the computed sentence on which inputs alone can and cannot bring
+value to the price, each with how far it must move; the implied return against the required
+return; and the largest convention step as the assumption the value is most sensitive to. Name a
+single cause of the difference only when the computed sentence says one input alone can close it.
+Convention rows are one change at a time and are never added together.
+(2) Variant view (about 400 words): on the inputs that can close the difference, why the house view
+differs from what the price requires, with primary evidence. Keep the conclusion's account of what
+can close the difference; no section restates it differently. Answer the strongest sourced
+opposing case with operating evidence (demand, pricing, margins, capital needs), not with scenario
+values. If the operating forecast is close to consensus, say so.
 (3) Business economics, industry and competition (about 450 words), from primary sources and the
 computed tables.
 (4) Management, capital allocation and financial history (about 450 words), from the reported
 history and breakdown tables; compare buybacks with house value using computed figures.
 (5) Forecast and scenarios (about 500 words): how the bear, base and bull paths start from reported
-results, what drives each, and the basis for the weights. Outside estimates appear only as labelled
-unverified context.
+results, what drives each, and the basis for the weights. Scenario drivers are house assumptions:
+say so, and cite a source only for the observed fact behind each. Outside estimates appear only as
+labelled unverified context.
 (6) Observations that would change the value (about 300 words), from the computed monitoring cases.
 (7) Risks, including evidence that the valuation framework is wrong (about 300 words).
 (8) Evidence gaps and unresolved questions (about 200 words).'''
@@ -1939,6 +1942,27 @@ def computed_summary(plan, result):
             else:
                 needed='not calculated'
             lines.append(f'| {row["label"]} | {house} | {needed} |')
+        # Which inputs can close the gap is stated by Python: live drafts named
+        # one cause in the conclusion and another in the variant view, and both
+        # reviews called it a major defect (2026-11-14, 2026-11-15).
+        names={'revenue_growth':'revenue growth','ebit_margin':'EBIT margin','terminal_roic':'terminal return on new capital',
+               'sales_to_capital':'sales-to-capital','terminal_growth':'terminal growth'}
+        def move(row):
+            if row['kind']=='shift':
+                return f'{row["needed"]*100:+.1f} points in every explicit year'
+            if row['input']=='sales_to_capital':
+                return f'{row["house"]:.2f} to {row["needed"]:.2f}'
+            return f'{row["house"]:.2%} to {row["needed"]:.2%}'
+        closes=[row for row in requirements if row['status']=='solved']
+        cannot=[row for row in requirements if row['status']=='not_reachable']
+        attribution=('Inputs that alone can bring the base value to the price: '+
+                     ('; '.join(f'{names.get(row["input"],row["label"])} ({move(row)})' for row in closes) or 'none')+'.')
+        if cannot:
+            attribution+=(' Inputs that cannot, within the values the engine accepts: '+
+                          ', '.join(names.get(row['input'],row['label']) for row in cannot)+'.')
+        attribution+=(' These are alternatives and the inputs interact, so the difference has one cause only when one input '
+                      'alone can close it.' if len(closes)!=1 else ' Only this input alone can close the difference.')
+        lines+=['',attribution]
     panel=[row for row in ((result.get('convention_panel') or {}).get('rows') or [])
            if row.get('kind')=='convention' and row.get('status')=='calculated' and row.get('dollar_delta') is not None]
     if panel:
@@ -2543,7 +2567,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'after your text. Do not re-type their tables. Copy any computed or reported figure exactly as it appears in '
             'the summary, the COMPUTED FROM REPORTED FILINGS tables, the valuation output or a source. Do not calculate '
             'new figures (growth rates, margins, per-share amounts, differences or sums); if a figure you need is not '
-            'shown, make the point without it. Cite every factual claim with [S#] from the evidence. Attribute model '
+            'shown, make the point without it. Cite every factual claim with [S#] from the evidence; a causal claim '
+            '(driven by, reflected, helped by) needs a source that states that cause. Attribute model '
             'outputs (values, price requirements, implied returns, monitoring cases) to the computed summary or exhibits '
             'in words, and place each [S#] directly after the reported or sourced figure it supports, not after a model output.\n'+
             EVIDENCE_TIER_RULE+'\n'+RUBRIC+'\n'
@@ -2692,8 +2717,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'the last displayed digit and context labelled as unverified are never material; style preferences are '
                 'not findings. Check: (1) every figure in the prose against the computed summary, the computed tables, the '
                 'valuation output or the cited source, and every comparison with the price by arithmetic; (2) that the '
-                'conclusion names the inputs that the "What the price requires" rows and the implied return show carry '
-                'the difference between value and price; (3) that company facts rest on primary sources and unverified '
+                'conclusion states which inputs alone can and cannot bring value to the price as the computed sentence '
+                'does, with the implied return, and that no section attributes the difference otherwise; (3) that company facts rest on primary sources and unverified '
                 'excerpts are labelled context; (4) that the strongest sourced opposing case is answered with evidence; '
                 '(5) that no trading-layer language appears; (6) that convention rows are never added together; (7) that '
                 'repurchase, multiple and monitoring statements use the computed diagnostics and their fixed inputs. A '
