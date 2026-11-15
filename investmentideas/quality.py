@@ -400,6 +400,13 @@ _SCALES = {'%': (1e-2, 1), 'points': (1e-2, 1), 'point': (1e-2, 1), 'pts': (1e-2
 _CAUSE = re.compile(r'\b(?:gap|difference|disagreement|divergence|discount to the price|premium to the price)\b'
                     r'[^.;]{0,90}?\b(?:primarily|principally|almost entirely|mainly|largely|rests? (?:on|in)|lies? in|'
                     r'sits? in|is driven by|driven by|explained by|attributable to)\b', re.I)
+# A rising word with a falling pair, or the reverse ("a further increase" from
+# USD 678 billion to USD 677 billion, 2026-11-15).
+_DIRECTION = re.compile(r'\b(?P<word>increas\w*|rose|rise[sn]?|grew|grow(?:s|n)?|higher|expand\w*|climb\w*|'
+                        r'decreas\w*|declin\w*|fell|fall(?:s|en)?|lower|contract\w*|shrank|drop\w*)\b[^.;]{0,80}?'
+                        r'\bfrom\s+(?:USD\s*|\$)?(?P<a>-?[\d,]+(?:\.\d+)?)[^.;]{0,40}?\bto\s+(?:USD\s*|\$)?(?P<b>-?[\d,]+(?:\.\d+)?)', re.I)
+_FREQUENCY = re.compile(r'\b(?:historical(?:ly)? frequenc\w*|base rates?|in (?:most|many) (?:past )?cycles)\b', re.I)
+_META = re.compile(r'\b(?:Python|the prompt|as instructed|the instructions)\b')
 _ADDITIVE = re.compile(r'\b(?:together|combined|in total|cumulative(?:ly)?|add up|sum of|more than the entire|account for (?:all|the entire|more than))\b', re.I)
 _PANEL = re.compile(r'\b(?:convention|panel|step|one[- ]at[- ]a[- ]time|terminal return|rate path)\b', re.I)
 
@@ -439,7 +446,8 @@ def _traced(number, decimals, unit, pool):
 def prose_words(memo):
     """Words of the writer's prose: no computed summary, no Python-rendered valuation section."""
     body = memo.split('\n## Executable valuation')[0]
-    summary = re.search(r'## Valuation summary \(computed by Python\).*?(?=\n#{1,2} [^#])', body, re.S)
+    # The summary has no headings of its own: it ends at the next heading of any level.
+    summary = re.search(r'(?ms)^## Valuation summary \(computed by Python\)\n.*?(?=^#|\Z)', body)
     if summary:
         body = body.replace(summary.group(0), '')
     return len(re.findall(r"[A-Za-z][A-Za-z'\-]*", body))
@@ -496,12 +504,17 @@ def prereview_checks(memo, sources, computed=()):
     body = memo.split('\n## Executable valuation')[0]
     # Python marks every unverified citation inline; judge the writer's own text.
     body = re.sub(r'\b(S\d+) unverified\b', r'\1', body)
-    summary = re.search(r'## Valuation summary \(computed by Python\).*?(?=\n#{1,2} [^#])', body, re.S)
+    # The summary has no headings of its own: it ends at the next heading of any level.
+    summary = re.search(r'(?ms)^## Valuation summary \(computed by Python\)\n.*?(?=^#|\Z)', body)
     if summary:
         body = body.replace(summary.group(0), '')
     tiers = {source.get('id'): source.get('source_tier') for source in sources if isinstance(source, dict)}
     primary_pool, unverified_pool, house_pool = trace_pools(sources, computed)
     untraced, unlabelled, additive, unlabelled_claims, cite_primary, causes = [], [], [], [], [], []
+    tables, directions, frequencies, meta = [], [], [], []
+    for raw_line in body.split('\n'):
+        if raw_line.lstrip().startswith('|'):
+            tables.append(raw_line.strip()[:200])
     for sentence in re.split(r'(?<=[.!?])\s+|\n+', body):
         line = sentence.strip()
         if not line or line.startswith('#'):
@@ -511,6 +524,18 @@ def prereview_checks(memo, sources, computed=()):
             additive.append(line[:300])
         if _CAUSE.search(line):
             causes.append(line[:300])
+        for match in _DIRECTION.finditer(line):
+            try:
+                a, b = float(match.group('a').replace(',', '')), float(match.group('b').replace(',', ''))
+            except ValueError:
+                continue
+            rising = re.match(r'(?i)increas|rose|rise|grew|grow|higher|expand|climb', match.group('word'))
+            if (rising and b < a) or (not rising and b > a):
+                directions.append(line[:300])
+        if _FREQUENCY.search(line) and not cited:
+            frequencies.append(line[:300])
+        if _META.search(line):
+            meta.append(line[:300])
         for display, number, decimals, unit in _figures(line):
             if _traced(number, decimals, unit, primary_pool):
                 if (cited and all(tiers.get(ref) in UNVERIFIED_SOURCE_TIERS for ref in cited) and
@@ -539,6 +564,19 @@ def prereview_checks(memo, sources, computed=()):
         add('cite-primary-source', 'minor', f'{len(cite_primary)} figures are cited only to unverified excerpts although '
             'a primary source or the computed tables contain them.',
             'Cite the primary source or computed table that contains each figure.', cite_primary)
+    if tables:
+        add('table-in-prose', 'minor', 'The prose contains table rows; Python prints the computed and reported tables.',
+            'Delete the table rows and refer to the computed or reported table by name.', [('', text) for text in tables])
+    if directions:
+        add('comparison-direction', 'minor', 'A sentence describes a change in the opposite direction to its own figures.',
+            'Correct the direction word to match the figures, or the figures to match the sources.',
+            [('', text) for text in directions])
+    if frequencies:
+        add('uncited-frequency', 'minor', 'A frequency or base rate is stated without a citation.',
+            'Remove the frequency claim or cite the source that contains it.', [('', text) for text in frequencies])
+    if meta:
+        add('meta-reference', 'minor', 'The prose mentions Python, prompts or instructions.',
+            'Rewrite to refer to the computed summary, exhibits or reported tables by name.', [('', text) for text in meta])
     if causes:
         add('gap-cause-wording', 'minor', 'The prose assigns the difference between value and price a cause; Python '
             'states which inputs alone can and cannot close it.',

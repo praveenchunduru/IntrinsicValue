@@ -1718,7 +1718,8 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
         'are house forecasts, not reported facts or company guidance. Historical actuals use the '
         'reported-input snapshot. Only the cash and investment assets selected in the pinned bridge are '
         'classified as nonoperating under an explicit house policy. Omitted investment categories are '
-        'not reported zeros, and required operating cash is not established as zero. '+lease_allocation+
+        'not reported zeros. All selected cash and investments are treated as nonoperating; any part the business '
+        'needs to operate would lower equity value. '+lease_allocation+
         'Additional unidentified '
         'claims are assumed zero, not established absent. GAAP EBIT retains operating rent, SBC and R&D. '+
         ('Discount rates move from the current cost of capital toward market-average business risk over years 6-10, and '
@@ -1904,13 +1905,64 @@ def _computed_exhibits(result,currency):
             refs=row['source_refs'] if isinstance(row['source_refs'],list) else [row['source_refs']]
             citations=' '.join('['+ref.strip().strip('[]')+']' for ref in refs)
             lines.append(f'| {clean(row["label"])} / {clean(row["interpretation"]).replace("_"," ")} {citations} | '
-                f'{currency} {row["amount"]:,.0f} | {currency} {row["price"]:,.2f} | {row["shares_repurchased"]:,.0f} | '
+                f'{currency} {row["amount"]/1e9:,.1f} billion | {currency} {row["price"]:,.2f} | {row["shares_repurchased"]/1e6:,.1f} million | '
                 f'{currency} {row["post_repurchase_weighted_per_share_value"]:,.2f} | '
                 f'{currency} {row["weighted_value_change"]["dollar_delta"]:+,.2f} |')
         lines += ['', 'Each independent case spends the pinned selected nonoperating cash and retires shares once while keeping operating value fixed. '
             'Historical-price tests compare with current underwriting, not historical fair value or an observed historical loss. '
             'Forward illustrations are not repurchase forecasts; the same cash is not also counted as a dividend or future FCFF distribution.']
     return lines
+
+
+def _scale_exhibit(plan, result, currency):
+    """Year-10 scale against today, so a reader can judge the size the forecast implies.
+
+    A memo audit (2026-11-15) found no memo discussed a base-case year-10 EBIT of
+    USD 574 billion or a terminal enterprise value near USD 10 trillion.
+    """
+    base=(result.get('scenarios') or {}).get('base') or {}
+    flows=base.get('cashflows') or []
+    revenue=((plan or {}).get('actuals') or {}).get('revenue')
+    if not flows or not isinstance(revenue,(int,float)) or revenue<=0:
+        return []
+    last=flows[-1]
+    market=((result.get('computed_diagnostics') or {}).get('valuation_multiples') or {}).get('market') or {}
+    def billions(value):
+        return f'{currency} {value/1e9:,.1f} billion'
+    text=(f'Base case, final forecast year {last.get("year")}: revenue {billions(last["revenue"])} '
+          f'({last["revenue"]/revenue:,.1f} times the last reported {billions(revenue)}), EBIT {billions(last["ebit"])} '
+          f'({last["ebit_margin"]:.1%} margin) and free cash flow to the firm {billions(last["fcff"])}.')
+    terminal=base.get('terminal_enterprise_value')
+    if isinstance(terminal,(int,float)):
+        text+=f' Terminal enterprise value at that year: {billions(terminal)}'
+        enterprise=market.get('enterprise_value')
+        if isinstance(enterprise,(int,float)) and enterprise>0:
+            text+=f', {terminal/enterprise:,.1f} times today\'s market enterprise value of {billions(enterprise)}'
+        text+='.'
+    return ['', '### Scale check', '', text]
+
+
+def reported_tables_section(sources):
+    """The reported history and breakdown tables, printed by Python for the reader.
+
+    Writers re-typed these tables and introduced errors ("not shown" for a reported
+    56.6% segment margin, 2026-11-15); the reader now gets Python's copy.
+    """
+    lines=[]
+    for source in sources:
+        data=source.get('data') if isinstance(source.get('data'),dict) else {}
+        baseline=source.get('historical_baseline') or data.get('historical_baseline')
+        if baseline and baseline.get('rows'):
+            text=render_baseline(baseline,source.get('id')).split('\n')
+            caption,header,rows=text[0],text[1].split(' | '),[row.split(' | ') for row in text[2:]]
+            lines+=['', caption, '', '| Measure | '+' | '.join(row[0] for row in rows)+' |',
+                    '|---|'+'---:|'*len(rows)]
+            for index,name in enumerate(header[1:],1):
+                lines.append(f'| {name} | '+' | '.join(row[index] if index<len(row) else 'n/a' for row in rows)+' |')
+        breakdowns=source.get('breakdown_tables') or data.get('breakdown_tables')
+        if breakdowns:
+            lines+=['', render_breakdowns(breakdowns,source.get('id'))]
+    return (['', '## Reported history and segments (computed by Python from filings)']+lines) if lines else []
 
 
 def valuation_section(plan, result):
@@ -1960,6 +2012,7 @@ def valuation_section(plan, result):
         lines += ['', 'Measurement dates — '+ '; '.join(measurements)+'. '
                   'Balances are not rolled forward to the quote date; the annual cash-flow model has no stub-period adjustment.']
     lines += _continuity_exhibit(result)
+    lines += _scale_exhibit(plan, result, currency)
     lines += _market_consistency_exhibits(result, currency)
     cases=result.get('counterfactuals',{})
     if cases:
@@ -2238,7 +2291,9 @@ def _with_summary(memo, plan, result):
     """Place the computed summary after the memo's title line."""
     summary=computed_summary(plan,result)
     # Only Python writes this block: drop any copy in the model's text first.
-    memo=re.sub(r'(?ms)^## Valuation summary \(computed by Python\)\n.*?(?=^#{1,2} |\Z)','',memo)
+    # The summary has no headings, so a copy ends at the next heading of any level;
+    # stopping only at levels 1-2 would delete a memo written with ### sections.
+    memo=re.sub(r'(?ms)^## Valuation summary \(computed by Python\)\n.*?(?=^#|\Z)','',memo)
     if not summary:
         return memo
     lines=memo.lstrip().split('\n')
@@ -2279,7 +2334,8 @@ def _render(memo, sources, gaps, plan, result, state):
         note += (f"\n\nReview model: {latest['review_model']}" +
                  (f"; author model: {latest['author_model']}" if latest.get('author_model') else '') +
                  ('. The same model wrote and reviewed this memo.' if same else '.'))
-    body = _label_unverified(_with_summary(memo,plan,result).rstrip() + '\n' + valuation_section(plan,result), sources)
+    body = _label_unverified(_with_summary(memo,plan,result).rstrip() + '\n' + valuation_section(plan,result) +
+                             '\n'.join(reported_tables_section(sources)), sources)
     return (body + '\n## Source register\n'+refs+
             '\n\n## Evidence limitations\n'+ ('\n'.join('- '+g for g in gaps) or 'No retrieval gap recorded; source completeness still requires review.')+
             '\n\n## Review status\n'+state.get('quality_status','in_progress')+
@@ -2856,7 +2912,9 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'real cost. Missing evidence narrows the conclusion; state each gap once instead of repeating caveats. '
             'Do not invent transcripts, guidance, consensus, dates or quotes. Valuation research only: no ratings, '
             'target prices, entry levels, margins of safety, upside or downside, or position sizing; write value / '
-            'price. Plain analytical prose without slogans, superlatives or rhetorical contrast formulas.'
+            'price. Plain analytical prose without slogans, superlatives or rhetorical contrast formulas. Refer to the '
+            'computed summary, exhibits and reported tables by name; never mention Python, prompts or instructions, and '
+            'add no tables of your own.'
             '\nCOMPUTED SUMMARY (placed above your text):\n'+computed_summary(plan,result)+
             EVIDENCE_ABOVE+'\nSynthesis:\n'+thesis+'\nValuation:\n'+valuation_context+'\nGaps:\n'+gaps,tokens=MEMO_TOKENS,
             prefix=_evidence_prefix(context))
@@ -2969,7 +3027,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             state['current_memo']=memo
             checkpoint()
             issues=prereview_checks(_with_summary(memo,plan,result),state['sources'],computed_inputs)
-        visible=_label_unverified(_with_summary(memo,plan,result)+'\n'+valuation_section(plan,result),state['sources'])
+        visible=_label_unverified(_with_summary(memo,plan,result)+'\n'+valuation_section(plan,result)+
+                                  '\n'.join(reported_tables_section(state['sources'])),state['sources'])
         (revisions/f'memo-{iteration}.md').write_text(visible,encoding='utf-8')
         # A review can fail after a new draft/model is saved. Keep the reader
         # download consistent with those artifacts even before review succeeds.

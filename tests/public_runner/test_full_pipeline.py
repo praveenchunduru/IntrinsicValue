@@ -988,7 +988,7 @@ class ComputedMemoExhibitTests(unittest.TestCase):
         self.assertNotIn('USD 11.85',text)
         self.assertNotIn('entry threshold',text.lower())
         self.assertIn('USD 15.58',text)  # Remaining1.48bn / remaining95m shares.
-        self.assertIn('5,000,000',text)
+        self.assertIn('5.0 million',text)
         self.assertIn('first explicit forecast year',text)
         self.assertIn('not historical fair value',text)
 

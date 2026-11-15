@@ -739,3 +739,51 @@ class ReviewPrefilterTests(unittest.TestCase):
         self.assertIsNone(quality.TRADING_TERMS.search('The repurchase was accretive to remaining holders.'))
         self.assertIsNotNone(quality.TRADING_TERMS.search('This implies 20% upside.'))
         self.assertIsNotNone(quality.HOUSE_ATTRIBUTION.search('The house uses a 17.5% tax rate.'))
+
+
+class SummaryBoundaryTests(unittest.TestCase):
+    def test_a_copied_summary_is_removed_without_the_sections_after_it(self):
+        value = plan()
+        result = valuation.evaluate(value)
+        memo = ('# T\n\n## Valuation summary (computed by Python)\n\n| fake | 1 |\n\n'
+                '### 1. Valuation Conclusion\nThe house concludes the value is below the price.\n')
+        out = pipeline._with_summary(memo, value, result)
+        self.assertIn('### 1. Valuation Conclusion', out)
+        self.assertNotIn('| fake | 1 |', out)
+
+    def test_checks_ignore_the_summary_before_level_three_sections(self):
+        from investmentideas import quality
+        value = plan()
+        result = valuation.evaluate(value)
+        memo = pipeline._with_summary('# T\n\n### 1. Conclusion\nThe house concludes the value is below the price.\n', value, result)
+        ids = [f['id'] for f in quality.prereview_checks(memo, [], (result, value))]
+        self.assertNotIn('meta-reference', ids)
+        self.assertNotIn('table-in-prose', ids)
+
+
+class ProseCheckTests(unittest.TestCase):
+    def ids(self, text):
+        from investmentideas import quality
+        return [f['id'] for f in quality.prereview_checks('# T\n\n## (1) Conclusion\n' + text + '\n', [], ())]
+
+    def test_new_prose_checks(self):
+        self.assertIn('comparison-direction', self.ids('Backlog increased from USD 678 billion to USD 677 billion.'))
+        self.assertNotIn('comparison-direction', self.ids('Backlog increased from USD 600 billion to USD 678 billion.'))
+        self.assertIn('table-in-prose', self.ids('| a | b |\n|---|---|'))
+        self.assertIn('uncited-frequency', self.ids('Weights reflect the historical frequency of margin cycles.'))
+        self.assertNotIn('uncited-frequency', self.ids('Weights reflect the historical frequency of margin cycles [S1].'))
+        self.assertIn('meta-reference', self.ids('Python has placed the summary above.'))
+
+    def test_scale_check_and_reported_tables_are_printed(self):
+        value = plan()
+        result = valuation.evaluate(value)
+        self.assertIn('### Scale check', pipeline.valuation_section(value, result))
+        source = {'id': 'S2', 'data': {}, 'historical_baseline': {'rows': [
+            {'fiscal_year_end': '2025-06-30', 'currency': 'USD', 'revenue': 100e9, 'revenue_growth': .1, 'gross_margin': .6,
+             'operating_margin': .3, 'research_and_development_to_revenue': .1, 'selling_general_administrative_to_revenue': .1,
+             'effective_tax_rate': .2, 'capital_expenditure_to_revenue': .05, 'depreciation_amortization_to_revenue': .04,
+             'stock_compensation_to_revenue': .02, 'repurchases': 5e9, 'average_repurchase_price': None, 'dividends': 2e9,
+             'diluted_eps': 3.0}], 'concepts': {}}}
+        text = '\n'.join(pipeline.reported_tables_section([source]))
+        self.assertIn('| Measure | 2025-06-30 |', text)
+        self.assertIn('| revenue | 100.0 |', text)
