@@ -68,6 +68,16 @@ class PrimaryResearchTests(unittest.TestCase):
         self.assertLessEqual(release['data']['excerpt_chars'], research.MAX_EXCERPT_CHARS)
         self.assertTrue(all('raw_document' in s for s in sources))
 
+    def test_a_long_release_keeps_its_narrative_opening(self):
+        # Walmart's release kept 2,800 characters with the 1,200-character filing opening.
+        release = '<p>Walmart reports second quarter results with revenue growth and guidance.</p>' * 600
+        with patch.object(research, 'load_directory', return_value=(DIRECTORY, False)), patch.object(research.time, 'sleep'):
+            sources, _ = research.gather_primary(
+                'TEST', lambda url: HISTORY, lambda url: INDEX if url.endswith('-index.htm') else release if 'ex991' in url else BODY)
+        excerpts = sources[-1]['data']['excerpts']
+        self.assertEqual((excerpts[0]['label'], len(excerpts[0]['text'])), ('document opening', research.RELEASE_OPENING_CHARS))
+        self.assertLessEqual(sum(len(e['text']) for e in excerpts), research.MAX_EXCERPT_CHARS)
+
     def test_releases_need_item_202_and_an_exhibit_inside_the_filing(self):
         import copy
         history = copy.deepcopy(HISTORY)

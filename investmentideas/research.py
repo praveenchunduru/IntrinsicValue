@@ -25,6 +25,8 @@ MAX_DOCUMENT_BYTES = MAX_SOURCE_BYTES
 MAX_EXCERPT_CHARS = 16_000
 SEC_HOST = 'www.sec.gov'
 ALLOWED_TEXT_HOSTS = {SEC_HOST}
+# The release narrative ahead of its statement tables, within the 16,000-character excerpt bound.
+RELEASE_OPENING_CHARS = 10_000
 RELEASE_INTERPRETATION = ('Issuer statements, including forward-looking and promotional statements, require attribution; '
                           'they are not independent evidence of adoption or economic returns.')
 
@@ -152,14 +154,20 @@ def _matched_headings(headings, pattern):
                 break
 
 
-def select_excerpts(text, max_chars=MAX_EXCERPT_CHARS):
-    """Exact text windows; selection is not a claim of complete filing coverage."""
+def select_excerpts(text, max_chars=MAX_EXCERPT_CHARS, opening_chars=1200):
+    """Exact text windows; selection is not a claim of complete filing coverage.
+
+    ``opening_chars`` sizes the first window. An earnings release puts its
+    results, quotes and guidance first: with the 1,200-character filing opening,
+    Walmart's and Meta's releases kept 2,800 characters, all but the headline
+    being a segment table.
+    """
     if not isinstance(text, str) or not text.strip():
         raise ValueError('Official document contains no readable text')
     if len(text) <= max_chars:
         return [{'excerpt_id': 'E1', 'label': 'complete cleaned document',
                  'start_char': 0, 'end_char': len(text), 'text': text}]
-    windows = [('document opening', 0, min(1200, len(text)))]
+    windows = [('document opening', 0, min(opening_chars, len(text)))]
     widths = {'business': 2400, 'risks': 1800, 'management discussion': 2400,
               'segment disclosure': 1600, 'operating results': 2200,
               'balance sheet': 2200, 'cash flow': 2200}
@@ -349,7 +357,7 @@ def archive_focus_excerpts(document):
     return excerpts
 
 
-def _source(title, url, document, *, kind, source_tier, metadata, max_chars=MAX_EXCERPT_CHARS):
+def _source(title, url, document, *, kind, source_tier, metadata, max_chars=MAX_EXCERPT_CHARS, opening_chars=1200):
     if not isinstance(document, str) or len(document.encode()) > MAX_DOCUMENT_BYTES:
         raise RuntimeError('Official source is missing or exceeds its archive size limit')
     text = html_to_text(document)
@@ -357,7 +365,7 @@ def _source(title, url, document, *, kind, source_tier, metadata, max_chars=MAX_
         raise RuntimeError('Official source returned an access-control page, not a reviewed document')
     if len(text) < 200:
         raise RuntimeError('Official source has insufficient readable text')
-    excerpts = select_excerpts(text, max_chars)
+    excerpts = select_excerpts(text, max_chars, opening_chars)
     return {'title': title, 'url': url, 'kind': kind, 'source_tier': source_tier,
             'retrieved_at': datetime.now(timezone.utc).isoformat(),
             'raw_document': document,
@@ -490,13 +498,14 @@ def _successor_statement(document):
     registrant of XOM in 2026 and had filed only 10-Qs: no annual report exists
     under its CIK until its first 10-K.
     """
-    text = html_to_text(document)
+    # Filings break lines inside a sentence, so only a full stop bounds it.
+    text = ' '.join(html_to_text(document).split())
     match = _SUCCESSOR.search(text)
     if not match:
         return None
-    start = max(text.rfind('.', 0, match.start()), text.rfind('\n', 0, match.start())) + 1
-    end = text.find('.', match.end())
-    sentence = ' '.join(text[start:end + 1 if end >= 0 else len(text)].split())
+    start = max(text.rfind('. ', max(0, match.start() - 300), match.start()) + 2, match.start() - 300, 0)
+    end = text.find('. ', match.end())
+    sentence = text[start:end + 1 if end >= 0 else len(text)].strip()
     return sentence[:400]
 
 
@@ -597,7 +606,8 @@ def _earnings_release(record, cik, issuer, submissions_url, fetch_text, industry
                     source_url=submissions_url, published_at=record['filingDate'],
                     interpretation=RELEASE_INTERPRETATION, **industry)
     return [_source(f'{issuer} earnings release (8-K Item 2.02, {kind}); filed {record["filingDate"]}', url, document,
-                    kind='issuer_release', source_tier='issuer_primary', metadata=metadata, max_chars=MAX_EXCERPT_CHARS)]
+                    kind='issuer_release', source_tier='issuer_primary', metadata=metadata, max_chars=MAX_EXCERPT_CHARS,
+                    opening_chars=RELEASE_OPENING_CHARS)]
 
 
 # Selected concepts are not interchangeable: e.g. weighted-average shares are
