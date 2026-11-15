@@ -329,11 +329,45 @@ plan-written monitoring and repurchase rows that cite unverified excerpts. The p
 and correction prompts now carry the evidence-tier rule; this change has not been
 run live. The suite has 520 offline tests.
 
+### Phase 1: removing the remaining failure classes (2026-11-15)
+
+The target: on a benchmark of eight companies, the first draft's review has no blocker
+and no major finding that survives an independent check, reruns on the same evidence
+move the value by less than 2%, and a memo costs about $4 or less. No value is tuned to
+the price.
+
+Changes: the reported history adds operating income and EPS growth, shares
+outstanding, the change in shares outstanding and shares repurchased; the rubric's rules
+carry IDs and a finding is graded no higher than its rule; every reviewer blocker or
+major is checked once more in a fresh context, and Python refutes "number in no source"
+findings whose figures it can trace; Python states which inputs alone can and cannot
+bring value to the price; historical buyback cases use the reported program figures;
+the source register labels unverified sources. An Opus review of the first version
+reproduced 8 defects, the worst letting a refutation of the assessment finding remove a
+reviewer major with the same ID and pass the draft; all are fixed.
+
+Replays from the plan stage on the final live run's evidence, first draft only:
+
+| Replay | Code | Cost | Review of the first draft after the check |
+|---|---|---:|---|
+| 1 | finding check, rule IDs, share columns | $2.08 | 5 major, 3 minor; gap to price "no". Two majors were the conclusion and variant view naming different causes of the gap |
+| 2 | + Python gap attribution, house-assumption labels | $2.08 | 1 major, 1 minor; weakness and gap "yes". The check refuted one major; the other called a figure from the history table absent |
+
+Run offline on replay 2's saved review, the later Python fact-check refutes that last
+major, leaving one minor finding: replay 2's first draft would have passed. That has not
+been observed in a paid run. Weighted values were $232.71 and $242.27 (0.65 and 0.68 of
+the price), 4% apart; the earlier three plans on this evidence were within 0.4%. The
+stability target of 2% is not met: the plan author's forecasts vary between runs. The
+suite has 547 offline tests.
+
 ### Still open after 2026-11-14
 
 - No live run has produced an approved memo. The final run's first draft drew 4 major
   findings and its revision 3, against 11 before the first-shot changes.
 - The plan-prompt evidence-tier rule and the rubric clarification have not been run live.
+- No paid run has yet shown a first draft with no surviving major finding; replay 2 does
+  so only when the later fact-check is applied offline.
+- Plan forecasts vary by up to 4% in value between runs on the same evidence.
 - The writer still occasionally does arithmetic the computed tables do not supply (a
   net share reduction stated a thousand times too small, then corrected to a wrong
   figure). The reported-history table carries no net share change.

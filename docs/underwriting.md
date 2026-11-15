@@ -501,7 +501,11 @@ rule it breaks and is graded no higher than that rule's class. Every blocker or 
 the reviewer raises, and its judgment of the central weakness and the gap to price, is
 then checked once more in a fresh context (`finding_check_N`). A finding is removed
 only when that check refutes it with a stated reason; refuted findings are listed in
-the memo's review status. By default one revision follows if material findings remain,
+the memo's review status. Python settles one kind itself: a finding under M3 (a number
+in no source) whose quoted figures all trace to the computed output, the reported tables
+or a primary source is refuted without a paid check. A historical repurchase case whose
+amount is within 3% of a reported year's buybacks takes that year's program value and
+average price, so the exhibits and the history table quote one price. By default one revision follows if material findings remain,
 and the second review checks the earlier findings rather than re-auditing from scratch.
 
 `tools/replay.py` re-runs the plan, draft, checks and review of a saved run on its
