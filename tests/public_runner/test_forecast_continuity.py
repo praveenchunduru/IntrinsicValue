@@ -144,3 +144,34 @@ class ReinvestmentContinuityTests(unittest.TestCase):
                              for name in ('bear', 'base', 'bull')})
         with self.assertRaisesRegex(ValueError, 'capital_efficiency_basis.bear cites S999'):
             pipeline._check_continuity(value, pipeline._evaluate(value), SOURCES)
+
+
+class CostPathTests(unittest.TestCase):
+    def history(self, rd, sga, revenue=(200e9, 220e9, 242e9, 266e9, 293e9), margins=(.30, .31, .32, .33, .34)):
+        rows = [{'fiscal_year_end': f'202{i}-06-30', 'revenue': r, 'research_and_development': a,
+                 'selling_general_administrative': b, 'operating_margin': m}
+                for i, (r, a, b, m) in enumerate(zip(revenue, rd, sga, margins), 2)]
+        return [{'id': 'S2', 'source_tier': 'regulatory_primary', 'data': {}, 'historical_baseline': {'rows': rows}}]
+
+    def test_the_reference_is_cost_growth_relative_to_revenue_and_the_peak_margin(self):
+        reference = pipeline.cost_path_reference(self.history(rd=(20e9, 22e9, 24.2e9, 26.6e9, 29.3e9),
+                                                              sga=(20e9, 21e9, 22e9, 23e9, 24e9)))
+        self.assertEqual(reference['lines'], ['research_and_development', 'selling_general_administrative'])
+        self.assertAlmostEqual(reference['max_operating_margin'], .34)
+        self.assertGreater(reference['opex_elasticity'], .5)
+        self.assertLess(reference['opex_elasticity'], 1.0)
+
+    def test_a_final_margin_far_above_the_reported_peak_needs_a_cited_basis(self):
+        value = plan()
+        result = evaluate(value)
+        final = max(row['cashflows'][-1]['ebit_margin'] for row in result['scenarios'].values())
+        value['cost_path_reference'] = {'fiscal_year_end': '2026-06-30', 'years': 4, 'lines': ['research_and_development'],
+                                        'opex_elasticity': None, 'last_opex_share': .1, 'max_operating_margin': final - .10,
+                                        'source_refs': ['S1'], 'basis': 'test'}
+        with self.assertRaisesRegex(ValueError, 'Cost path departs from the reported history'):
+            pipeline._check_continuity(value, pipeline._evaluate(value), SOURCES)
+        value['cost_path_basis'] = {name: 'Disclosed price increases and a fixed-cost base lift margins over time [S1].'
+                                    for name in ('bear', 'base', 'bull')}
+        result = pipeline._evaluate(value)
+        pipeline._check_continuity(value, result, SOURCES)
+        self.assertIn('Cost path against the reported history', '\n'.join(pipeline._continuity_exhibit(result)))
