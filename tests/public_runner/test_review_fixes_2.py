@@ -547,12 +547,15 @@ class RuleAndCheckTests(unittest.TestCase):
             self.assertIn(f'{rule} {text}', quality.RUBRIC)
 
     def test_only_a_stated_refutation_removes_a_finding(self):
-        material = [{'id': 'F1'}, {'id': 'F2'}, {'id': 'F3'}]
-        raw = json.dumps({'checks': [{'id': 'F1', 'upheld': False, 'reason': 'The sentence names 17.5% as a house assumption.'},
-                                     {'id': 'F2', 'upheld': False, 'reason': ''},
-                                     {'id': 'F3', 'upheld': True, 'reason': 'Correct.'},
-                                     {'id': 'F9', 'upheld': False, 'reason': 'Unknown finding.'}]})
-        self.assertEqual(list(pipeline._refuted_findings(raw, material)), ['F1'])
+        material = [{'id': 'F1'}, {'id': 'F2'}, {'id': 'F3'}, {'id': 'F1'}]
+        raw = json.dumps({'checks': [{'id': 'C1', 'upheld': False, 'reason': 'The sentence names 17.5% as a house assumption.'},
+                                     {'id': 'C2', 'upheld': False, 'reason': ''},
+                                     {'id': 'C3', 'upheld': True, 'reason': 'Correct.'},
+                                     {'id': 'C4', 'upheld': False, 'reason': 'Refuted.'},
+                                     {'id': 'C4', 'upheld': True, 'reason': 'Upheld wins.'},
+                                     {'id': ['C2'], 'upheld': False, 'reason': 'Malformed ID.'},
+                                     {'id': 'C9', 'upheld': False, 'reason': 'Unknown finding.'}]})
+        self.assertEqual(pipeline._refuted_findings(raw, material), {0: 'The sentence names 17.5% as a house assumption.'})
         self.assertEqual(pipeline._refuted_findings('not json', material), {})
 
 
@@ -567,5 +570,26 @@ class SourceRegisterLabelTests(unittest.TestCase):
 
 class FencedCheckTests(unittest.TestCase):
     def test_a_fenced_check_after_analysis_is_read(self):
-        raw = 'Checking.\n```json\n' + json.dumps({'checks': [{'id': 'F1', 'upheld': False, 'reason': 'Already stated.'}]}) + '\n```'
-        self.assertEqual(pipeline._refuted_findings(raw, [{'id': 'F1'}]), {'F1': 'Already stated.'})
+        raw = 'Checking.\n```json\n' + json.dumps({'checks': [{'id': 'C1', 'upheld': False, 'reason': 'Already stated.'}]}) + '\n```'
+        self.assertEqual(pipeline._refuted_findings(raw, [{'id': 'F1'}]), {0: 'Already stated.'})
+
+
+class OpusPhaseOneFixTests(unittest.TestCase):
+    MEMO = RuleAndCheckTests.MEMO
+
+    def test_a_blank_rule_is_no_rule(self):
+        from investmentideas import quality
+        parsed = quality.parse_review(RuleAndCheckTests().review('major', ' '), memo=self.MEMO)
+        self.assertNotIn('rule', parsed['findings'][0])
+        self.assertEqual(parsed['findings'][0]['severity'], 'major')
+
+    def test_the_reviewers_own_verdict_is_kept_when_capping_changes_it(self):
+        from investmentideas import quality
+        parsed = quality.parse_review(RuleAndCheckTests().review('major', 'N2'), memo=self.MEMO)
+        self.assertEqual((parsed['verdict'], parsed['verdict_as_reviewed']), ('pass', 'revise'))
+
+    def test_evidence_extraction_code_is_part_of_the_workflow_contract(self):
+        import inspect
+        source = inspect.getsource(pipeline._workflow_contract)
+        self.assertIn("'evidence_tables.py'", source)
+        self.assertIn("'research.py'", source)

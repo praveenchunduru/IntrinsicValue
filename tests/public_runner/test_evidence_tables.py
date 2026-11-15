@@ -104,3 +104,29 @@ class BreakdownTableTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class QuarterlySplitTests(unittest.TestCase):
+    def test_a_split_restated_first_in_a_10q_blanks_the_old_basis_counts(self):
+        shares = [fact(None, end, value, '2025-11-01') for (_, end), value in zip(YEARS, [100e6, 97e6, 94e6])]
+        shares.append(fact(None, YEARS[2][1], 940e6, '2026-02-01', form='10-Q'))
+        rows = historical_baseline(payload(**dict(BASE, CommonStockSharesOutstanding=('shares', shares))),
+                                   years=2, as_of='2026-03-01')['rows']
+        self.assertIsNone(rows[-1]['shares_outstanding'])
+        self.assertIsNone(rows[-1]['diluted_eps'])
+        self.assertIsNone(rows[-1]['shares_repurchased'])
+        self.assertIsNotNone(rows[-1]['revenue'])
+
+    def test_one_revised_eps_value_is_not_a_split(self):
+        eps = annual([5.0, 5.5, 6.6]) + [fact(*YEARS[1], 0.5, '2026-02-01', form='10-Q')]
+        rows = historical_baseline(payload(**dict(BASE, EarningsPerShareDiluted=('USD/shares', eps))),
+                                   years=2, as_of='2026-03-01')['rows']
+        self.assertEqual(rows[-1]['shares_outstanding'], 940e6)
+        self.assertEqual(rows[-1]['diluted_eps'], 6.6)
+
+    def test_two_eps_values_restated_by_one_factor_are_a_split(self):
+        eps = annual([5.0, 5.5, 6.6]) + [fact(*YEARS[1], 0.55, '2026-02-01', form='10-Q'),
+                                          fact(*YEARS[2], 0.66, '2026-02-01', form='10-Q')]
+        rows = historical_baseline(payload(**dict(BASE, EarningsPerShareDiluted=('USD/shares', eps))),
+                                   years=2, as_of='2026-03-01')['rows']
+        self.assertIsNone(rows[-1]['diluted_eps'])

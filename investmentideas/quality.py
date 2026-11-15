@@ -287,8 +287,8 @@ def parse_review(text, memo=None, *, anchor_embellished=False):
                 if WITHDRAWN_MATERIAL_FINDING.search(disposition):
                     raise ValueError('Material review finding explicitly withdraws or requests no correction; return only unresolved findings')
         rule = finding.get('rule')
+        rule = str(rule).strip().upper() if rule is not None and str(rule).strip() else None
         if rule is not None:
-            rule = str(rule).strip().upper()
             if rule not in RULE_SEVERITY:
                 raise ValueError('Finding rule must be one of ' + ', '.join(RULE_SEVERITY))
         identifiers.add(identifier)
@@ -310,8 +310,11 @@ def parse_review(text, memo=None, *, anchor_embellished=False):
         cap = RULE_SEVERITY.get(item.get('rule'))
         if cap and _SEVERITY_RANK[item['severity']] > _SEVERITY_RANK[cap]:
             item['severity_as_reviewed'], item['severity'] = item['severity'], cap
+    as_reviewed = verdict
     verdict = 'revise' if any(item['severity'] in {'blocker', 'major'} for item in findings) else 'pass'
     parsed = {'verdict': verdict, 'findings': findings}
+    if verdict != as_reviewed:
+        parsed['verdict_as_reviewed'] = as_reviewed
     # The reviewer's statement of the conclusion's central weakness is kept when
     # well formed. It is reported to the reader; it is not a finding by itself.
     weakness = review.get('central_weakness')

@@ -112,18 +112,48 @@ def _duration(gaap, concepts, start, end, currency, as_of=None):
     return None, None, None
 
 
-def _split_restated_after(gaap, concept, as_of=None):
-    """Latest filing date that restated an earlier period by a split-sized factor, or None."""
-    vintages, latest = {}, None
-    for _, row in _annual_rows(gaap, concept, as_of):
-        if row.get('val'):
-            vintages.setdefault((row.get('start'), row['end']), []).append((row['filed'], abs(row['val'])))
-    for rows in vintages.values():
-        rows.sort()
-        for (_, old), (filed, new) in zip(rows, rows[1:]):
-            if old and new and max(old, new) / min(old, new) >= 1.5 and (latest is None or filed > latest):
-                latest = filed
-    return latest
+# A split restates earlier share counts and per-share values. Quarterly reports
+# are scanned too: between a split and the next annual report, the latest annual
+# values are on the old basis.
+SPLIT_SHARE_CONCEPTS = ('CommonStockSharesOutstanding', 'WeightedAverageNumberOfDilutedSharesOutstanding',
+                        'WeightedAverageNumberOfSharesOutstandingBasic')
+SPLIT_PER_SHARE_CONCEPTS = ('EarningsPerShareDiluted', 'EarningsPerShareBasic')
+SPLIT_FORMS = ANNUAL_FORMS | {'10-Q', '10-Q/A'}
+
+
+def _restatements(gaap, concept, as_of=None):
+    """(filing date, factor) for each later report of the same period at a split-sized multiple."""
+    vintages = {}
+    for unit, rows in ((gaap.get(concept) or {}).get('units') or {}).items():
+        for row in rows if isinstance(rows, list) else []:
+            value = row.get('val') if isinstance(row, dict) else None
+            if (row.get('form') in SPLIT_FORMS and isinstance(value, (int, float)) and not isinstance(value, bool)
+                    and value and _day(row.get('end')) and _day(row.get('filed'))
+                    and (as_of is None or row['filed'] <= as_of)):
+                vintages.setdefault((unit, row.get('start'), row['end']), []).append((row['filed'], abs(value)))
+    for observations in vintages.values():
+        observations.sort()
+        for (_, old), (filed, new) in zip(observations, observations[1:]):
+            if max(new / old, old / new) >= 1.5:
+                yield filed, new / old
+
+
+def _split_date(gaap, as_of=None):
+    """Latest filing that restated earlier values for a stock split, or None.
+
+    A past share count restated by 1.5 times or more is a split. Per-share values
+    are noisier near zero, so they count only when two restatements in one filing
+    share a factor (EPS moves by the inverse of the share factor).
+    """
+    dates = {filed for concept in SPLIT_SHARE_CONCEPTS for filed, _ in _restatements(gaap, concept, as_of)}
+    per_share = {}
+    for concept in SPLIT_PER_SHARE_CONCEPTS:
+        for filed, factor in _restatements(gaap, concept, as_of):
+            per_share.setdefault(filed, []).append(factor)
+    for filed, factors in per_share.items():
+        if any(sum(1 for other in factors if abs(other / factor - 1) < .02) >= 2 for factor in factors):
+            dates.add(filed)
+    return max(dates) if dates else None
 
 
 def _instant(gaap, concepts, end, currency, as_of=None):
@@ -147,7 +177,7 @@ def _share_instant(gaap, concepts, end, as_of=None):
             if unit in SHARE_UNITS and 'start' not in row and row['end'] == end and (best is None or row['filed'] > best['filed']):
                 best = row
         if best is not None:
-            split = _split_restated_after(gaap, concept, as_of)
+            split = _split_date(gaap, as_of)
             return (None if split and best['filed'] < split else best['val']), concept
     return None, None
 
@@ -170,6 +200,7 @@ def historical_baseline(payload, years=5, as_of=None):
     gaap = ((payload or {}).get('facts') or {}).get('us-gaap') or {}
     periods = _fiscal_years(gaap, years + 1, as_of)
     rows, concepts = [], {}
+    split = _split_date(gaap, as_of)
     for period in periods:
         row = {'fiscal_year_start': period['start'], 'fiscal_year_end': period['end'], 'currency': period['currency'],
                'revenue': period['revenue']}
@@ -179,8 +210,7 @@ def historical_baseline(payload, years=5, as_of=None):
             row[name], used, filed[name] = _duration(gaap, options, period['start'], period['end'], period['currency'], as_of)
             if used:
                 concepts.setdefault(name, used)
-                split = _split_restated_after(gaap, used, as_of) if name in SHARE_BASIS_FIELDS else None
-                if split and filed[name] < split:
+                if name in SHARE_BASIS_FIELDS and split and filed[name] < split:
                     # Reported only before a later split restatement: another basis.
                     row[name] = None
                     row.setdefault('split_basis_blank', []).append(name)
@@ -189,7 +219,6 @@ def historical_baseline(payload, years=5, as_of=None):
             value, _, _ = _duration(gaap, (value_concept,), period['start'], period['end'], period['currency'], as_of)
             shares, _, shares_filed = _duration(gaap, (share_concept,), period['start'], period['end'], period['currency'], as_of)
             if value and shares:
-                split = _split_restated_after(gaap, share_concept, as_of)
                 if not (split and shares_filed < split):
                     row['average_repurchase_price'] = value / shares
                     row['shares_repurchased'] = shares

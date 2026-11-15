@@ -458,15 +458,17 @@ Forward cases are illustrations, not forecasts of future repurchase policy.
 Evidence reaches every model prompt in three labelled tiers: tables computed by
 Python from reported filings, primary and official sources, and unverified web
 excerpts (at most 2,000 characters each and 30,000 in total). The computed tables are
-five years of reported history from SEC company facts (growth, gross and operating
-margins, R&D and SG&A, effective tax, capex, depreciation and amortization, stock
-compensation, buybacks and dividends, diluted EPS) and annual revenue, cost and
+five years of reported history from SEC company facts (revenue and operating income
+growth, gross and operating margins, R&D and SG&A, effective tax, capex, depreciation
+and amortization, stock compensation, buybacks and dividends, diluted EPS and its
+growth, shares outstanding, the change in shares outstanding and shares repurchased)
+and annual revenue, cost and
 operating income by product or service, segment and geography from the filing's
 inline XBRL. Per-share and share-count values reported only before a later split
 restatement, and buyback prices without a matching value and share count, are shown
 as n/a. The 10-K and 10-Q excerpts include gross-margin, inventory, purchase
-commitment and share-repurchase disclosures. Folders collected before these tables
-existed get them from their archived documents on the next run.
+commitment and share-repurchase disclosures. The tables are derived from the archived
+documents on every run, so a folder collected earlier gets new columns.
 
 The forecast author fills one template: an operating model when the filings report
 revenue by product, service or segment, otherwise aggregate growth and margin arrays.
@@ -492,10 +494,15 @@ to excerpts although a primary source has them; convention rows described as add
 up; and prose over 3,600 words. One fix call returns quote-and-replacement edits that
 Python applies when the quote occurs once (deleting a duplicated passage removes its
 second copy); what remains goes to the reviewer as minor diagnostics. Python labels
-every citation of an unverified excerpt inline, as in [S16 unverified]. The review
-applies the same quality standard. By default one revision follows if material
-findings remain, and the second review checks the earlier findings rather than
-re-auditing from scratch.
+every citation of an unverified excerpt inline, as in [S16 unverified], and the source
+register carries the same label. The review applies the same quality standard, whose
+rules carry IDs (B1-B3 blockers, M1-M6 majors, N1-N3 minors); each finding names the
+rule it breaks and is graded no higher than that rule's class. Every blocker or major
+the reviewer raises, and its judgment of the central weakness and the gap to price, is
+then checked once more in a fresh context (`finding_check_N`). A finding is removed
+only when that check refutes it with a stated reason; refuted findings are listed in
+the memo's review status. By default one revision follows if material findings remain,
+and the second review checks the earlier findings rather than re-auditing from scratch.
 
 `tools/replay.py` re-runs the plan, draft, checks and review of a saved run on its
 frozen evidence (`--from plan`, `--from draft` or `--from review`), so a prompt or

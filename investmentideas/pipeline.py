@@ -211,24 +211,36 @@ FINDING_CHECK = ('Check each review finding below against the draft, the evidenc
 FINDING_CHECK_TOKENS = 4000
 
 
+def _check_ids(material):
+    """Positional IDs for the check: reviewer, assessment and earlier IDs can collide."""
+    return [f'C{index}' for index in range(1, len(material) + 1)]
+
+
 def _refuted_findings(raw, material):
-    """Finding IDs a check refuted with a stated reason. Anything unparseable or unstated is upheld."""
+    """Positions in ``material`` that the check refuted, with the stated reason.
+
+    Anything unparseable, malformed or unstated is upheld, and an ID that the
+    check both upholds and refutes is upheld.
+    """
     try:
         value = _response_json(raw)[0]
     except (ValueError, TypeError):
         return {}
     checks = value.get('checks') if isinstance(value, dict) else None
-    known = {finding['id'] for finding in material}
-    refuted = {}
+    position = {identifier: index for index, identifier in enumerate(_check_ids(material))}
+    refuted, upheld_ids = {}, set()
     for check in checks if isinstance(checks, list) else []:
-        if not isinstance(check, dict) or check.get('id') not in known:
+        identifier = check.get('id') if isinstance(check, dict) else None
+        if not isinstance(identifier, str) or identifier not in position:
             continue
         upheld = check.get('upheld')
         reason = check.get('reason')
         if (upheld is False or (isinstance(upheld, str) and upheld.strip().lower() == 'false')) and \
                 isinstance(reason, str) and reason.strip():
-            refuted[check['id']] = reason.strip()[:600]
-    return refuted
+            refuted.setdefault(position[identifier], reason.strip()[:600])
+        else:
+            upheld_ids.add(position[identifier])
+    return {index: reason for index, reason in refuted.items() if index not in upheld_ids}
 
 
 # A response cut off at its limit is rejected, never used. The open-weight
@@ -1001,7 +1013,8 @@ def _workflow_contract():
             'forecast':_digest([FORECAST_SCHEMA,UNDERWRITING_GUIDANCE]),
             'review':_digest(REVIEW_SCHEMA), 'sections':_digest(SECTIONS),
             'implementation':_digest({name:hashlib.sha256((root/name).read_bytes()).hexdigest()
-                for name in ('pipeline.py','prompt_context.py','quality.py','valuation.py','inputs.py','operating.py','rates.py','primary_debt.py','companyfacts.py')
+                for name in ('pipeline.py','prompt_context.py','quality.py','valuation.py','inputs.py','operating.py','rates.py','primary_debt.py','companyfacts.py',
+                             'evidence_tables.py','research.py')
                 if (root/name).is_file()})}
 
 
@@ -2759,32 +2772,45 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             for finding in review['findings']:
                 if not set(finding['source_refs']).issubset(known):
                     raise RuntimeError('Reviewer cited a source outside the research snapshot')
-            # The reviewer's assessment finding is checked with its majors and kept
-            # only when no checked major survives, as before the check existed.
+            # A reviewer ID equal to one Python assigns (the assessment finding, a
+            # deterministic check) is renamed so records and the check stay distinct.
+            reserved={'central-weakness-unhandled','review-assessment-missing'}|{f.get('id') for f in deterministic}
+            for finding in review['findings']:
+                if finding['id'] in reserved:
+                    finding['id']=finding['id']+'-reviewer'
+            # The reviewer's assessment finding is checked with its majors. It is
+            # kept only when no checked reviewer major survives, as before the
+            # check existed; its minor form (assessment missing) is always kept.
             assessment=assessment_findings({**review,'findings':[]})
             material=[f for f in review['findings']+assessment if f.get('severity') in {'blocker','major'}]
-            refuted={}
+            refuted,check_note={},None
             if material:
-                check=call(f'finding_check_{iteration}',reviewer,FINDING_CHECK+'\n'+EVIDENCE_TIER_RULE+'\n'+RUBRIC+
-                    '\nFindings:\n'+json.dumps([{key:f.get(key) for key in ('id','severity','rule','issue','current_excerpt','fix','source_refs')}
-                                                for f in material])+
-                    '\nEvidence:\n'+context+'\nValuation:\n'+valuation_context+'\nDraft:\n'+visible,tokens=FINDING_CHECK_TOKENS)
-                refuted=_refuted_findings(check,material)
-            kept=[f for f in review['findings'] if f['id'] not in refuted]
+                try:
+                    check=call(f'finding_check_{iteration}',reviewer,FINDING_CHECK+'\n'+EVIDENCE_TIER_RULE+'\n'+RUBRIC+
+                        '\nFindings:\n'+json.dumps([dict({key:f.get(key) for key in ('severity','rule','issue','current_excerpt','fix','source_refs')},id=check_id)
+                                                    for f,check_id in zip(material,_check_ids(material))])+
+                        '\nEvidence:\n'+context+'\nValuation:\n'+valuation_context+'\nDraft:\n'+visible,tokens=FINDING_CHECK_TOKENS)
+                    refuted=_refuted_findings(check,material)
+                except core.IncompleteResponse as exc:
+                    # Charged and recorded; every finding stands, as if the check upheld it.
+                    check_note='The check response was incomplete; every finding was kept.'
+                    progress(f'Finding check not used: {exc}'.split(', so it')[0])
+            removed={id(material[index]) for index in refuted}
+            kept=[f for f in review['findings'] if id(f) not in removed]
             if any(f.get('severity') in {'blocker','major'} for f in kept):
-                assessment=[]
-            elif any(f.get('severity') in {'blocker','major'} for f in review['findings']):
-                # Every reviewer major was refuted: the reviewer's own assessment now stands on its own.
-                assessment=[f for f in assessment if f['id'] not in refuted]
+                assessment=[f for f in assessment if f.get('severity') not in {'blocker','major'}]
             else:
-                assessment=[f for f in assessment_findings(review) if f['id'] not in refuted]
+                assessment=[f for f in assessment if id(f) not in removed]
             combined=kept+deterministic+assessment
             effective='revise' if any(f.get('severity') in {'blocker','major'} for f in combined) else 'pass'
-            record={'iteration':iteration,'verdict':effective,'model_verdict':review['verdict'],'findings':combined,'manifest':manifest,
+            record={'iteration':iteration,'verdict':effective,'model_verdict':review.get('verdict_as_reviewed',review['verdict']),
+                    'findings':combined,'manifest':manifest,
                     'diagnostic_scope':DIAGNOSTIC_SCOPE,'review_model':reviewer,'author_model':strong}
             if material:
                 record['finding_check']={'model':reviewer,'checked':[f['id'] for f in material],
-                                         'refuted':[dict(f,check_reason=refuted[f['id']]) for f in material if f['id'] in refuted]}
+                                         'refuted':[dict(material[index],check_reason=reason) for index,reason in sorted(refuted.items())]}
+                if check_note:
+                    record['finding_check']['note']=check_note
             for key in ('central_weakness','gap_explained'):
                 if key in review:
                     record[key]=review[key]

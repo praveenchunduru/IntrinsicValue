@@ -337,7 +337,7 @@ class RefutingCheckTransport(FullContractTransport):
         response = super().transport(url, key=key, payload=payload, timeout=timeout)
         if url.endswith('/chat/completions') and payload['messages'][1]['content'].startswith('Check each review finding'):
             response['choices'][0]['message']['content'] = json.dumps({'checks': [
-                {'id': 'F1', 'upheld': False, 'reason': 'The draft already states the dated monitoring condition.'}]})
+                {'id': 'C1', 'upheld': False, 'reason': 'The draft already states the dated monitoring condition.'}]})
         return response
 
 
@@ -364,3 +364,54 @@ class FindingCheckTests(unittest.TestCase):
             state = json.loads((folder/'state.json').read_text())
         stages = [row['stage'] for row in state['ledger']]
         self.assertLess(stages.index('finding_check_0'), stages.index('revise_1'))
+
+
+class IncompleteCheckTransport(FullContractTransport):
+    def transport(self, url, *, key=None, payload=None, timeout=90):
+        response = super().transport(url, key=key, payload=payload, timeout=timeout)
+        if url.endswith('/chat/completions') and payload['messages'][1]['content'].startswith('Check each review finding'):
+            response['choices'][0]['finish_reason'] = 'length'
+            response['choices'][0]['message']['content'] = '{"checks":[{"id":"C1","upheld":fal'
+        return response
+
+
+class CollidingIdTransport(FullContractTransport):
+    """The reviewer reuses the assessment finding's ID for its own major; the check refutes only the assessment."""
+
+    def transport(self, url, *, key=None, payload=None, timeout=90):
+        prompt = payload['messages'][1]['content'] if url.endswith('/chat/completions') else ''
+        response = super().transport(url, key=key, payload=payload, timeout=timeout)
+        if prompt.startswith('Review this equity memo') and self.review_count == 1:
+            review = json.loads(response['choices'][0]['message']['content'])
+            review['findings'][0]['id'] = 'central-weakness-unhandled'
+            review['central_weakness'] = {'claim': 'Terminal returns', 'computed_effect': 'USD -69', 'memo_handles_it': 'no'}
+            review['gap_explained'] = 'no'
+            response['choices'][0]['message']['content'] = json.dumps(review)
+        if prompt.startswith('Check each review finding'):
+            response['choices'][0]['message']['content'] = json.dumps({'checks': [
+                {'id': 'C1', 'upheld': True, 'reason': 'The finding is correct.'},
+                {'id': 'C2', 'upheld': False, 'reason': 'The memo handles the weakness.'}]})
+        return response
+
+
+class FindingCheckRobustnessTests(unittest.TestCase):
+    def test_an_incomplete_check_keeps_every_finding_and_the_run_continues(self):
+        fixture = IncompleteCheckTransport(revisions=1)
+        with tempfile.TemporaryDirectory() as directory, fixture.installed():
+            folder = pipeline.run('AAPL', 'synthetic-key', directory=directory)
+            state = json.loads((folder/'state.json').read_text())
+        first = state['review_history'][0]
+        self.assertEqual(first['verdict'], 'revise')
+        self.assertIn('incomplete', first['finding_check']['note'])
+        self.assertIn('revise_1', [row['stage'] for row in state['ledger']])
+
+    def test_a_reviewer_id_equal_to_the_assessment_id_cannot_pass_the_draft(self):
+        fixture = CollidingIdTransport(revisions=1)
+        with tempfile.TemporaryDirectory() as directory, fixture.installed():
+            folder = pipeline.run('AAPL', 'synthetic-key', directory=directory, max_revisions=0)
+            state = json.loads((folder/'state.json').read_text())
+        first = state['review_history'][0]
+        self.assertEqual(first['verdict'], 'revise')
+        self.assertIn('central-weakness-unhandled-reviewer',
+                      [f['id'] for f in first['findings'] if f['severity'] == 'major'])
+        self.assertEqual(state['quality_status'], 'unresolved_findings')
