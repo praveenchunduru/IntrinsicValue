@@ -279,7 +279,7 @@ python -m pip install .
 investmentideas --help
 ```
 
-The current source passes **547 tests** locally on Python 3.9, 3.12 and 3.13; the
+The current source passes **552 tests** locally on Python 3.9, 3.12 and 3.13; the
 v0.2.0 release passed 268. The
 [CI matrix](https://github.com/praveenchunduru/IntrinsicValue/actions/runs/42261827883)
 tests Python 3.10, 3.12 and 3.13. CI runs synthetic evidence and mocked transports without model calls or

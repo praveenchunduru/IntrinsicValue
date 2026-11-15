@@ -360,6 +360,33 @@ the price), 4% apart; the earlier three plans on this evidence were within 0.4%.
 stability target of 2% is not met: the plan author's forecasts vary between runs. The
 suite has 547 offline tests.
 
+### Microsoft (2026-11-15)
+
+A live run, first draft only, cost $1.99 (one plan repair). The check refuted one
+reviewer misreading and upheld one real error, a Microsoft Cloud gross margin set beside
+the Intelligent Cloud segment's as one measure; 1 major, 1 minor. The review missed the
+largest problem: year-1 reinvestment of $43.6 billion against $81.6 billion reported
+(capital expenditure $115.9 billion less depreciation $34.3 billion), at sales-to-capital
+1.55 against a reported three-year incremental rate of 0.78. A reinvestment continuity
+check now sends such a plan back unless a cited basis explains the fall.
+
+A replay from the plan stage on the same evidence cost $2.52 (two plan repairs). The plan
+raised year-1 reinvestment to $53-66 billion (sales-to-capital 0.90-1.20) and stated no
+basis. The base value moved from $760.16 to $751.11 and the weighted value from $778.94
+to $790.32 (1.49 and 1.51 times the $523.88 price); the bear and bull cases moved more.
+The value rests mostly on the growth and margin path and the 25% terminal return on new
+capital (base value $510.13 at the terminal discount rate). The first draft drew 3
+surviving majors: an RPO "further increase" from $678 to $677 billion, an unsupported
+statement about Azure reporting, and a variant view the reviewer read as a second
+attribution of the gap because the review prompt said no section may attribute it
+otherwise. That wording now says no section may contradict the computed account. The
+check refuted two false "unlabelled" findings.
+
+Across the five first drafts on the final code (Apple live, Apple replays 1 and 2,
+Microsoft live and replay), surviving majors were 4, 5, 1, 1 and 3. Most of the
+remaining ones are single factual slips by the writer that a revision usually corrects.
+The suite has 552 offline tests.
+
 ### Still open after 2026-11-14
 
 - No live run has produced an approved memo. The final run's first draft drew 4 major
@@ -368,6 +395,10 @@ suite has 547 offline tests.
 - No paid run has yet shown a first draft with no surviving major finding; replay 2 does
   so only when the later fact-check is applied offline.
 - Plan forecasts vary by up to 4% in value between runs on the same evidence.
+- The terminal return on new capital is the plan author's judgment (25% for both Apple
+  and Microsoft) and the largest single sensitivity in both memos.
+- The reinvestment check has run live once; the value it produced for Microsoft rests
+  on judgments the review accepted.
 - The writer still occasionally does arithmetic the computed tables do not supply (a
   net share reduction stated a thousand times too small, then corrected to a wrong
   figure). The reported-history table carries no net share change.
