@@ -437,7 +437,18 @@ The change set, all offline and tested:
   plan repairs stop; a dev profile runs the flow cheaply.
 - A bug in summary removal could delete a memo written with ### sections; fixed.
 
-None of this has been run against a paid model.
+- Data extraction (13-company free sweep): acquisitions, D&A, SG&A, buyback prices and
+  share counts filled from the 10-K's inline facts where company facts lack them;
+  product tables on combined product and segment axes; every ticker's 8-K earnings
+  release as an issuer primary source; stale 10-Qs skipped; split false positives
+  removed; finance-lease additions and leases signed but not commenced recorded;
+  long-term debt read at principal within 0.1-3% of carrying value; marketable
+  securities under available-for-sale tags; class share counts summed; banks and
+  insurers refused before any paid stage. Preflight now passes for 11 of 13 companies
+  (Amazon, Home Depot and Meta added); JPMorgan is refused as a bank and ExxonMobil's
+  successor registrant has no annual report yet.
+
+None of this has been run against a paid model. The suite has 606 offline tests.
 
 ### Still open after 2026-11-14
 

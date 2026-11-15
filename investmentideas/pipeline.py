@@ -23,11 +23,12 @@ from . import core
 from .costs import cost_summary
 from .analytics import annual_metrics
 from .fundamentals import yahoo_financials
-from .inputs import canonical_reported_inputs, pin_reported_inputs
+from .inputs import canonical_reported_inputs, operating_company_gate, pin_reported_inputs
 from .quality import (DIAGNOSTIC_SCOPE, HOUSE_ATTRIBUTION, RUBRIC, TRADING_TERMS, assessment_findings, claim_ledger,
                       inspect_memo, parse_json, parse_review, prereview_checks, prose_words, trace_pools, untraced_figures)
 from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_breakdown_facts, inline_facts, archive_focus_excerpts
-from .evidence_tables import breakdown_tables, historical_baseline, render_baseline, render_breakdowns
+from .evidence_tables import (breakdown_tables, filing_supplement_for, historical_baseline, render_baseline,
+                              render_breakdowns)
 from .macro import gather_us_calibration
 from .market_beta import gather_weekly_beta
 from .prompt_context import valuation_context as render_valuation_context
@@ -1115,8 +1116,11 @@ def _refresh_primary_focus(folder,sources):
         # would otherwise freeze the table at the code that collected it).
         if isinstance(source.get('data'),dict) and source['data'].get('fact_origin')=='sec_companyfacts':
             try:
-                baseline=historical_baseline(json.loads(raw.decode('utf-8')),
-                                             as_of=(source['data'].get('selection') or {}).get('as_of'))
+                as_of=(source['data'].get('selection') or {}).get('as_of')
+                # Gaps in company facts (extension-tagged acquisitions and D&A, one half of a
+                # buyback pair, cover-page share counts) are filled from the 10-K's inline facts.
+                baseline=historical_baseline(json.loads(raw.decode('utf-8')),as_of=as_of,
+                                             supplement=filing_supplement_for(folder,sources,as_of))
             except (ValueError,TypeError,KeyError,AttributeError,UnicodeDecodeError):
                 baseline=None
             current=source.get('historical_baseline') or source['data'].get('historical_baseline')
@@ -2794,6 +2798,12 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
     reported=canonical_reported_inputs(state['sources'],as_of=(forecast_plan or state.get('plan',{})).get('valuation_date'))
     core.save(folder/'reported-inputs.json',reported)
     coverage=reported['coverage']
+    # Banks and insurers are refused before any paid stage: the operating-company FCFF
+    # model does not value them (JPMorgan reached the plan prompt's own refusal only
+    # after four paid web calls). A missing operating-income line alone is not refused.
+    gate=operating_company_gate(state['sources'],reported)
+    if gate.get('financial_institution'):
+        coverage={**coverage,'complete':False,'conflicts':[gate['message'],*coverage.get('conflicts',[])]}
     if coverage.get('conflicts') or not coverage.get('complete'):
         state['coverage_preflight_failed']=True
         prior=folder/'revisions'/'model-before-incomplete-coverage'
