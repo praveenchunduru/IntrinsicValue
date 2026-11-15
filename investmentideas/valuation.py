@@ -1694,6 +1694,9 @@ def _convention_panel(actuals, definitions, scenarios, discounting):
     add('terminal_return_15_percent', 'Terminal return on new capital 15% (Damodaran\'s override for durable advantages, used for Apple in 2024)',
         {'terminal_roic': .15}, applies=abs(base['terminal_roic'] - .15) > 1e-9 and .15 >= base['terminal_growth'],
         reason='House terminal return is already 15%')
+    add('terminal_return_25_percent', 'Terminal return on new capital 25%: a claim that new investment keeps earning well above the market forever',
+        {'terminal_roic': .25}, applies=abs(base['terminal_roic'] - .25) > 1e-9 and .25 >= base['terminal_growth'],
+        reason='House terminal return is already 25%')
     continuing = margin * base['sales_to_capital'] * (1 + base['terminal_growth'])
     add('terminal_reinvestment_continues_forecast', 'Terminal reinvestment continues the forecast capital efficiency (no step at the end of the forecast)',
         {'terminal_roic': continuing}, applies=continuing > 0 and continuing >= base['terminal_growth'] and abs(continuing - base['terminal_roic']) > 1e-6,

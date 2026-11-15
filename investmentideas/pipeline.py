@@ -40,23 +40,21 @@ VERSION = 'full-2'
 DEFAULT_BUDGET = 10.0
 SECTIONS = '''Write these sections, in this order, as prose around the computed valuation summary that
 Python places above your text (do not re-type its tables; refer to its rows by name):
-(1) Valuation conclusion (about 250 words): value, price and value / price as computed; what the
-price requires, in the terms of the computed sentence on which inputs alone can and cannot bring
-value to the price, each with how far it must move; the implied return against the required
-return; and the largest convention step as the assumption the value is most sensitive to. Name a
-single cause of the difference only when the computed sentence says one input alone can close it.
-Convention rows are one change at a time and are never added together.
-(2) Variant view (about 400 words): on the inputs that can close the difference, why the house view
-differs from what the price requires, with primary evidence. Keep the conclusion's account of what
-can close the difference; no section contradicts it. Answer the strongest sourced
-opposing case with operating evidence (demand, pricing, margins, capital needs), not with scenario
-values. If the operating forecast is close to consensus, say so.
+(1) Valuation conclusion (about 150 words). The summary above already states the values, what the
+price implies, which inputs alone can and cannot bring value to the price, and the convention step
+the value is most sensitive to; do not restate or reinterpret those figures, and do not assign the
+difference between value and price to causes beyond that computed account. Say in plain words what
+the house concludes and which evidence the conclusion rests on most, citing summary rows by name.
+(2) Variant view (about 400 words): on the inputs that can close the difference, why the house
+forecast differs from what the price requires, with primary evidence. Answer the strongest sourced
+opposing case with operating evidence (demand, pricing, margins, capital needs). If the operating
+forecast is close to consensus, say so.
 (3) Business economics, industry and competition (about 450 words), from primary sources and the
 computed tables.
 (4) Management, capital allocation and financial history (about 450 words), from the reported
 history and breakdown tables; compare buybacks with house value using computed figures.
 (5) Forecast and scenarios (about 500 words): how the bear, base and bull paths start from reported
-results, what drives each, and the basis for the weights. Scenario drivers are house assumptions:
+results, what drives each, and, if the weights depart from 25/50/25, the cited basis for that. Scenario drivers are house assumptions:
 say so, and cite a source only for the observed fact behind each. Outside estimates appear only as
 labelled unverified context.
 (6) Observations that would change the value (about 300 words), from the computed monitoring cases.
@@ -70,7 +68,7 @@ FORECAST_SCHEMA = """Return ONLY compact JSON for house forecasts:
 {"assumptions_label":"House forecasts, not reported facts or guidance",
  "scenario_rationales":{"bear":"Evidence, economic mechanism and the basis for this probability [S#]","base":"...","bull":"..."},
  "scenarios":{"bear":{"probability":<decimal>,"tax_rate":<decimal>,"sales_to_capital":<number>,
- "terminal_roic":<decimal>},"base":{<same fields>},"bull":{<same fields>}}}
+ "terminal_roic":0.15},"base":{<same fields>},"bull":{<same fields>}}}
 plus EITHER an operating_model (preferred when the evidence reports revenue by product, service or
 segment; see below), in which case Python derives each scenario's growth and margins from its drivers
 and any stated growth_rates or ebit_margins are dropped, OR, without one, "growth_rates":[<10 annual
@@ -79,9 +77,10 @@ Placeholders mark where your evidence-based numbers go; nothing here is a defaul
 Start from the COMPUTED FROM REPORTED FILINGS tables: year-1 growth, gross and operating margins,
 expense levels, tax rate and capital intensity begin at the reported history and year to date, and
 each departure needs evidence in scenario_rationales.
-Use 10 forecast years, the same horizon in all scenarios. Probabilities sum to 1 and each
-needs a stated basis in scenario_rationales (frequencies of comparable outcomes, the evidence
-that separates the states); symmetric weights are not a default. All rates are decimals.
+Use 10 forecast years, the same horizon in all scenarios. Probabilities default to 0.25 bear,
+0.50 base, 0.25 bull. A different split needs "weights_basis": evidence [S#] that makes one state
+more likely than the default; without it Python sets the default. Never cite frequencies, base
+rates or historical patterns the evidence does not contain. All rates are decimals.
 The RATE CONVENTION FOR THIS RUN, stated after these instructions, says whether to give
 scenario wacc and terminal_growth.
 Keep each rationale under 100 words. Do not reproduce historical actuals, cash/debt
@@ -92,9 +91,9 @@ incremental revenue / sales-to-capital reinvestment. Maintenance investment offs
 D&A; GAAP EBIT already expenses SBC, R&D and operating rent. Do not deduct those
 again. Explicitly justify growth/margin fade, capital efficiency, tax, WACC,
 terminal growth and terminal ROIC. Terminal reinvestment is g/ROIC of NOPAT;
-explain a material forecast-to-terminal capital-intensity transition. A terminal ROIC above the
-market's long-run return on new capital (about 15-17% on capital) is a claim of durable advantage
-that needs evidence about returns on new investment, not the average return on existing assets.
+explain a material forecast-to-terminal capital-intensity transition. Terminal return on new
+capital is a house convention that Python sets (15%, about the market's long-run return on new
+capital); the memo shows the value at the terminal discount rate and at 25% beside it.
 Optional counterfactuals map names to base-scenario forecast overrides (the same horizon).
 They are separate diagnostic cases, never probability weights or reported facts; Python computes
 their values. A plausible competing market-pricing case can be included without claiming its
@@ -198,8 +197,8 @@ computed output, or not computed","memo_handles_it":"yes"|"partly"|"no"},"gap_ex
 "severity":"blocker"|"major"|"minor","rule":"the quality-standard rule ID the defect breaks, such as M3","issue":"precise defect and location",
 "source_refs":["S1"],"current_excerpt":"one contiguous verbatim quote from the CURRENT draft, at most 1200 characters, no added quotation marks or ellipses; for an omission, the heading where the content belongs","fix":"specific correction or evidence needed"}]}.
 Findings are unresolved; use revise if any blocker/major exists. Use pass only when no material
-finding remains. If memo_handles_it or gap_explained is not "yes", include a blocker or major finding
-for it. Severity follows the computed value effect: blocker when it changes the conclusion or the
+finding remains. memo_handles_it and gap_explained are recorded for the reader; raise a finding only
+for a defect under a named rule. Severity follows the computed value effect: blocker when it changes the conclusion or the
 main source of the difference between value and price; minor when under 2% of base value. Do not manufacture defects to fill a quota, and verify every accusation
 against the actual draft. Valid source IDs alone do not prove a claim is supported.'''
 
@@ -1653,6 +1652,7 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
                locked['discount_rate'].get('term_structure')=='glide_to_market_v1') or 'valuation_timing' in locked)
     if apply_conventions or opted_in:
         convention_notes=_pin_market_conventions(locked,sources,reported,valuation_day,changes)
+        convention_notes=[*convention_notes,*_pin_house_conventions(locked,sources,changes)]
     else:
         convention_notes=['This supplied plan keeps its own rate and timing conventions; the market-consistent rate path '
                           'and valuation-date stub apply only when a plan opts in with discount_rate.term_structure or valuation_timing.']
@@ -1718,6 +1718,49 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
          'Annual year-end cash flows are used without an interim balance-sheet roll-forward or stub-period adjustment. ')+
         ' '.join(convention_notes))
     return locked,changes
+
+
+# House conventions Python sets on every plan built under the current
+# conventions (owner choices, 2026-11-15). The plan author picked 25% terminal
+# return for both Apple and Microsoft, the largest single sensitivity in both
+# memos, and same-evidence plans differed by up to 4% from weights alone.
+HOUSE_TERMINAL_ROIC = .15
+DEFAULT_WEIGHTS = {'bear': .25, 'base': .50, 'bull': .25}
+
+
+def _pin_house_conventions(locked, sources, changes):
+    """Terminal return on new capital and scenario weights follow the house rules.
+
+    Weights other than 25/50/25 stand only with a weights_basis of at least 40
+    characters citing sources in the evidence.
+    """
+    notes=[]
+    scenarios=locked.get('scenarios') if isinstance(locked.get('scenarios'),dict) else {}
+    moved=[]
+    for name,scenario in scenarios.items():
+        if isinstance(scenario,dict) and scenario.get('terminal_roic')!=HOUSE_TERMINAL_ROIC:
+            changes.append({'field':f'scenarios.{name}.terminal_roic','previous':scenario.get('terminal_roic'),
+                            'pinned':HOUSE_TERMINAL_ROIC,'source_refs':[],
+                            'reason':'terminal return on new capital is the house convention'})
+            scenario['terminal_roic']=HOUSE_TERMINAL_ROIC
+            moved.append(name)
+    if moved:
+        notes.append(f'Terminal return on new capital is the house {HOUSE_TERMINAL_ROIC:.0%} in every scenario; the '
+                     'convention panel shows the value at the terminal discount rate and at 25%.')
+    known={source.get('id') for source in sources if isinstance(source,dict)}
+    basis=locked.get('weights_basis')
+    cited=re.findall(r'\[(S\d+)\]',basis) if isinstance(basis,str) else []
+    supported=isinstance(basis,str) and len(basis.strip())>=40 and bool(cited) and all(ref in known for ref in cited)
+    weights={name:(scenarios.get(name) or {}).get('probability') for name in DEFAULT_WEIGHTS}
+    if set(scenarios)==set(DEFAULT_WEIGHTS) and not supported and any(
+            not isinstance(weights[name],(int,float)) or abs(weights[name]-DEFAULT_WEIGHTS[name])>1e-9 for name in DEFAULT_WEIGHTS):
+        for name,weight in DEFAULT_WEIGHTS.items():
+            changes.append({'field':f'scenarios.{name}.probability','previous':weights[name],'pinned':weight,'source_refs':[],
+                            'reason':'scenario weights default to 25/50/25 without a cited weights_basis'})
+            scenarios[name]['probability']=weight
+        locked.pop('weights_basis',None)
+        notes.append('Scenario weights are the house default of 25/50/25; the plan gave no cited basis for another split.')
+    return notes
 
 
 def _history_rows(sources):
@@ -2159,8 +2202,8 @@ def computed_summary(plan, result):
         if cannot:
             attribution+=(' Inputs that cannot, within the values the engine accepts: '+
                           ', '.join(names.get(row['input'],row['label']) for row in cannot)+'.')
-        attribution+=(' These are alternatives and the inputs interact, so the difference has one cause only when one input '
-                      'alone can close it.' if len(closes)!=1 else ' Only this input alone can close the difference.')
+        attribution+=(' These are alternatives; the inputs interact.' if len(closes)!=1 else
+                      ' Only this input alone can close the difference.')
         lines+=['',attribution]
     panel=[row for row in ((result.get('convention_panel') or {}).get('rows') or [])
            if row.get('kind')=='convention' and row.get('status')=='calculated' and row.get('dollar_delta') is not None]
@@ -2922,9 +2965,9 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'the last displayed digit and context labelled as unverified are never material; style preferences are '
                 'not findings. Check: (1) every figure in the prose against the computed summary, the computed tables, the '
                 'valuation output or the cited source, and every comparison with the price by arithmetic; (2) that the '
-                'conclusion states which inputs alone can and cannot bring value to the price as the computed sentence '
-                'does, with the implied return, and that no section contradicts that account (explaining why the house '
-                'forecast differs from what the price requires is the variant view, not a different attribution); (3) that company facts rest on primary sources and unverified '
+                'memo does not contradict the computed account of which inputs alone can and cannot bring value to the '
+                'price (explaining why the house forecast differs from what the price requires is the variant view, not '
+                'a contradiction; the conclusion need not restate the account); (3) that company facts rest on primary sources and unverified '
                 'excerpts are labelled context; (4) that the strongest sourced opposing case is answered with evidence; '
                 '(5) that no trading-layer language appears; (6) that convention rows are never added together; (7) that '
                 'repurchase, multiple and monitoring statements use the computed diagnostics and their fixed inputs. A '
@@ -3111,7 +3154,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             '\nEvidence:\n'+context+'\nCurrent memo (verify allegations against this exact text):\n'+memo+'\nCurrent forecast proposal:\n'+json.dumps({k:plan[k] for k in
                 ('assumptions_label','scenario_rationales','scenarios','operating_model','discount_rate','monitoring',
                  'counterfactuals','calibration_comparisons','forecast_periods','repurchase_tests',
-                 'margin_continuity_basis','capital_efficiency_basis','valuation_timing') if k in plan})+
+                 'margin_continuity_basis','capital_efficiency_basis','weights_basis','valuation_timing') if k in plan})+
             '\nLocked actuals (reference only; omit from your proposal):\n'+json.dumps(plan.get('actuals',{}))+
             '\nReported operating lines (reference for year-1 continuity):\n'+
             json.dumps((plan.get('reported_inputs') or {}).get('operating_reference'))+
@@ -3212,7 +3255,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 adjudication={'finding_dispositions':dispositions,
                               'accepted_proposal':{k:copy.deepcopy(plan[k]) for k in
                                   ('assumptions_label','scenario_rationales','scenarios','operating_model','discount_rate',
-                                   'margin_continuity_basis','capital_efficiency_basis','valuation_timing','counterfactuals','calibration_comparisons',
+                                   'margin_continuity_basis','capital_efficiency_basis','weights_basis','valuation_timing','counterfactuals','calibration_comparisons',
                                    'monitoring','repurchase_tests') if k in plan}}
                 if omitted:
                     adjudication['omitted_sections']=omitted

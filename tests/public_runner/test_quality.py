@@ -347,11 +347,11 @@ class AssessmentFindingTests(unittest.TestCase):
                 'central_weakness': {'claim': 'Terminal growth below the rate the ERP assumes.',
                                      'computed_effect': '+25 per share', 'memo_handles_it': handles}}
 
-    def test_an_unhandled_central_weakness_becomes_a_major_finding(self):
+    def test_an_unhandled_central_weakness_is_recorded_for_the_reader_not_a_finding(self):
+        # Python states which inputs can close the gap; every assessment major in
+        # the 2026-11-14/15 runs was refuted or induced by the attribution wording.
         from investmentideas.quality import assessment_findings
-        rows = assessment_findings(self.review())
-        self.assertEqual([(row['id'], row['severity']) for row in rows], [('central-weakness-unhandled', 'major')])
-        self.assertIn('+25 per share', rows[0]['issue'])
+        self.assertEqual(assessment_findings(self.review()), [])
 
     def test_no_extra_finding_when_handled_or_already_material(self):
         from investmentideas.quality import assessment_findings
@@ -360,8 +360,7 @@ class AssessmentFindingTests(unittest.TestCase):
 
     def test_each_answer_counts_on_its_own(self):
         from investmentideas.quality import assessment_findings
-        rows = assessment_findings({'verdict': 'pass', 'findings': [], 'gap_explained': 'no'})
-        self.assertEqual([row['id'] for row in rows], ['central-weakness-unhandled'])
+        self.assertEqual(assessment_findings({'verdict': 'pass', 'findings': [], 'gap_explained': 'no'}), [])
         self.assertEqual(assessment_findings({'verdict': 'pass', 'findings': [], 'gap_explained': 'yes'}), [])
 
     def test_a_missing_assessment_is_recorded_without_forcing_a_revision(self):

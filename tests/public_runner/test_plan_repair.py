@@ -22,7 +22,7 @@ plan, inputs = full_pipeline.plan, underwriting.inputs
 
 def invalid_plan():
     value = plan()
-    value['scenarios']['base']['probability'] = .9  # Probabilities no longer sum to one.
+    value['scenarios']['base']['sales_to_capital'] = 0  # Not a valid capital efficiency.
     return value
 
 
@@ -103,7 +103,7 @@ class PlanRepairTests(unittest.TestCase):
     def test_repairs_carry_every_earlier_rejection_so_a_fix_is_not_undone(self):
         first, second = invalid_plan(), invalid_plan()
         second['scenarios']['base']['terminal_growth'] = .5  # A different defect: growth above WACC.
-        second['scenarios']['base']['probability'] = .5
+        second['scenarios']['base']['sales_to_capital'] = plan()['scenarios']['base']['sales_to_capital']
         ScriptedRouter.responses = [first, second, plan()]
         with tempfile.TemporaryDirectory() as directory:
             pipeline.run('AAPL', 'synthetic', directory=directory)
@@ -270,7 +270,7 @@ class ModelCorrectionRepairTests(unittest.TestCase):
 
     def test_an_invalid_correction_is_repaired_and_then_valued(self):
         broken = corrected_plan()
-        broken['scenarios']['base']['probability'] = .9
+        broken['scenarios']['base']['sales_to_capital'] = 0
         CorrectionRouter.responses = [broken, corrected_plan()]
         with tempfile.TemporaryDirectory() as directory:
             folder = pipeline.run('AAPL', 'synthetic', directory=directory)
@@ -283,7 +283,7 @@ class ModelCorrectionRepairTests(unittest.TestCase):
 
     def test_a_correction_that_never_validates_leaves_the_prior_plan_and_says_so(self):
         broken = corrected_plan()
-        broken['scenarios']['base']['probability'] = .9
+        broken['scenarios']['base']['sales_to_capital'] = 0
         CorrectionRouter.responses = [copy.deepcopy(broken) for _ in range(pipeline.PLAN_REPAIRS + 1)]
         with tempfile.TemporaryDirectory() as directory:
             folder = pipeline.run('AAPL', 'synthetic', directory=directory)

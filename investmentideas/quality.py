@@ -355,8 +355,8 @@ RUBRIC_RULES = (
     ('M2', 'major', 'one-at-a-time rows added together or called cumulative'),
     ('M3', 'major', 'a number that is neither in the evidence, nor in the computed output, nor a shown calculation '
                     'from cited figures'),
-    ('M4', 'major', 'a conclusion that names a different driver of the gap to price than the computed tables show, '
-                    'or leaves the central weakness or the gap to price unexplained'),
+    ('M4', 'major', 'a statement that contradicts the computed account of which inputs alone can and cannot bring '
+                    'value to the price'),
     ('M5', 'major', 'a material claim contradicted by primary evidence in the run'),
     ('M6', 'major', 'a model output cited to a filing or source as if reported'),
     ('N1', 'minor', 'rounding within the last displayed digit'),
@@ -391,6 +391,10 @@ _SCALES = {'%': (1e-2, 1), 'points': (1e-2, 1), 'point': (1e-2, 1), 'pts': (1e-2
            'percentage points': (1e-2, 1), 'percentage point': (1e-2, 1), 'bps': (1e-4, 1), 'bp': (1e-4, 1), 'billion': (1e9, 1e3, 1), 'bn': (1e9, 1e3, 1),
            'b': (1e9, 1e3, 1), 'million': (1e6, 1), 'mm': (1e6, 1), 'm': (1e6, 1), 'trillion': (1e12, 1e6, 1e3, 1),
            'x': (1,), '×': (1,)}
+# Prose that assigns the gap to price a cause; Python states which inputs can close it.
+_CAUSE = re.compile(r'\b(?:gap|difference|disagreement|divergence|discount to the price|premium to the price)\b'
+                    r'[^.;]{0,90}?\b(?:primarily|principally|almost entirely|mainly|largely|rests? (?:on|in)|lies? in|'
+                    r'sits? in|is driven by|driven by|explained by|attributable to)\b', re.I)
 _ADDITIVE = re.compile(r'\b(?:together|combined|in total|cumulative(?:ly)?|add up|sum of|more than the entire|account for (?:all|the entire|more than))\b', re.I)
 _PANEL = re.compile(r'\b(?:convention|panel|step|one[- ]at[- ]a[- ]time|terminal return|rate path)\b', re.I)
 
@@ -492,7 +496,7 @@ def prereview_checks(memo, sources, computed=()):
         body = body.replace(summary.group(0), '')
     tiers = {source.get('id'): source.get('source_tier') for source in sources if isinstance(source, dict)}
     primary_pool, unverified_pool, house_pool = trace_pools(sources, computed)
-    untraced, unlabelled, additive, unlabelled_claims, cite_primary = [], [], [], [], []
+    untraced, unlabelled, additive, unlabelled_claims, cite_primary, causes = [], [], [], [], [], []
     for sentence in re.split(r'(?<=[.!?])\s+|\n+', body):
         line = sentence.strip()
         if not line or line.startswith('#'):
@@ -500,6 +504,8 @@ def prereview_checks(memo, sources, computed=()):
         cited = set(re.findall(r'S\d+', ' '.join(re.findall(r'\[([^\]]*S\d[^\]]*)\]', line))))
         if _ADDITIVE.search(line) and _PANEL.search(line):
             additive.append(line[:300])
+        if _CAUSE.search(line):
+            causes.append(line[:300])
         for display, number, decimals, unit in _figures(line):
             if _traced(number, decimals, unit, primary_pool):
                 if (cited and all(tiers.get(ref) in UNVERIFIED_SOURCE_TIERS for ref in cited) and
@@ -528,6 +534,11 @@ def prereview_checks(memo, sources, computed=()):
         add('cite-primary-source', 'minor', f'{len(cite_primary)} figures are cited only to unverified excerpts although '
             'a primary source or the computed tables contain them.',
             'Cite the primary source or computed table that contains each figure.', cite_primary)
+    if causes:
+        add('gap-cause-wording', 'minor', 'The prose assigns the difference between value and price a cause; Python '
+            'states which inputs alone can and cannot close it.',
+            'Remove the attribution or replace it with a reference to the computed account in the summary.',
+            [('', text) for text in causes])
     if additive:
         add('convention-rows-added', 'minor', 'Convention or one-at-a-time rows are described as adding up or combining.',
             'State each row separately; rows are alternatives and are never added together.', [('', text) for text in additive])
@@ -553,19 +564,11 @@ def assessment_findings(review):
                          'The reviewer did not state the central weakness of the conclusion and whether the memo '
                          'explains the difference between value and price in the required form.',
                          'Request a review that states both.')]
-    if any(item.get('severity') in {'blocker', 'major'} for item in review.get('findings', [])):
-        return []
-    handles = weakness['memo_handles_it'] if weakness else 'not stated'
-    # Each answer counts on its own: a "no" on the gap is not excused by a
-    # weakness statement that was malformed or left out.
-    if handles in {'yes', 'not stated'} and explained in {'yes', None}:
-        return []
-    detail = (f" Central weakness: {weakness['claim']} Computed effect: {weakness['computed_effect']}." if weakness else '')
-    return [dict(_finding('central-weakness-unhandled', 'major',
-                          f"The reviewer judged that the memo handles its central weakness: {handles}; and explains the "
-                          f"difference between value and price: {explained or 'not stated'}.{detail}",
-                          'Address this weakness in the memo using its computed value effect, and attribute the difference '
-                          'between value and price to computed steps.'), rule='M4')]
+    # Both answers are recorded for the reader and no longer become a major
+    # finding: Python states which inputs can close the gap, and every
+    # assessment major in the 2026-11-14/15 runs was refuted or induced by
+    # the attribution wording (investigation, 2026-11-15).
+    return []
 
 
 def _body(memo):

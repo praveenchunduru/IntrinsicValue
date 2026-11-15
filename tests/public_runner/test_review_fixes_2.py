@@ -194,15 +194,15 @@ class CorrectionStageTests(unittest.TestCase):
 
     def test_the_memo_author_gets_the_plan_that_was_valued(self):
         broken = plan_repair.corrected_plan()
-        broken['scenarios']['base']['probability'] = .9
+        broken['scenarios']['base']['sales_to_capital'] = 0
         state, response = self.run_once([broken, plan_repair.corrected_plan()])
-        self.assertEqual(response['accepted_proposal']['scenarios']['base']['probability'],
-                         state['plan']['scenarios']['base']['probability'])
-        self.assertEqual(response['original_proposal']['scenarios']['base']['probability'], .9)
+        self.assertEqual(response['accepted_proposal']['scenarios']['base']['sales_to_capital'],
+                         state['plan']['scenarios']['base']['sales_to_capital'])
+        self.assertEqual(response['original_proposal']['scenarios']['base']['sales_to_capital'], 0)
 
     def test_a_rejected_correction_sends_no_rejected_forecast(self):
         broken = plan_repair.corrected_plan()
-        broken['scenarios']['base']['probability'] = .9
+        broken['scenarios']['base']['sales_to_capital'] = 0
         state, response = self.run_once([copy.deepcopy(broken) for _ in range(pipeline.PLAN_REPAIRS + 1)])
         self.assertNotIn('scenarios', response)
         self.assertNotIn('accepted_proposal', response)
@@ -215,7 +215,7 @@ class CorrectionStageTests(unittest.TestCase):
 
     def test_an_unchanged_answer_during_repair_is_honoured(self):
         broken = plan_repair.corrected_plan()
-        broken['scenarios']['base']['probability'] = .9
+        broken['scenarios']['base']['sales_to_capital'] = 0
         state, response = self.run_once([broken, {'unchanged': True, 'reason': 'Findings are prose only',
                                                   'finding_dispositions': {'F1': 'memo_only'}}])
         calls = [stage for stage in plan_repair.CorrectionRouter.calls if stage.startswith('model_response')]
@@ -604,12 +604,13 @@ class GapAttributionTests(unittest.TestCase):
         solved = [row for row in rows if row['status'] == 'solved']
         self.assertIn('Inputs that alone can bring the base value to the price: ', summary)
         if len(solved) != 1:
-            self.assertIn('one cause only when one input alone can close it', summary)
+            self.assertIn('These are alternatives; the inputs interact.', summary)
         for row in [row for row in rows if row['status'] == 'not_reachable']:
             self.assertIn('Inputs that cannot', summary)
 
     def test_sections_and_review_use_the_computed_attribution(self):
-        self.assertIn('computed sentence on which inputs alone can and cannot bring', pipeline.SECTIONS)
+        self.assertIn('which inputs alone can and cannot bring value to the price', pipeline.SECTIONS)
+        self.assertIn('do not assign the\ndifference between value and price to causes', pipeline.SECTIONS)
         self.assertNotIn('Say plainly whether the', pipeline.SECTIONS)
         self.assertIn('Scenario drivers are house assumptions', pipeline.SECTIONS)
 
@@ -643,3 +644,44 @@ class TracedFigureRefutationTests(unittest.TestCase):
         self.assertEqual((other['amount'], other['price']), (40_000_000_000, 150.0))
         self.assertEqual(len(changes), 1)
         self.assertIn('fiscal 2026', notes[0])
+
+
+class HouseConventionPinTests(unittest.TestCase):
+    def test_terminal_return_is_the_house_rule_and_weights_default_without_a_cited_basis(self):
+        value = plan()
+        value['scenarios']['base']['terminal_roic'] = .25
+        value['scenarios']['bear']['probability'], value['scenarios']['bull']['probability'] = .2, .3
+        changes = []
+        notes = pipeline._pin_house_conventions(value, [{'id': 'S1'}], changes)
+        self.assertTrue(all(s['terminal_roic'] == pipeline.HOUSE_TERMINAL_ROIC for s in value['scenarios'].values()))
+        self.assertEqual({n: s['probability'] for n, s in value['scenarios'].items()}, pipeline.DEFAULT_WEIGHTS)
+        self.assertEqual(len(notes), 2)
+        self.assertIn('scenarios.base.terminal_roic', [c['field'] for c in changes])
+
+    def test_a_cited_weights_basis_keeps_the_plans_split(self):
+        value = plan()
+        for name, weight in (('bear', .2), ('base', .5), ('bull', .3)):
+            value['scenarios'][name]['probability'] = weight
+        value['weights_basis'] = 'The signed contract backlog makes the bull path more likely than the bear path [S1].'
+        pipeline._pin_house_conventions(value, [{'id': 'S1'}], [])
+        self.assertEqual(value['scenarios']['bull']['probability'], .3)
+        value['weights_basis'] = 'The signed contract backlog makes the bull path more likely than the bear path [S9].'
+        pipeline._pin_house_conventions(value, [{'id': 'S1'}], [])
+        self.assertEqual(value['scenarios']['bull']['probability'], .25)
+
+    def test_the_panel_shows_25_percent_beside_the_house_rule(self):
+        value = plan()
+        for scenario in value['scenarios'].values():
+            scenario['terminal_roic'] = .15
+        rows = {row['name']: row for row in valuation.evaluate(value)['convention_panel']['rows']}
+        self.assertEqual(rows['terminal_return_25_percent']['status'], 'calculated')
+        self.assertEqual(rows['terminal_return_15_percent']['status'], 'not_applicable')
+
+
+class CauseWordingTests(unittest.TestCase):
+    def test_prose_that_assigns_the_gap_a_cause_is_flagged(self):
+        from investmentideas import quality
+        memo = '# T\n\n## (1) Conclusion\nThe gap to price rests principally on the operating forecast.\n'
+        self.assertIn('gap-cause-wording', [f['id'] for f in quality.prereview_checks(memo, [], ())])
+        calm = '# T\n\n## (1) Conclusion\nThe house concludes the value is below the price.\n'
+        self.assertNotIn('gap-cause-wording', [f['id'] for f in quality.prereview_checks(calm, [], ())])
