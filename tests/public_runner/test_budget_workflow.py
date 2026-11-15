@@ -87,6 +87,8 @@ class FullContractTransport:
                 findings=[{'id':'F1','severity':'major','issue':'Synthetic fixture needs an explicit monitoring clarification',
                     'source_refs':['S4'],'current_excerpt':self.excerpt,'fix':'Clarify the dated monitoring condition'}]
             content=json.dumps({'verdict':'revise' if findings else 'pass','findings':findings})
+        elif prompt.startswith('Check each review finding'):
+            content=json.dumps({'checks':[]})
         elif prompt.startswith('Correct only the problems listed below'):
             content=json.dumps({'edits':[]})
         elif prompt.startswith('Investigate '):
@@ -326,3 +328,39 @@ class FixStageTests(unittest.TestCase):
         self.assertFalse(any(p['messages'][1]['content'].startswith('Correct only the problems listed below')
                              for p in fixture.requests))
         self.assertNotIn('draft_check_fix_0', [row['stage'] for row in state['ledger']])
+
+
+class RefutingCheckTransport(FullContractTransport):
+    """The finding check refutes the reviewer's only major."""
+
+    def transport(self, url, *, key=None, payload=None, timeout=90):
+        response = super().transport(url, key=key, payload=payload, timeout=timeout)
+        if url.endswith('/chat/completions') and payload['messages'][1]['content'].startswith('Check each review finding'):
+            response['choices'][0]['message']['content'] = json.dumps({'checks': [
+                {'id': 'F1', 'upheld': False, 'reason': 'The draft already states the dated monitoring condition.'}]})
+        return response
+
+
+class FindingCheckTests(unittest.TestCase):
+    def test_a_refuted_major_costs_no_revision_and_is_shown_to_the_reader(self):
+        fixture = RefutingCheckTransport(revisions=1)
+        with tempfile.TemporaryDirectory() as directory, fixture.installed():
+            folder = pipeline.run('AAPL', 'synthetic-key', directory=directory)
+            state = json.loads((folder/'state.json').read_text())
+            memo = (folder/'memo.md').read_text()
+        stages = [row['stage'] for row in state['ledger']]
+        self.assertIn('finding_check_0', stages)
+        self.assertNotIn('revise_1', stages)
+        self.assertTrue(state['complete'])
+        record = state['review_history'][-1]
+        self.assertEqual(record['verdict'], 'pass')
+        self.assertEqual([f['id'] for f in record['finding_check']['refuted']], ['F1'])
+        self.assertIn('not upheld on a second check', memo)
+
+    def test_an_upheld_major_still_drives_the_revision(self):
+        fixture = FullContractTransport(revisions=1)
+        with tempfile.TemporaryDirectory() as directory, fixture.installed():
+            folder = pipeline.run('AAPL', 'synthetic-key', directory=directory)
+            state = json.loads((folder/'state.json').read_text())
+        stages = [row['stage'] for row in state['ledger']]
+        self.assertLess(stages.index('finding_check_0'), stages.index('revise_1'))

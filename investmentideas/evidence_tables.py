@@ -48,6 +48,9 @@ INSTANTS = {
     'inventory': ('InventoryNet',),
     'equity': ('StockholdersEquity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest'),
 }
+# Share counts the writer would otherwise subtract by hand: a live draft
+# (2026-11-14) stated Apple's net share reduction a thousand times too small.
+SHARES_OUTSTANDING = ('CommonStockSharesOutstanding',)
 SHARE_UNITS = {'shares'}
 # Average buyback price pairs a value and a share count from the same disclosure;
 # cash-flow payments can include purchases outside the program (MSFT: about a
@@ -136,6 +139,19 @@ def _instant(gaap, concepts, end, currency, as_of=None):
     return None, None
 
 
+def _share_instant(gaap, concepts, end, as_of=None):
+    """Period-end share count, blank when reported only before a later split restatement."""
+    for concept in concepts:
+        best = None
+        for unit, row in _annual_rows(gaap, concept, as_of):
+            if unit in SHARE_UNITS and 'start' not in row and row['end'] == end and (best is None or row['filed'] > best['filed']):
+                best = row
+        if best is not None:
+            split = _split_restated_after(gaap, concept, as_of)
+            return (None if split and best['filed'] < split else best['val']), concept
+    return None, None
+
+
 def _ratio(numerator, denominator):
     if numerator is None or denominator in (None, 0):
         return None
@@ -168,7 +184,7 @@ def historical_baseline(payload, years=5, as_of=None):
                     # Reported only before a later split restatement: another basis.
                     row[name] = None
                     row.setdefault('split_basis_blank', []).append(name)
-        row['average_repurchase_price'] = None
+        row['average_repurchase_price'] = row['shares_repurchased'] = None
         for value_concept, share_concept in REPURCHASE_PAIRS:
             value, _, _ = _duration(gaap, (value_concept,), period['start'], period['end'], period['currency'], as_of)
             shares, _, shares_filed = _duration(gaap, (share_concept,), period['start'], period['end'], period['currency'], as_of)
@@ -176,12 +192,16 @@ def historical_baseline(payload, years=5, as_of=None):
                 split = _split_restated_after(gaap, share_concept, as_of)
                 if not (split and shares_filed < split):
                     row['average_repurchase_price'] = value / shares
+                    row['shares_repurchased'] = shares
                     concepts.setdefault('average_repurchase_price', f'{value_concept} / {share_concept}')
                 break
         for name, options in INSTANTS.items():
             row[name], used = _instant(gaap, options, period['end'], period['currency'], as_of)
             if used:
                 concepts.setdefault(name, used)
+        row['shares_outstanding'], used = _share_instant(gaap, SHARES_OUTSTANDING, period['end'], as_of)
+        if used:
+            concepts.setdefault('shares_outstanding', used)
         if row['gross_profit'] is None and row['cost_of_revenue'] is not None:
             row['gross_profit'] = row['revenue'] - row['cost_of_revenue']
             row['gross_profit_derived'] = True
@@ -197,8 +217,18 @@ def historical_baseline(payload, years=5, as_of=None):
                                           'operating_cash_flow', 'capital_expenditure', 'depreciation_amortization',
                                           'stock_compensation', 'repurchases', 'average_repurchase_price', 'dividends',
                                           'diluted_shares', 'diluted_eps', 'inventory', 'research_and_development',
-                                          'selling_general_administrative', 'gross_profit')}
+                                          'selling_general_administrative', 'gross_profit', 'shares_outstanding',
+                                          'shares_repurchased')}
+        def change(key):
+            return row[key] - prior[key] if prior and row[key] is not None and prior[key] is not None else None
+        def growth(key):
+            # Growth from a negative or zero base has no meaning.
+            return (_ratio(change(key), prior[key]) if prior and prior[key] is not None and prior[key] > 0
+                    and row[key] is not None else None)
         item.update(
+            net_share_change=change('shares_outstanding'),
+            operating_income_growth=growth('operating_income'),
+            diluted_eps_growth=growth('diluted_eps'),
             revenue_growth=_ratio(revenue - prior['revenue'], prior['revenue']) if prior else None,
             gross_margin=_ratio(row['gross_profit'], revenue), operating_margin=_ratio(row['operating_income'], revenue),
             research_and_development_to_revenue=_ratio(row['research_and_development'], revenue),
@@ -300,20 +330,31 @@ def render_baseline(baseline, source_id=None):
                     else 'D&A/rev')
     lines = [f'Reported operating history{ref}, {currency} billions; ratios computed by Python from reported values; '
              'n/a means not reported on a comparable basis.',
-             'FY end | revenue | growth | gross margin | operating margin | R&D/rev | SG&A/rev | effective tax | '
-             f'capex/rev | {depreciation} | SBC/rev | buybacks (cash) | avg buyback price | dividends | diluted EPS']
+             'FY end | revenue | growth | gross margin | operating margin | operating income growth | R&D/rev | SG&A/rev | '
+             f'effective tax | capex/rev | {depreciation} | SBC/rev | buybacks (cash) | avg buyback price | dividends | '
+             'diluted EPS | EPS growth | shares outstanding at FY end (millions) | change in shares outstanding (millions) | '
+             'shares repurchased (millions)']
     for row in rows:
         price = row.get('average_repurchase_price')
         eps = row.get('diluted_eps')
         lines.append(' | '.join([
             row['fiscal_year_end'], _money(row['revenue']), _pct(row['revenue_growth']), _pct(row['gross_margin']),
-            _pct(row['operating_margin']), _pct(row['research_and_development_to_revenue']),
+            _pct(row['operating_margin']), _pct(row.get('operating_income_growth')),
+            _pct(row['research_and_development_to_revenue']),
             _pct(row['selling_general_administrative_to_revenue']), _pct(row['effective_tax_rate']),
             _pct(row['capital_expenditure_to_revenue']), _pct(row['depreciation_amortization_to_revenue']),
             _pct(row['stock_compensation_to_revenue']), _money(row['repurchases']),
             'n/a' if price is None else f'{price:,.2f}', _money(row['dividends']),
-            'n/a' if eps is None else f'{eps:,.2f}']))
+            'n/a' if eps is None else f'{eps:,.2f}', _pct(row.get('diluted_eps_growth')),
+            _shares(row.get('shares_outstanding')), _shares(row.get('net_share_change'), signed=True),
+            _shares(row.get('shares_repurchased'))]))
     return '\n'.join(lines)
+
+
+def _shares(value, signed=False):
+    if value is None:
+        return 'n/a'
+    return f'{value / 1e6:+,.1f}' if signed else f'{value / 1e6:,.1f}'
 
 
 def render_breakdowns(tables, source_id=None):

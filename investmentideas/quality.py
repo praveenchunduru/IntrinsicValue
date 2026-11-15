@@ -286,9 +286,16 @@ def parse_review(text, memo=None, *, anchor_embellished=False):
                         disposition = disposition.replace(opening + excerpt + closing, '')
                 if WITHDRAWN_MATERIAL_FINDING.search(disposition):
                     raise ValueError('Material review finding explicitly withdraws or requests no correction; return only unresolved findings')
+        rule = finding.get('rule')
+        if rule is not None:
+            rule = str(rule).strip().upper()
+            if rule not in RULE_SEVERITY:
+                raise ValueError('Finding rule must be one of ' + ', '.join(RULE_SEVERITY))
         identifiers.add(identifier)
         parsed = {'id': identifier, 'severity': severity, 'issue': finding['issue'].strip(),
                   'source_refs': list(dict.fromkeys(refs)), 'fix': finding['fix'].strip()}
+        if rule:
+            parsed['rule'] = rule
         if excerpt is not None:
             parsed['current_excerpt'] = excerpt
             parsed['current_excerpt_match'] = excerpt_match
@@ -298,6 +305,12 @@ def parse_review(text, memo=None, *, anchor_embellished=False):
     expected = 'revise' if any(item['severity'] in {'blocker', 'major'} for item in findings) else 'pass'
     if verdict != expected:
         raise ValueError('Review verdict contradicts its unresolved blocker/major findings')
+    # A finding is graded no higher than the rule it names; the verdict follows.
+    for item in findings:
+        cap = RULE_SEVERITY.get(item.get('rule'))
+        if cap and _SEVERITY_RANK[item['severity']] > _SEVERITY_RANK[cap]:
+            item['severity_as_reviewed'], item['severity'] = item['severity'], cap
+    verdict = 'revise' if any(item['severity'] in {'blocker', 'major'} for item in findings) else 'pass'
     parsed = {'verdict': verdict, 'findings': findings}
     # The reviewer's statement of the conclusion's central weakness is kept when
     # well formed. It is reported to the reader; it is not a finding by itself.
@@ -326,19 +339,42 @@ def _assessment_answer(text):
 # One quality standard, shared by the writer prompt, the deterministic checks and
 # the reviewer. Live reviews (2026-11-14) applied a private, moving standard and
 # never converged; the writer could not see what would be judged.
+# Each rule has an ID; a review finding names the rule it breaks and cannot be
+# graded above that rule's class. Live reviews (2026-11-14) graded wording
+# choices as major and drew different majors from the same draft.
+RUBRIC_RULES = (
+    ('B1', 'blocker', 'a quote or fact not in its cited source'),
+    ('B2', 'blocker', 'a trading-layer term (rating, target price, entry level, margin of safety, upside or downside, '
+                      'position size)'),
+    ('B3', 'blocker', 'a valuation figure that differs from the computed output'),
+    ('M1', 'major', 'a company fact or a number supported only by an unverified web excerpt, or an unverified excerpt '
+                    'used without an inline "unverified" label'),
+    ('M2', 'major', 'one-at-a-time rows added together or called cumulative'),
+    ('M3', 'major', 'a number that is neither in the evidence, nor in the computed output, nor a shown calculation '
+                    'from cited figures'),
+    ('M4', 'major', 'a conclusion that names a different driver of the gap to price than the computed tables show, '
+                    'or leaves the central weakness or the gap to price unexplained'),
+    ('M5', 'major', 'a material claim contradicted by primary evidence in the run'),
+    ('M6', 'major', 'a model output cited to a filing or source as if reported'),
+    ('N1', 'minor', 'rounding within the last displayed digit'),
+    ('N2', 'minor', 'wording, emphasis or structure'),
+    ('N3', 'minor', 'an omission that does not change the conclusion'),
+)
+RULE_SEVERITY = {rule: severity for rule, severity, _ in RUBRIC_RULES}
+_SEVERITY_RANK = {'minor': 0, 'major': 1, 'blocker': 2}
+
+
+def _rules(severity):
+    return '; '.join(f'{rule} {text}' for rule, level, text in RUBRIC_RULES if level == severity)
+
+
 RUBRIC = (
-    'Quality standard (shared by the writer, the automatic checks and the reviewer). '
-    'Blocker: a quote or fact not in its cited source; a trading-layer term (rating, target price, entry level, '
-    'margin of safety, upside or downside, position size); a valuation figure that differs from the computed output. '
-    'Major: a company fact or a number supported only by an unverified web excerpt, or an unverified excerpt used '
-    'without an inline "unverified" label; one-at-a-time rows added together or called cumulative; a number that is '
-    'neither in the evidence, nor in the computed output, nor a shown calculation from cited figures; a conclusion '
-    'that names a different driver of the gap to price than the computed tables show; a material claim contradicted '
-    'by primary evidence in the run; a model output cited to a filing or source as if reported. Minor: rounding within the last displayed digit; wording, emphasis or structure; '
-    'an omission that does not change the conclusion. A house or computed figure that the prose names as such is '
-    'attributed, even when the sentence also cites the reported figure it is compared with. Rounding is never material; unverified excerpts used only for '
-    'attributed outside views, consensus or guidance context are not material, but a company fact or number supported '
-    'only by an unverified excerpt is, whatever its label.')
+    'Quality standard (shared by the writer, the automatic checks and the reviewer). Each review finding names the '
+    'rule it breaks. Blocker: ' + _rules('blocker') + '. Major: ' + _rules('major') + '. Minor: ' + _rules('minor') +
+    '. A house or computed figure that the prose names as such is attributed, even when the sentence also cites the '
+    'reported figure it is compared with. Rounding is never material; unverified excerpts used only for attributed '
+    'outside views, consensus or guidance context are not material, but a company fact or number supported only by '
+    'an unverified excerpt is, whatever its label.')
 
 
 # Free checks run on a draft before the paid review. They trace every figure in
@@ -503,11 +539,11 @@ def assessment_findings(review):
     if handles in {'yes', 'not stated'} and explained in {'yes', None}:
         return []
     detail = (f" Central weakness: {weakness['claim']} Computed effect: {weakness['computed_effect']}." if weakness else '')
-    return [_finding('central-weakness-unhandled', 'major',
-                     f"The reviewer judged that the memo handles its central weakness: {handles}; and explains the "
-                     f"difference between value and price: {explained or 'not stated'}.{detail}",
-                     'Address this weakness in the memo using its computed value effect, and attribute the difference '
-                     'between value and price to computed steps.')]
+    return [dict(_finding('central-weakness-unhandled', 'major',
+                          f"The reviewer judged that the memo handles its central weakness: {handles}; and explains the "
+                          f"difference between value and price: {explained or 'not stated'}.{detail}",
+                          'Address this weakness in the memo using its computed value effect, and attribute the difference '
+                          'between value and price to computed steps.'), rule='M4')]
 
 
 def _body(memo):

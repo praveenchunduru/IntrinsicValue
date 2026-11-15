@@ -518,3 +518,54 @@ class PlanSourceRuleTests(unittest.TestCase):
         source = inspect.getsource(pipeline)
         self.assertIn(pipeline.EVIDENCE_TIER_RULE, pipeline.PLAN_SOURCE_RULE)
         self.assertEqual(source.count('PLAN_FIELD_RULES+PLAN_SOURCE_RULE'), 2)
+
+
+class RuleAndCheckTests(unittest.TestCase):
+    MEMO = '# T\n\nThe base value is USD 237.23 per share.\n'
+
+    def review(self, severity, rule, verdict='revise'):
+        return json.dumps({'verdict': verdict, 'findings': [{'id': 'F1', 'severity': severity, 'rule': rule,
+            'issue': 'Wording could be tighter.', 'source_refs': [], 'current_excerpt': 'The base value is USD 237.23 per share.',
+            'fix': 'Tighten it.'}]})
+
+    def test_a_finding_is_graded_no_higher_than_its_rule(self):
+        from investmentideas import quality
+        parsed = quality.parse_review(self.review('major', 'n2'), memo=self.MEMO)
+        self.assertEqual(parsed['findings'][0]['severity'], 'minor')
+        self.assertEqual(parsed['findings'][0]['severity_as_reviewed'], 'major')
+        self.assertEqual(parsed['findings'][0]['rule'], 'N2')
+        self.assertEqual(parsed['verdict'], 'pass')
+
+    def test_an_unknown_rule_is_a_format_error(self):
+        from investmentideas import quality
+        with self.assertRaisesRegex(ValueError, 'rule must be one of'):
+            quality.parse_review(self.review('major', 'M99'), memo=self.MEMO)
+
+    def test_every_rule_is_in_the_shared_standard(self):
+        from investmentideas import quality
+        for rule, _, text in quality.RUBRIC_RULES:
+            self.assertIn(f'{rule} {text}', quality.RUBRIC)
+
+    def test_only_a_stated_refutation_removes_a_finding(self):
+        material = [{'id': 'F1'}, {'id': 'F2'}, {'id': 'F3'}]
+        raw = json.dumps({'checks': [{'id': 'F1', 'upheld': False, 'reason': 'The sentence names 17.5% as a house assumption.'},
+                                     {'id': 'F2', 'upheld': False, 'reason': ''},
+                                     {'id': 'F3', 'upheld': True, 'reason': 'Correct.'},
+                                     {'id': 'F9', 'upheld': False, 'reason': 'Unknown finding.'}]})
+        self.assertEqual(list(pipeline._refuted_findings(raw, material)), ['F1'])
+        self.assertEqual(pipeline._refuted_findings('not json', material), {})
+
+
+class SourceRegisterLabelTests(unittest.TestCase):
+    def test_unverified_sources_are_labelled_in_the_register(self):
+        sources = [{'id': 'S1', 'title': 'Annual report', 'url': 'https://sec.example/10k', 'source_tier': 'regulatory_primary'},
+                   {'id': 'S2', 'title': 'Blog post', 'url': 'https://blog.example/a', 'source_tier': 'search_excerpt_unverified'}]
+        text = pipeline._render('# T\n\nBody [S1].\n', sources, [], {}, None, {'quality_status': 'needs_review'})
+        self.assertIn('- [S1] Annual report', text)
+        self.assertIn('- [S2 unverified] Blog post', text)
+
+
+class FencedCheckTests(unittest.TestCase):
+    def test_a_fenced_check_after_analysis_is_read(self):
+        raw = 'Checking.\n```json\n' + json.dumps({'checks': [{'id': 'F1', 'upheld': False, 'reason': 'Already stated.'}]}) + '\n```'
+        self.assertEqual(pipeline._refuted_findings(raw, [{'id': 'F1'}]), {'F1': 'Already stated.'})

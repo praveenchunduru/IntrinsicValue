@@ -187,13 +187,48 @@ REVIEW_SCHEMA = '''Return ONLY {"verdict":"pass"|"revise","central_weakness":{"c
 convention that, if wrong, most changes the conclusion","computed_effect":"its value effect from the
 computed output, or not computed","memo_handles_it":"yes"|"partly"|"no"},"gap_explained":"yes"|"partly"|"no",
 "findings":[{"id":"F1",
-"severity":"blocker"|"major"|"minor","issue":"precise defect and location",
+"severity":"blocker"|"major"|"minor","rule":"the quality-standard rule ID the defect breaks, such as M3","issue":"precise defect and location",
 "source_refs":["S1"],"current_excerpt":"one contiguous verbatim quote from the CURRENT draft, at most 1200 characters, no added quotation marks or ellipses; for an omission, the heading where the content belongs","fix":"specific correction or evidence needed"}]}.
 Findings are unresolved; use revise if any blocker/major exists. Use pass only when no material
 finding remains. If memo_handles_it or gap_explained is not "yes", include a blocker or major finding
 for it. Severity follows the computed value effect: blocker when it changes the conclusion or the
 main source of the difference between value and price; minor when under 2% of base value. Do not manufacture defects to fill a quota, and verify every accusation
 against the actual draft. Valid source IDs alone do not prove a claim is supported.'''
+
+
+# A second, fresh read of every blocker or major before it costs a revision.
+# Live reviews (2026-11-14) drew different majors from one draft, and one major
+# accused a sentence of doing what it did not do. Python's own findings are
+# facts and are not re-checked.
+FINDING_CHECK = ('Check each review finding below against the draft, the evidence and the Python valuation. A finding '
+    'is upheld when its quoted text is in the draft, that text breaks the named rule of the quality standard, and the '
+    'evidence or computed output supports the accusation. Refute it only when the draft, the evidence or the computed '
+    'output plainly shows it is wrong: the draft already does what the finding asks, the quoted text does not break '
+    'the named rule, the figure is in the computed output or a primary source, or the finding asks for something the '
+    'standard does not require. When unsure, uphold it. Do not add findings or change severities. Return ONLY JSON '
+    '{"checks":[{"id":"F1","upheld":true|false,"reason":"one sentence naming the draft text, source or computed '
+    'figure that decides it"}]}.')
+FINDING_CHECK_TOKENS = 4000
+
+
+def _refuted_findings(raw, material):
+    """Finding IDs a check refuted with a stated reason. Anything unparseable or unstated is upheld."""
+    try:
+        value = _response_json(raw)[0]
+    except (ValueError, TypeError):
+        return {}
+    checks = value.get('checks') if isinstance(value, dict) else None
+    known = {finding['id'] for finding in material}
+    refuted = {}
+    for check in checks if isinstance(checks, list) else []:
+        if not isinstance(check, dict) or check.get('id') not in known:
+            continue
+        upheld = check.get('upheld')
+        reason = check.get('reason')
+        if (upheld is False or (isinstance(upheld, str) and upheld.strip().lower() == 'false')) and \
+                isinstance(reason, str) and reason.strip():
+            refuted[check['id']] = reason.strip()[:600]
+    return refuted
 
 
 # A response cut off at its limit is rejected, never used. The open-weight
@@ -787,25 +822,26 @@ def _refresh_primary_focus(folder,sources):
         # Reported history and breakdown tables are derived from the archive on
         # every run, outside source.data, so a folder collected before they
         # existed gets them without new paid research.
+        # Derived again on every run (a copy saved in source.data at collection
+        # would otherwise freeze the table at the code that collected it).
         if isinstance(source.get('data'),dict) and source['data'].get('fact_origin')=='sec_companyfacts':
-            if not source['data'].get('historical_baseline'):
-                try:
-                    baseline=historical_baseline(json.loads(raw.decode('utf-8')),
-                                                 as_of=(source['data'].get('selection') or {}).get('as_of'))
-                except (ValueError,TypeError,KeyError,AttributeError,UnicodeDecodeError):
-                    baseline=None
-                if baseline and baseline['rows'] and baseline!=source.get('historical_baseline'):
-                    source['historical_baseline']=baseline
-                    changed=True
-            continue  # Canonical JSON is audited through its structured facts, not HTML prose windows.
-        if not (isinstance(source.get('data'),dict) and source['data'].get('breakdown_tables')):
             try:
-                tables=breakdown_tables(inline_breakdown_facts(raw.decode('utf-8')))
-            except (ValueError,TypeError,KeyError,ArithmeticError,UnicodeDecodeError):
-                tables={}
-            if tables and tables!=source.get('breakdown_tables'):
-                source['breakdown_tables']=tables
+                baseline=historical_baseline(json.loads(raw.decode('utf-8')),
+                                             as_of=(source['data'].get('selection') or {}).get('as_of'))
+            except (ValueError,TypeError,KeyError,AttributeError,UnicodeDecodeError):
+                baseline=None
+            current=source.get('historical_baseline') or source['data'].get('historical_baseline')
+            if baseline and baseline['rows'] and baseline!=current:
+                source['historical_baseline']=baseline
                 changed=True
+            continue  # Canonical JSON is audited through its structured facts, not HTML prose windows.
+        try:
+            tables=breakdown_tables(inline_breakdown_facts(raw.decode('utf-8')))
+        except (ValueError,TypeError,KeyError,ArithmeticError,UnicodeDecodeError):
+            tables={}
+        if tables and tables!=source.get('breakdown_tables'):
+            source['breakdown_tables']=tables
+            changed=True
         focus=archive_focus_excerpts(raw.decode('utf-8'))
         if focus and focus!=source.get('primary_focus_excerpts'):
             # Keep derived windows outside source.data so supplemental-source
@@ -841,8 +877,9 @@ def _computed_tables(sources):
     for source in sources:
         data=source.get('data') if isinstance(source,dict) else None
         data=data if isinstance(data,dict) else {}
-        baseline=data.get('historical_baseline') or source.get('historical_baseline')
-        breakdowns=data.get('breakdown_tables') or source.get('breakdown_tables')
+        # The copy derived from the archive on this run is current; data holds the collection-time copy.
+        baseline=source.get('historical_baseline') or data.get('historical_baseline')
+        breakdowns=source.get('breakdown_tables') or data.get('breakdown_tables')
         if baseline:
             tables.append(render_baseline(baseline,source.get('id')))
         if breakdowns:
@@ -1092,9 +1129,11 @@ def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
     add('review_'+str(state['iteration']),reviewer,'Independently audit the complete memo.\n'+
         REVIEW_SCHEMA+'\nEvidence:\n'+context+'\nValuation:\n'+valuation+
         '\nDraft:\n'+(draft or state.get('current_memo','')),12000)
+    add('finding_check_'+str(state['iteration']),reviewer,FINDING_CHECK+'\nEvidence:\n'+context+'\nValuation:\n'+valuation+
+        '\nDraft:\n'+(draft or state.get('current_memo','')),FINDING_CHECK_TOKENS)
     floor = sum(row['reservation_floor_usd'] for row in stages)
     suggested=max(DEFAULT_BUDGET,float(math.ceil(floor)))
-    return {'scope':'First draft, its fix call and one review; revisions and format/forecast repairs excluded',
+    return {'scope':'First draft, its fix call, one review and its finding check; revisions and format/forecast repairs excluded',
             'basis':'Uncached UTF-8 byte reservations at maximum catalog price tiers and configured output limits. '
                     'Only currently known context is included. Future search results, synthesis, forecasts, '
                     'computed valuation and memo text can increase reservations; this floor is not a completion guarantee or predicted bill.',
@@ -1918,7 +1957,9 @@ def _with_summary(memo, plan, result):
 
 
 def _render(memo, sources, gaps, plan, result, state):
-    refs = '\n'.join(f'- [{s["id"]}] {s["title"]} — {s.get("url") or "supplied text"}; '
+    # The register carries the same tier label as the memo text.
+    refs = '\n'.join(f'- [{s["id"]}{" unverified" if s.get("source_tier") in UNVERIFIED_TIERS else ""}] '
+                     f'{s["title"]} — {s.get("url") or "supplied text"}; '
                      f'retrieved {s.get("retrieved_at","not recorded")}' for s in sources)
     unresolved = [f for r in state.get('review_history',[]) for f in r.get('findings',[])]
     # Only the latest revision's unresolved findings apply; prior findings remain
@@ -1930,6 +1971,10 @@ def _render(memo, sources, gaps, plan, result, state):
         note = ('No currently recorded material finding. This is a model assessment, not certification.'
                 if state.get('complete') else 'Review is incomplete; unresolved issues have not been determined.')
     latest = state['review_history'][-1] if state.get('review_history') else {}
+    refuted = (latest.get('finding_check') or {}).get('refuted') or []
+    if refuted:
+        note += ('\n\nRaised by the reviewer and not upheld on a second check:\n' +
+                 '\n'.join(f'- {f["severity"]}: {f["issue"]} Check: {f["check_reason"]}' for f in refuted))
     weakness = latest.get('central_weakness')
     if isinstance(weakness, dict):
         note += (f"\n\nReviewer's central weakness: {weakness['claim']} Computed effect: {weakness['computed_effect']}. "
@@ -2714,10 +2759,32 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             for finding in review['findings']:
                 if not set(finding['source_refs']).issubset(known):
                     raise RuntimeError('Reviewer cited a source outside the research snapshot')
-            combined=review['findings']+deterministic+assessment_findings(review)
-            effective='revise' if any(f.get('severity') in {'blocker','major'} for f in combined) else review['verdict']
+            # The reviewer's assessment finding is checked with its majors and kept
+            # only when no checked major survives, as before the check existed.
+            assessment=assessment_findings({**review,'findings':[]})
+            material=[f for f in review['findings']+assessment if f.get('severity') in {'blocker','major'}]
+            refuted={}
+            if material:
+                check=call(f'finding_check_{iteration}',reviewer,FINDING_CHECK+'\n'+EVIDENCE_TIER_RULE+'\n'+RUBRIC+
+                    '\nFindings:\n'+json.dumps([{key:f.get(key) for key in ('id','severity','rule','issue','current_excerpt','fix','source_refs')}
+                                                for f in material])+
+                    '\nEvidence:\n'+context+'\nValuation:\n'+valuation_context+'\nDraft:\n'+visible,tokens=FINDING_CHECK_TOKENS)
+                refuted=_refuted_findings(check,material)
+            kept=[f for f in review['findings'] if f['id'] not in refuted]
+            if any(f.get('severity') in {'blocker','major'} for f in kept):
+                assessment=[]
+            elif any(f.get('severity') in {'blocker','major'} for f in review['findings']):
+                # Every reviewer major was refuted: the reviewer's own assessment now stands on its own.
+                assessment=[f for f in assessment if f['id'] not in refuted]
+            else:
+                assessment=[f for f in assessment_findings(review) if f['id'] not in refuted]
+            combined=kept+deterministic+assessment
+            effective='revise' if any(f.get('severity') in {'blocker','major'} for f in combined) else 'pass'
             record={'iteration':iteration,'verdict':effective,'model_verdict':review['verdict'],'findings':combined,'manifest':manifest,
                     'diagnostic_scope':DIAGNOSTIC_SCOPE,'review_model':reviewer,'author_model':strong}
+            if material:
+                record['finding_check']={'model':reviewer,'checked':[f['id'] for f in material],
+                                         'refuted':[dict(f,check_reason=refuted[f['id']]) for f in material if f['id'] in refuted]}
             for key in ('central_weakness','gap_explained'):
                 if key in review:
                     record[key]=review[key]
