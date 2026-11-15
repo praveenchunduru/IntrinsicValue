@@ -20,9 +20,11 @@ import test_underwriting_integration as underwriting
 plan, inputs = full_pipeline.plan, underwriting.inputs
 
 
-def invalid_plan():
+def invalid_plan(attempt=0):
     value = plan()
     value['scenarios']['base']['sales_to_capital'] = 0  # Not a valid capital efficiency.
+    # Distinct attempts: a repair that returns the rejected plan unchanged stops the loop.
+    value['assumptions_label'] = f'House forecasts, attempt {attempt}'
     return value
 
 
@@ -57,7 +59,7 @@ class PlanRepairTests(unittest.TestCase):
         return [stage for stage in ScriptedRouter.calls if stage.startswith('valuation_plan')]
 
     def test_independent_format_defects_can_be_repaired_one_at_a_time(self):
-        ScriptedRouter.responses = [invalid_plan(), invalid_plan(), invalid_plan(), plan()]
+        ScriptedRouter.responses = [invalid_plan(0), invalid_plan(1), invalid_plan(2), plan()]
         with tempfile.TemporaryDirectory() as directory:
             folder = pipeline.run('AAPL', 'synthetic', directory=directory)
             self.assertTrue(json.loads((folder / 'state.json').read_text())['complete'])
@@ -113,7 +115,7 @@ class PlanRepairTests(unittest.TestCase):
         self.assertIn('Earlier attempts were rejected for these reasons; do not reintroduce them', ScriptedRouter.prompts[2])
 
     def test_a_plan_rejected_after_every_repair_is_discarded_so_the_next_attempt_is_fresh(self):
-        ScriptedRouter.responses = [invalid_plan() for _ in range(4)]
+        ScriptedRouter.responses = [invalid_plan(attempt) for attempt in range(4)]
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(RuntimeError, 'after 3 repairs.*fresh forecast'):
                 pipeline.run('AAPL', 'synthetic', directory=directory)
@@ -359,3 +361,14 @@ class SavedPlanResumeTests(unittest.TestCase):
                 pin.assert_not_called()
             state = json.loads(state_path.read_text())
             self.assertTrue(any('saved before the market-consistent' in gap for gap in state['gaps']))
+
+
+class IdenticalRepairTests(PlanRepairTests):
+    def test_a_repair_that_returns_the_rejected_plan_stops_without_further_paid_repairs(self):
+        ScriptedRouter.responses = [invalid_plan(0), invalid_plan(0), plan()]
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, 'returned the rejected plan unchanged'):
+                pipeline.run('AAPL', 'synthetic', directory=directory)
+            state = json.loads(next(iter(Path(directory).glob('AAPL/full-*/state.json'))).read_text())
+        self.assertEqual(self.plan_calls(), ['valuation_plan', 'valuation_plan_repair'])
+        self.assertIn('the repair returned the rejected plan unchanged', state['plan_repair_reasons'])

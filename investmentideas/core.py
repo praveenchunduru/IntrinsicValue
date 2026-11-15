@@ -24,10 +24,12 @@ BASE = 'https://openrouter.ai/api/v1'
 # slot: a same-evidence Microsoft test (2026-11-15) found the then-default Sonnet 4.6
 # writer both dearer and weaker than the newer Claude models.
 MODELS = {'economy': ('deepseek/deepseek-v4.1-flash-1017', 'deepseek/deepseek-v4-pro-0813'),
-          'balanced': ('anthropic/claude-haiku-5.5', 'anthropic/claude-opus-5.5')}
+          'balanced': ('anthropic/claude-haiku-5.5', 'anthropic/claude-opus-5.5'),
+          # Pipeline testing only: the whole flow for well under a dollar. Not for research.
+          'dev': ('anthropic/claude-haiku-5.5', 'anthropic/claude-haiku-5.5')}
 # Full-memo reviewers come from a different model family than the author, so a
 # review is not the author's own judgment returned to it. --review-model overrides.
-REVIEWERS = {'economy': 'moonshotai/kimi-k3.1-pro', 'balanced': 'openai/gpt-5.6-sol'}
+REVIEWERS = {'economy': 'moonshotai/kimi-k3.1-pro', 'balanced': 'openai/gpt-5.6-sol', 'dev': 'openai/gpt-5.6-luna'}
 # Extended thinking for the draft. OpenRouter counts reasoning inside the
 # output limit, so the budget is added on top of the stage's output tokens.
 # The budget is a target, not a cap: a live plan call (2026-11-14) spent all
@@ -363,7 +365,9 @@ class Router:
         # Anthropic extended thinking does not accept a custom temperature.
         if (not isinstance(parameters, list) or 'temperature' in parameters) and not (
                 reasoning is not None and model.startswith('anthropic/')):
-            payload['temperature'] = 0.2
+            # The forecast plan is sampled at zero where the model allows it:
+            # same-evidence plans differed by up to 17% in gross value movement.
+            payload['temperature'] = 0.0 if stage.startswith('valuation_plan') else 0.2
         if (isinstance(parameters,list) and 'response_format' in parameters and
                 stage.startswith(('valuation_plan','model_response','review_'))):
             payload['response_format'] = {'type':'json_object'}

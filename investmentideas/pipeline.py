@@ -2791,6 +2791,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 break
             except (ValueError,KeyError,TypeError,AttributeError) as exc:
                 failures.append(str(exc))
+                state['plan_repair_reasons']=list(failures)
                 if repair==PLAN_REPAIRS:
                     # A saved response is replayed on resume. Keeping a plan
                     # that cannot validate would stop every later attempt at
@@ -2801,12 +2802,23 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                     checkpoint()
                     raise RuntimeError(f'Valuation plan remains invalid after {PLAN_REPAIRS} repairs: '+str(exc)+
                                        '. The rejected plan was discarded; run the same command again for a fresh forecast') from None
+                rejected=text
                 text=call('valuation_plan_repair'+('' if repair==0 else f'_{repair+1}'),strong,prompt+'\nRejected JSON:\n'+text+
                           '\nRepair this precise validation failure without inventing actuals: '+str(exc)+
                           ('\nEarlier attempts were rejected for these reasons; do not reintroduce them: '+
                            ' | '.join(failures[:-1]) if failures[:-1] else '')+
                           '\nReturn only the complete corrected JSON object, with no analysis before or after it.'+PLAN_FIELD_RULES,tokens=12000,
                           prefix=_evidence_prefix(context))
+                if text.strip()==rejected.strip():
+                    # A repair that returns the rejected plan unchanged will not
+                    # pass on a further paid attempt (Microsoft replay, 2026-11-15).
+                    failures.append('the repair returned the rejected plan unchanged')
+                    state['plan_repair_reasons']=list(failures)
+                    for name in [name for name in state['stages'] if name.startswith('valuation_plan')]:
+                        state['stages'].pop(name)
+                    checkpoint()
+                    raise RuntimeError('Valuation plan repair returned the rejected plan unchanged: '+str(exc)+
+                                       '. The rejected plan was discarded; run the same command again for a fresh forecast')
         checkpoint()
     if not state['plan'].get('unavailable'):
         current=not state.get('provided_forecast_digest') and state.get('plan_conventions')==PLAN_CONVENTIONS
