@@ -612,3 +612,34 @@ class GapAttributionTests(unittest.TestCase):
         self.assertIn('computed sentence on which inputs alone can and cannot bring', pipeline.SECTIONS)
         self.assertNotIn('Say plainly whether the', pipeline.SECTIONS)
         self.assertIn('Scenario drivers are house assumptions', pipeline.SECTIONS)
+
+
+class TracedFigureRefutationTests(unittest.TestCase):
+    SOURCES = [{'id': 'S2', 'source_tier': 'regulatory_primary', 'data': {},
+                'historical_baseline': {'rows': [{'average_repurchase_price': 85.8e9 / 297e6, 'shares_repurchased': 297e6,
+                                                  'repurchases': 86.39e9, 'fiscal_year_end': '2026-09-26'}]}}]
+
+    def test_figures_are_traced_to_tables_and_inventions_are_not(self):
+        from investmentideas.quality import trace_pools, untraced_figures
+        pools = trace_pools(self.SOURCES, ())
+        self.assertEqual(untraced_figures('297 million shares at an average price of USD 288.89 [S2].', pools), [])
+        self.assertEqual(untraced_figures('at an average of USD 301.47 per share', pools), ['301.47'])
+        self.assertIsNone(untraced_figures('The memo omits the bear case.', pools))
+
+    def test_a_historical_buyback_case_takes_the_reported_program_figures(self):
+        locked = {'repurchase_tests': [
+            {'name': 'fy26', 'amount': 86_390_000_000, 'price': 290.88, 'source_refs': ['S4'],
+             'interpretation': 'historical_retrospective_conditional', 'label': 'FY26 buybacks'},
+            {'name': 'forward', 'amount': 86_390_000_000, 'price': 290.88, 'source_refs': ['S4'],
+             'interpretation': 'forward_conditional_illustration', 'label': 'Forward'},
+            {'name': 'other_year', 'amount': 40_000_000_000, 'price': 150.0, 'source_refs': ['S4'],
+             'interpretation': 'historical_retrospective_conditional', 'label': 'Unmatched'}]}
+        changes = []
+        notes = pipeline._pin_repurchase_history(locked, self.SOURCES, changes)
+        fy26, forward, other = locked['repurchase_tests']
+        self.assertEqual((fy26['amount'], fy26['source_refs']), (85_800_000_000, ['S4', 'S2']))
+        self.assertAlmostEqual(fy26['amount'] / fy26['price'], 297e6)
+        self.assertEqual((forward['amount'], forward['price']), (86_390_000_000, 290.88))
+        self.assertEqual((other['amount'], other['price']), (40_000_000_000, 150.0))
+        self.assertEqual(len(changes), 1)
+        self.assertIn('fiscal 2026', notes[0])

@@ -24,7 +24,8 @@ from .costs import cost_summary
 from .analytics import annual_metrics
 from .fundamentals import yahoo_financials
 from .inputs import canonical_reported_inputs, pin_reported_inputs
-from .quality import DIAGNOSTIC_SCOPE, RUBRIC, assessment_findings, claim_ledger, inspect_memo, parse_json, parse_review, prereview_checks, prose_words
+from .quality import (DIAGNOSTIC_SCOPE, RUBRIC, assessment_findings, claim_ledger, inspect_memo, parse_json, parse_review,
+                      prereview_checks, prose_words, trace_pools, untraced_figures)
 from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_breakdown_facts, inline_facts, archive_focus_excerpts
 from .evidence_tables import breakdown_tables, historical_baseline, render_baseline, render_breakdowns
 from .macro import gather_us_calibration
@@ -1533,6 +1534,7 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
     derived_note=locked.pop('_derived_path_note',None)
     if derived_note:
         convention_notes=[*convention_notes,derived_note]
+    convention_notes=[*convention_notes,*_pin_repurchase_history(locked,sources,changes)]
     if 'entry_policy' in locked:
         # Valuation research only (settled owner decision): no entry thresholds.
         changes.append({'field':'entry_policy','previous':locked.pop('entry_policy'),'pinned':None,'source_refs':[],
@@ -1586,6 +1588,53 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
          'Annual year-end cash flows are used without an interim balance-sheet roll-forward or stub-period adjustment. ')+
         ' '.join(convention_notes))
     return locked,changes
+
+
+def _history_rows(sources):
+    for source in sources:
+        data=source.get('data') if isinstance(source.get('data'),dict) else {}
+        baseline=source.get('historical_baseline') or data.get('historical_baseline')
+        for row in (baseline or {}).get('rows') or []:
+            yield source.get('id'),row
+
+
+def _pin_repurchase_history(locked, sources, changes):
+    """A historical repurchase case uses the reported program value and average price.
+
+    A live plan (2026-11-15) priced Apple's fiscal 2026 buybacks at cash-flow
+    payments over program shares (USD 290.88) while the reported history showed
+    the program's own price (USD 288.89); the memo quoted both and the review
+    flagged it. A case whose amount is within 3% of a reported year's buybacks
+    takes that year's program value and price.
+    """
+    notes=[]
+    rows=[(sid,row) for sid,row in _history_rows(sources)
+          if isinstance(row.get('average_repurchase_price'),(int,float)) and isinstance(row.get('shares_repurchased'),(int,float))
+          and row['average_repurchase_price']>0 and row['shares_repurchased']>0]
+    for case in locked.get('repurchase_tests') or []:
+        if not isinstance(case,dict) or case.get('interpretation')!='historical_retrospective_conditional':
+            continue
+        amount,price=case.get('amount'),case.get('price')
+        if not all(isinstance(x,(int,float)) and not isinstance(x,bool) and x>0 for x in (amount,price)):
+            continue
+        for sid,row in rows:
+            value=row['average_repurchase_price']*row['shares_repurchased']
+            if not any(isinstance(candidate,(int,float)) and candidate>0 and abs(amount/candidate-1)<=.03
+                       for candidate in (value,row.get('repurchases'))):
+                continue
+            if abs(price/row['average_repurchase_price']-1)>.0005 or abs(amount/value-1)>.0005:
+                previous={'amount':amount,'price':price}
+                case['amount']=round(value)
+                case['price']=row['average_repurchase_price']
+                if isinstance(case.get('source_refs'),list) and sid not in case['source_refs']:
+                    case['source_refs']=[*case['source_refs'],sid]
+                changes.append({'field':f'repurchase_tests.{case.get("name")}','previous':previous,
+                                'pinned':{'amount':case['amount'],'price':case['price']},'source_refs':[sid],
+                                'reason':'historical case set to the reported program value and average price of the matching fiscal year'})
+                notes.append(f'The historical repurchase case {case.get("name")} uses the reported fiscal {str(row.get("fiscal_year_end",""))[:4]} '
+                             f'program value and average price from the reported history [{sid}].')
+            break
+    return notes
 
 
 def _validate_plan_sources(plan, sources):
@@ -2809,16 +2858,28 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             assessment=assessment_findings({**review,'findings':[]})
             material=[f for f in review['findings']+assessment if f.get('severity') in {'blocker','major'}]
             refuted,check_note={},None
-            if material:
+            # Python settles "this number is in no source" itself: a replay review
+            # (2026-11-15) called a figure from the reported-history table absent,
+            # and the model check upheld it.
+            pools=trace_pools(state['sources'],computed_inputs)
+            for index,finding in enumerate(material):
+                if finding.get('rule')=='M3':
+                    missing=untraced_figures(finding.get('current_excerpt'),pools)
+                    if missing==[]:
+                        refuted[index]=('Python traced every figure in the quoted text to the computed output, the reported '
+                                        'tables or a primary source.')
+            pending=[f for index,f in enumerate(material) if index not in refuted]
+            if pending:
                 try:
                     check=call(f'finding_check_{iteration}',reviewer,FINDING_CHECK+'\n'+EVIDENCE_TIER_RULE+'\n'+RUBRIC+
                         '\nFindings:\n'+json.dumps([dict({key:f.get(key) for key in ('severity','rule','issue','current_excerpt','fix','source_refs')},id=check_id)
-                                                    for f,check_id in zip(material,_check_ids(material))])+
+                                                    for f,check_id in zip(pending,_check_ids(pending))])+
                         '\nEvidence:\n'+context+'\nValuation:\n'+valuation_context+'\nDraft:\n'+visible,tokens=FINDING_CHECK_TOKENS)
-                    refuted=_refuted_findings(check,material)
+                    for index,reason in _refuted_findings(check,pending).items():
+                        refuted[material.index(pending[index])]=reason
                 except core.IncompleteResponse as exc:
-                    # Charged and recorded; every finding stands, as if the check upheld it.
-                    check_note='The check response was incomplete; every finding was kept.'
+                    # Charged and recorded; every remaining finding stands, as if the check upheld it.
+                    check_note='The check response was incomplete; every finding it was asked about was kept.'
                     progress(f'Finding check not used: {exc}'.split(', so it')[0])
             removed={id(material[index]) for index in refuted}
             kept=[f for f in review['findings'] if id(f) not in removed]

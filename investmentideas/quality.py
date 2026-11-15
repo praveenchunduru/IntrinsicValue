@@ -435,6 +435,47 @@ def prose_words(memo):
     return len(re.findall(r"[A-Za-z][A-Za-z'\-]*", body))
 
 
+def trace_pools(sources, computed=()):
+    """Sorted numeric pools: (primary sources and computed output, unverified excerpts, computed output)."""
+    primary, unverified, house = set(), set(), set()
+    for source in sources:
+        if isinstance(source, dict):
+            target = unverified if source.get('source_tier') in UNVERIFIED_SOURCE_TIERS else primary
+            for part in (source.get('data'), source.get('primary_focus_excerpts'), source.get('breakdown_tables'),
+                         source.get('historical_baseline')):
+                _numeric_leaves(part, target)
+    for item in computed:
+        _numeric_leaves(item, house)
+    return sorted(primary | house), sorted(unverified), sorted(house)
+
+
+def _figures(text):
+    """(display, number, decimals, unit) for each checkable figure: no citations, years, dates or small whole numbers."""
+    clean = re.sub(r'\[[^\]]*S\d[^\]]*\]', '', text)
+    clean = re.sub(r'\b(?:S&P|Nasdaq|Russell|FTSE|Stoxx|Nikkei|MSCI)\s*\d+\b', '', clean, flags=re.I)
+    clean = re.sub(r'\b(?:19|20)\d\d(?:-\d\d-\d\d)?\b|\bFY\s?\d+|\bQ[1-4]\b|\b\d+(?:st|nd|rd|th)\b|\(\d\)|\b\d+\.\s', '', clean)
+    for match in _NUMBER.finditer(clean):
+        raw = match.group(1).replace('$', '').replace(',', '')
+        try:
+            number = abs(float(raw))
+        except ValueError:
+            continue
+        decimals = len(raw.split('.')[1]) if '.' in raw else 0
+        digits = len(raw.replace('-', '').replace('.', '').lstrip('0'))
+        # Whole numbers under three digits match some pool value by chance.
+        if decimals == 0 and digits < 3:
+            continue
+        yield match.group(0).strip(), number, decimals, match.group(2)
+
+
+def untraced_figures(text, pools):
+    """Checkable figures in ``text`` that match no primary source or computed value, or None if it has none."""
+    figures = list(_figures(text or ''))
+    if not figures:
+        return None
+    return [display for display, number, decimals, unit in figures if not _traced(number, decimals, unit, pools[0])]
+
+
 def prereview_checks(memo, sources, computed=()):
     """Deterministic defects in a draft's prose, before any paid review.
 
@@ -449,49 +490,26 @@ def prereview_checks(memo, sources, computed=()):
     if summary:
         body = body.replace(summary.group(0), '')
     tiers = {source.get('id'): source.get('source_tier') for source in sources if isinstance(source, dict)}
-    primary, unverified, house = set(), set(), set()
-    for source in sources:
-        if isinstance(source, dict):
-            target = unverified if source.get('source_tier') in UNVERIFIED_SOURCE_TIERS else primary
-            for part in (source.get('data'), source.get('primary_focus_excerpts'), source.get('breakdown_tables'),
-                         source.get('historical_baseline')):
-                _numeric_leaves(part, target)
-    for item in computed:
-        _numeric_leaves(item, house)
-    primary_pool, unverified_pool, house_pool = sorted(primary | house), sorted(unverified), sorted(house)
+    primary_pool, unverified_pool, house_pool = trace_pools(sources, computed)
     untraced, unlabelled, additive, unlabelled_claims, cite_primary = [], [], [], [], []
     for sentence in re.split(r'(?<=[.!?])\s+|\n+', body):
         line = sentence.strip()
         if not line or line.startswith('#'):
             continue
         cited = set(re.findall(r'S\d+', ' '.join(re.findall(r'\[([^\]]*S\d[^\]]*)\]', line))))
-        clean = re.sub(r'\[[^\]]*S\d[^\]]*\]', '', line)
-        clean = re.sub(r'\b(?:S&P|Nasdaq|Russell|FTSE|Stoxx|Nikkei|MSCI)\s*\d+\b', '', clean, flags=re.I)
-        clean = re.sub(r'\b(?:19|20)\d\d(?:-\d\d-\d\d)?\b|\bFY\s?\d+|\bQ[1-4]\b|\b\d+(?:st|nd|rd|th)\b|\(\d\)|\b\d+\.\s', '', clean)
         if _ADDITIVE.search(line) and _PANEL.search(line):
             additive.append(line[:300])
-        for match in _NUMBER.finditer(clean):
-            raw = match.group(1).replace('$', '').replace(',', '')
-            unit = match.group(2)
-            try:
-                number = abs(float(raw))
-            except ValueError:
-                continue
-            decimals = len(raw.split('.')[1]) if '.' in raw else 0
-            digits = len(raw.replace('-', '').replace('.', '').lstrip('0'))
-            # Whole numbers under three digits match some pool value by chance.
-            if decimals == 0 and digits < 3:
-                continue
+        for display, number, decimals, unit in _figures(line):
             if _traced(number, decimals, unit, primary_pool):
                 if (cited and all(tiers.get(ref) in UNVERIFIED_SOURCE_TIERS for ref in cited) and
                         not _traced(number, decimals, unit, house_pool)):
-                    cite_primary.append((match.group(0).strip(), line[:300]))
+                    cite_primary.append((display, line[:300]))
                 continue
             if _traced(number, decimals, unit, unverified_pool):
                 if not re.search(r'unverified', line, re.I):
-                    unlabelled.append((match.group(0).strip(), line[:300]))
+                    unlabelled.append((display, line[:300]))
                 continue
-            untraced.append((match.group(0).strip(), line[:300]))
+            untraced.append((display, line[:300]))
     findings = []
     def add(identifier, severity, issue, fix, items):
         findings.append({'id': identifier, 'severity': severity, 'issue': issue, 'fix': fix, 'source_refs': [],

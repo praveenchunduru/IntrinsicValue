@@ -415,3 +415,31 @@ class FindingCheckRobustnessTests(unittest.TestCase):
         self.assertIn('central-weakness-unhandled-reviewer',
                       [f['id'] for f in first['findings'] if f['severity'] == 'major'])
         self.assertEqual(state['quality_status'], 'unresolved_findings')
+
+
+class TracedM3Transport(FullContractTransport):
+    """The reviewer's only major is an M3 accusation about figures Python can trace."""
+
+    def transport(self, url, *, key=None, payload=None, timeout=90):
+        prompt = payload['messages'][1]['content'] if url.endswith('/chat/completions') else ''
+        response = super().transport(url, key=key, payload=payload, timeout=timeout)
+        if prompt.startswith('Review this equity memo') and self.review_count == 1:
+            review = json.loads(response['choices'][0]['message']['content'])
+            review['findings'][0]['rule'] = 'M3'
+            response['choices'][0]['message']['content'] = json.dumps(review)
+        return response
+
+
+class TracedM3Tests(unittest.TestCase):
+    def test_python_refutes_an_m3_finding_whose_figures_trace_without_a_paid_check(self):
+        fixture = TracedM3Transport(revisions=1)
+        with tempfile.TemporaryDirectory() as directory, fixture.installed(), \
+                patch.object(pipeline, 'untraced_figures', return_value=[]):
+            folder = pipeline.run('AAPL', 'synthetic-key', directory=directory)
+            state = json.loads((folder/'state.json').read_text())
+        stages = [row['stage'] for row in state['ledger']]
+        self.assertNotIn('finding_check_0', stages)
+        self.assertNotIn('revise_1', stages)
+        refuted = state['review_history'][0]['finding_check']['refuted']
+        self.assertEqual([f['id'] for f in refuted], ['F1'])
+        self.assertIn('Python traced every figure', refuted[0]['check_reason'])
