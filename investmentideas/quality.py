@@ -375,7 +375,8 @@ RUBRIC = (
     'Quality standard (shared by the writer, the automatic checks and the reviewer). Each review finding names the '
     'rule it breaks. Blocker: ' + _rules('blocker') + '. Major: ' + _rules('major') + '. Minor: ' + _rules('minor') +
     '. A house or computed figure that the prose names as such is attributed, even when the sentence also cites the '
-    'reported figure it is compared with. Rounding is never material; unverified excerpts used only for attributed '
+    'reported figure it is compared with. Naming the convention step the value is most sensitive to is required and '
+    'is not an attribution of the gap to price. Rounding is never material; unverified excerpts used only for attributed '
     'outside views, consensus or guidance context are not material, but a company fact or number supported only by '
     'an unverified excerpt is, whatever its label.')
 
@@ -751,9 +752,14 @@ def inspect_memo(memo, sources, valuation=None):
     if observed:
         dates = set(re.findall(r'<!--\s*quote_as_of:\s*(\d{4}-\d{2}-\d{2})\s*-->', memo, re.I))
         for paragraph in claim_ledger(memo):
-            text = paragraph['text']
-            if re.search(r'\b(?:quote|market price|closing price|share price|stock price)\b', text, re.I):
-                dates.update(re.findall(r'\b(?:as of|on|observed(?: at)?|dated)\s+(\d{4}-\d{2}-\d{2})\b', text, re.I))
+            # Clause by clause: a live draft (2026-11-15) wrote "a quote observed at the
+            # 2026-11-13 close; the valuation is dated 2026-11-15" and the valuation date
+            # was read as a quote date.
+            for clause in re.split(r'(?<=[.;])\s+', paragraph['text']):
+                if (re.search(r'\b(?:quote|market price|closing price|share price|stock price)\b', clause, re.I)
+                        and not re.search(r'\bvaluation\b', clause, re.I)):
+                    dates.update(re.findall(r'\b(?:as of|on|observed(?: at)?|dated)\s+(?:the\s+)?(\d{4}-\d{2}-\d{2})\b',
+                                            clause, re.I))
         analysis = re.search(r'\b(?:analysis|research|memo) date\s*:\s*(\d{4}-\d{2}-\d{2})', memo, re.I)
         if analysis:
             for paragraph in claim_ledger(memo):

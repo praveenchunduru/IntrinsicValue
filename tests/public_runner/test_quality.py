@@ -297,6 +297,11 @@ class DeterministicDiagnosticsTests(unittest.TestCase):
         self.assertIn('quote-date-mismatch',{f['id'] for f in inspect_memo(bad,[SOURCE,quote],{'weighted_value_per_share':20})})
         good=MEMO+'\nAnalysis Date: 2026-11-06\n\nThe market price observed on 2026-11-05 was $344.17 [S2].\n'
         self.assertNotIn('quote-date-mismatch',{f['id'] for f in inspect_memo(good,[SOURCE,quote],{'weighted_value_per_share':20})})
+        # A live draft kept the two dates apart in one sentence; the valuation date is not a quote date.
+        apart=MEMO+'\nThe price is a regular-session quote observed at the 2026-11-05 close [S2]; the valuation is dated 2026-11-07.\n'
+        self.assertNotIn('quote-date-mismatch',{f['id'] for f in inspect_memo(apart,[SOURCE,quote],{'weighted_value_per_share':20})})
+        wrong=MEMO+'\nThe price is a regular-session quote observed at the 2026-11-07 close [S2].\n'
+        self.assertIn('quote-date-mismatch',{f['id'] for f in inspect_memo(wrong,[SOURCE,quote],{'weighted_value_per_share':20})})
 
     def test_visible_valuation_table_and_duplicate_claims_are_checked(self):
         text=MEMO.replace('Weighted intrinsic value per share: $20.00','''| Scenario | Value/share | Probability |
