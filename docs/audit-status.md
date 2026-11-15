@@ -448,7 +448,15 @@ The change set, all offline and tested:
   (Amazon, Home Depot and Meta added); JPMorgan is refused as a bank and ExxonMobil's
   successor registrant has no annual report yet.
 
-None of this has been run against a paid model. The suite has 606 offline tests.
+Two Opus reviews of the change set reproduced 12 defects, among them a carried-forward
+refutation that could pass a draft, a cost-path check comparing different cost totals,
+evidence cached where the thinking draft could not read it, a $10 allowance too small
+for a revision cycle's reservations, buyback prices on share counts rounded to
+millions, and a bank gate that refused money transmitters; all are fixed. The default
+allowance is now $20 (a ceiling; expected spend for a run with one revision is about
+$4.50).
+
+None of this has been run against a paid model. The suite has 613 offline tests.
 
 ### Still open after 2026-11-14
 

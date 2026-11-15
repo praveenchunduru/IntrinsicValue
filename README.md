@@ -127,23 +127,23 @@ export OPENROUTER_API_KEY
 export SEC_CONTACT_EMAIL='your-real-email@example.com'
 
 # Full memo: Claude Haiku research, Claude Opus analysis, GPT-5.6 Sol review
-python -m investmentideas AAPL --profile balanced --budget 10
+python -m investmentideas AAPL --profile balanced --budget 20
 
 # Cheaper full analysis, or a four-call financial overview
-python -m investmentideas AAPL --profile economy --budget 10
+python -m investmentideas AAPL --profile economy --budget 20
 python -m investmentideas AAPL --quick --profile economy --budget 2
 
 # Replay dated sources and review a supplied company-specific forecast
-python -m investmentideas AAPL --snapshot sources.json --forecast-plan assumptions.json --budget 10
+python -m investmentideas AAPL --snapshot sources.json --forecast-plan assumptions.json --budget 20
 
 # Investigate independent review notes in the same day's saved full run
-python -m investmentideas AAPL --review-notes findings.txt --max-revisions 3 --budget 10
+python -m investmentideas AAPL --review-notes findings.txt --max-revisions 3 --budget 20
 
 # Re-run the plan, draft and review of a saved run on its frozen evidence
 python tools/replay.py research-output/AAPL/full-RUN_HASH replay-output --from draft
 
 # Choose a different final reviewer without repeating completed research
-python -m investmentideas AAPL --review-model moonshotai/kimi-k3.1-pro --budget 10
+python -m investmentideas AAPL --review-model moonshotai/kimi-k3.1-pro --budget 20
 
 ```
 
@@ -222,7 +222,9 @@ As listed on 2026-11-15, Claude Haiku 5.5 cost $0.10/$0.50, Claude Opus 5.5 $4/$
 GPT-5.6 Sol $4.40/$22 per million input/output tokens; Exa Auto search cost $0.007 per
 request. With the evidence cached across stages, a balanced first draft through review
 and its finding check is estimated at about $3 and a run with one revision at about
-$4.50, from measured token counts; not yet observed on a bill.
+$4.50, from measured token counts; not yet observed on a bill. The default allowance is
+$20: a ceiling, because each call reserves its prompt bytes at the model's highest
+price tier before it is sent, and a GPT-5.6 Sol review alone reserves about $5.
 Prices change. A four-call AAPL economy overview reported **$0.00757138** but had
 factual/date errors. It establishes transport/cost functionality, not memo quality
 or a promised full-run price. Full-memo cost depends on evidence and revisions.
@@ -287,7 +289,7 @@ python -m pip install .
 investmentideas --help
 ```
 
-The current source passes **606 tests** locally on Python 3.9, 3.12 and 3.13; the
+The current source passes **613 tests** locally on Python 3.9, 3.12 and 3.13; the
 v0.2.0 release passed 268. The
 [CI matrix](https://github.com/praveenchunduru/IntrinsicValue/actions/runs/42261827883)
 tests Python 3.10, 3.12 and 3.13. CI runs synthetic evidence and mocked transports without model calls or
