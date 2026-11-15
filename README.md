@@ -29,7 +29,7 @@ Open **http://127.0.0.1:8765**, enter your [OpenRouter key](https://openrouter.a
 enter a real SEC requester contact email, choose a ticker, profile and spending allowance,
 and generate a full memo. The email identifies requests to SEC; it is not another paid
 API key. It stays in memory and is sent only to SEC. Choose **economy**
-for open-weight analysis or **balanced** for Claude analysis with open-weight research. Use `python3` or Windows
+for open-weight analysis or **balanced** for Claude analysis with open-weight research; a different model reviews the memo in both. Use `python3` or Windows
 `py` if that is your Python command. A dedicated key with a provider credit limit
 is recommended. The key is held in process memory; it is not stored in the browser,
 research files or logs. This loopback application is for one local user.
@@ -59,14 +59,49 @@ Primary inline-XBRL and normalized SEC Companyfacts records lock supported annua
 revenue, shares and the financial-debt, cash and finance-lease bridge. Alternative
 reported totals and disjoint components are reconciled; similar tag names alone
 do not establish accounting scope. Conflicting or incomplete essential primary coverage
-stops before paid research and produces no price target; unknown facts never become zero.
-The saved input-coverage report identifies the missing disclosures. Cash classification and
-unidentified additional claims remain explicit house policies, not reported facts.
+stops before paid research and produces no price target. The saved input-coverage report
+identifies the missing disclosures. Cash classification and unidentified additional claims
+remain explicit house policies, not reported facts.
+
+Two inputs can rest on a labelled assumption. When the whole SEC entity record shows no
+short-term borrowing amount beyond reported commercial paper and other short-term borrowings,
+or no finance lease liability, the missing category is assumed zero. The coverage report marks
+the field `pinned_with_disclosed_assumption`, the bridge lists the concepts that were scanned,
+and the memo states the assumption. An undisclosed borrowing would lower equity value. Issuers
+whose own facts conflict, or that report shares only by class, are refused with the specific
+reason; see the [issuer sample](docs/audit-status.md#live-validation-on-2026-11-14).
 
 The workflow synthesizes evidence, builds a source-referenced forecast plan,
-computes a bear/base/bull FCFF DCF in Python and writes a memo. Fresh-context review
-can trigger targeted research, corrections, recomputation and revision within the
-remaining budget and revision limit. Unresolved material findings remain visible.
+computes a bear/base/bull FCFF DCF in Python and writes a memo. The first draft is
+built to stand on its own:
+
+- Python extracts the filings' revenue, cost and operating income by product, segment
+  and geography, five years of reported history, and the 10-K's margin, inventory,
+  commitment and buyback disclosures. The models see them before any web excerpt.
+- Python renders every table and a valuation summary at the top of the memo,
+  including what the price requires of one input at a time. The model writes the
+  interpretation around them and does no arithmetic of its own.
+- Free checks trace every figure in the prose to the computed output or a primary
+  source, then one small call fixes what they find. Citations of unverified web
+  excerpts are labelled in the text.
+- A different model reviews the memo against the same written quality standard
+  the writer was given. One revision follows by default if material findings remain;
+  findings still open stay visible.
+
+The discount rate follows the conventions the equity risk premium was solved under.
+Damodaran's implied premium assumes the market grows at the Treasury rate forever; a
+valuation that pairs it with lower terminal growth values the market itself at about
+80% of its price. When the cash flows are in US dollars and the run collected that
+premium and the industry beta table, the pipeline therefore starts from the current
+cost of capital, moves to market-average business risk by year 10, and sets terminal
+growth to the risk-free rate unless a scenario gives a company-specific reason for
+less. Present values are dated at the valuation date when the reported balance sheet
+allows it. Year-1 margins must start from the last reported results unless the plan
+cites evidence for a step. The memo reports value relative to price, the
+discount rate the price implies beside the required return, and the value under
+alternative conventions one change at a time. It sets no entry prices, margins of
+safety or position sizes. See
+[market-consistent conventions](docs/underwriting.md#keep-the-discount-rate-consistent-with-the-equity-risk-premium).
 
 The valuation includes operating growth/margins, taxes, incremental sales-to-capital,
 terminal reinvestment at terminal ROIC, discount rates, net debt and noncommon claims,
@@ -91,21 +126,24 @@ export OPENROUTER_API_KEY
 # Replace with your real requester email for SEC access; this is not a paid key
 export SEC_CONTACT_EMAIL='your-real-email@example.com'
 
-# Full memo: open-weight extraction/research; Claude analysis and review
-python -m investmentideas AAPL --profile balanced --budget 10
+# Full memo: Claude Haiku research, Claude Opus analysis, GPT-5.6 Sol review
+python -m investmentideas AAPL --profile balanced --budget 20
 
 # Cheaper full analysis, or a four-call financial overview
-python -m investmentideas AAPL --profile economy --budget 10
+python -m investmentideas AAPL --profile economy --budget 20
 python -m investmentideas AAPL --quick --profile economy --budget 2
 
 # Replay dated sources and review a supplied company-specific forecast
-python -m investmentideas AAPL --snapshot sources.json --forecast-plan assumptions.json --budget 10
+python -m investmentideas AAPL --snapshot sources.json --forecast-plan assumptions.json --budget 20
 
 # Investigate independent review notes in the same day's saved full run
-python -m investmentideas AAPL --review-notes findings.txt --max-revisions 6 --budget 10
+python -m investmentideas AAPL --review-notes findings.txt --max-revisions 3 --budget 20
 
-# Choose an independent final reviewer without repeating completed research
-python -m investmentideas AAPL --review-model openai/gpt-5.4 --budget 10
+# Re-run the plan, draft and review of a saved run on its frozen evidence
+python tools/replay.py research-output/AAPL/full-RUN_HASH replay-output --from draft
+
+# Choose a different final reviewer without repeating completed research
+python -m investmentideas AAPL --review-model moonshotai/kimi-k3.1-pro --budget 20
 
 ```
 
@@ -152,17 +190,26 @@ reapprove a previous memo. Generate/review a revised memo when inputs change.
 
 ## Model routing and costs
 
-| Profile | Extraction and web research | Forecast, author, review and correction |
-|---|---|---|
-| `balanced` (default) | Qwen3 30B A3B Instruct, open-weight | Claude Sonnet 4.6 |
-| `economy` | Qwen3 30B A3B Instruct, open-weight | DeepSeek V3.2, open-weight |
+| Profile | Extraction and web research | Forecast, author and correction | Review |
+|---|---|---|---|
+| `balanced` (default) | Claude Haiku 5.5 | Claude Opus 5.5 | GPT-5.6 Sol |
+| `economy` | DeepSeek V4.1 Flash, open-weight | DeepSeek V4 Pro, open-weight | Kimi K3.1 Pro, open-weight |
+| `dev` (pipeline testing only) | Claude Haiku 5.5 | Claude Haiku 5.5 | GPT-5.6 Luna |
+
+Each slot uses the newest model generation in the OpenRouter catalog (checked
+2026-11-15); the tier follows the job. On the same Microsoft plan and evidence, Claude
+Opus 5.5 wrote a shorter draft with fewer review findings than Claude Sonnet 4.6 or 5.5.
 
 All selected models and their supported token pricing are checked against the live
 OpenRouter catalog before paid work.
 Provider fallback can use another provider **for the same model** under the same
 price caps. There are no automatic client retries or silent switches to expensive
-models. A separate explicit `--review-model` override is saved with the run and
-invalidates its prior review; forecasts and completed research are retained.
+models. The default reviewer differs from the author model: when `--strong-model`
+names the profile's reviewer, the profile's default author reviews instead. An
+explicit `--review-model` can name any model, including the author; it is saved with
+the run and invalidates its prior review;
+forecasts and completed research are retained. A run folder saved before the
+cross-model default keeps its saved reviewer unless `--review-model` is given.
 Interrupted/failed requests preserve a reservation because a provider may
 already have charged; completed stages are reused.
 
@@ -171,15 +218,20 @@ The cost summary separates provider-reported cost from retained estimates.
 These measurements do not establish token savings, optimal routing or a quality/cost
 frontier; see the [measurement limits](docs/underwriting.md#costs-and-context-size).
 
-As observed on 2026-11-06, Qwen cost $0.10/$0.30, DeepSeek $0.26/$0.38, and Sonnet
-$3/$15 per million input/output tokens; Exa Auto search cost $0.007 per request.
+As listed on 2026-11-15, Claude Haiku 5.5 cost $0.10/$0.50, Claude Opus 5.5 $4/$20 and
+GPT-5.6 Sol $4.40/$22 per million input/output tokens; Exa Auto search cost $0.007 per
+request. With the evidence cached across stages, a balanced first draft through review
+and its finding check is estimated at about $3 and a run with one revision at about
+$4.50, from measured token counts; not yet observed on a bill. The default allowance is
+$20: a ceiling, because each call reserves its prompt bytes at the model's highest
+price tier before it is sent, and a GPT-5.6 Sol review alone reserves about $5.
 Prices change. A four-call AAPL economy overview reported **$0.00757138** but had
 factual/date errors. It establishes transport/cost functionality, not memo quality
 or a promised full-run price. Full-memo cost depends on evidence and revisions.
 
 Local budgets use conservative input-byte and maximum-output estimates before each
 request. They are **not provider-enforced total spending caps**. Limit a dedicated
-OpenRouter key too. Full research defaults to a **$10 total planning allowance** in
+OpenRouter key too. Full research defaults to a **$20 total planning allowance** in
 the CLI and local app; quick research retains $2. This is not a promised charge or
 guaranteed completion. An explicit allowance is never raised automatically; prior
 charges and uncertain reservations still count when resuming the same settings.
@@ -237,9 +289,10 @@ python -m pip install .
 investmentideas --help
 ```
 
-The v0.2.0 release passed **268 tests** from source and a fresh installed wheel. The
+The current source passes **613 tests** locally on Python 3.9, 3.12 and 3.13; the
+v0.2.0 release passed 268. The
 [CI matrix](https://github.com/praveenchunduru/IntrinsicValue/actions/runs/42261827883)
-passes on Python 3.10, 3.12 and 3.13. CI runs synthetic evidence and mocked transports without model calls or
+tests Python 3.10, 3.12 and 3.13. CI runs synthetic evidence and mocked transports without model calls or
 secrets. [Live-validation guidance](docs/openrouter_live_validation.md) explains
 local budget controls and review provenance. Model review is a recorded assessment,
 **not independent publication certification or a guarantee of investment truth**.

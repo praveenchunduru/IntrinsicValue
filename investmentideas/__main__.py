@@ -15,14 +15,14 @@ def main():
     parser.add_argument('ticker', nargs='?')
     parser.add_argument('--quick', action='store_true', help='Use the four-call financial overview instead of the full research pipeline')
     parser.add_argument('--profile', choices=MODELS, default='balanced')
-    parser.add_argument('--budget', type=float, help='Total cumulative USD allowance, including prior uncertain charges (default: full 10, quick 2; not a promised cost)')
+    parser.add_argument('--budget', type=float, help='Total cumulative USD allowance, including prior uncertain charges (default: full 20, quick 2; a ceiling with conservative per-call reservations, not a promised cost)')
     parser.add_argument('--sec-contact',help='Requester contact email for SEC access (memory only; alternatively set SEC_CONTACT_EMAIL)')
     parser.add_argument('--output', default='research-output')
     parser.add_argument('--evidence', type=Path, help='Optional UTF-8 filing or research text (up to 100 KB)')
     parser.add_argument('--easy-model', help='Override extraction model with an OpenRouter model ID')
-    parser.add_argument('--review-model',help='Explicit independent review-model override; saved with the current run')
-    parser.add_argument('--strong-model', help='Override writing/review model with an OpenRouter model ID')
-    parser.add_argument('--max-revisions',type=int,default=3,help='Full memo correction limit, 0–8 (default: 3)')
+    parser.add_argument('--review-model',help='Explicit review-model override, saved with the current run; it is not checked against the author model')
+    parser.add_argument('--strong-model', help='Override the forecast and writing model with an OpenRouter model ID; the default reviewer stays a different model')
+    parser.add_argument('--max-revisions',type=int,default=1,help='Full memo correction limit, 0–8 (default: 1)')
     parser.add_argument('--sources',type=Path,help='Append a JSON list of supplemental archived sources to the same full run (at most 3 MB)')
     parser.add_argument('--snapshot',type=Path,help='Replay a dated S1… source manifest without refreshing evidence or quotes (at most 3 MB)')
     parser.add_argument('--forecast-plan',type=Path,help='Review an explicit forecast JSON against pinned reported inputs; never bypasses review (at most 150 KB)')
@@ -33,7 +33,7 @@ def main():
     parser.add_argument('--port', type=int, default=8765)
     args = parser.parse_args()
     if args.budget is None:
-        args.budget = 2.0 if args.quick else 10.0
+        args.budget = 2.0 if args.quick else 20.0  # pipeline.DEFAULT_BUDGET: a ceiling, not the expected bill
     try:
         if args.revalue:
             if args.ticker or args.quick or args.evidence or args.counterfactuals or args.draft or args.snapshot or args.forecast_plan:

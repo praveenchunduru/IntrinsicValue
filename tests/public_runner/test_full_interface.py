@@ -65,7 +65,7 @@ class CommandLineTests(unittest.TestCase):
                 other = quick if expected == 'full' else full.run
                 self.assertEqual(selected.call_args.args, ('AAPL','synthetic-key'))
                 self.assertEqual(selected.call_args.kwargs['profile'],'balanced')
-                self.assertEqual(selected.call_args.kwargs['budget'],10 if expected=='full' else 2)
+                self.assertEqual(selected.call_args.kwargs['budget'],20 if expected=='full' else 2)
                 other.assert_not_called()
 
     def test_sec_contact_is_scoped_to_cli_run_without_becoming_runner_input(self):
@@ -130,7 +130,7 @@ class BrowserFlowTests(unittest.TestCase):
                 result=wait_for_result(request,token)
                 self.assertEqual(result['memo'],'Synthetic memo')
                 self.assertNotIn(email,json.dumps(result))
-                self.assertEqual(full.run.call_args.kwargs['budget'],10)
+                self.assertEqual(full.run.call_args.kwargs['budget'],20)
                 self.assertTrue(all(email not in p.read_text() for p in folder.iterdir()))
             with self.assertRaises(SECContactRequired):
                 user_agent('https://data.sec.gov/fixture')

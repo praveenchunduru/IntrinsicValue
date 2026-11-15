@@ -134,6 +134,67 @@ class StructuredReviewTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'current_excerpt'):
                     parse_review(json.dumps({'verdict':'revise','findings':[row]}), memo=memo)
 
+    def test_after_its_format_repair_an_embellished_quote_is_anchored_to_exact_memo_wording(self):
+        # Live review, 2026-11-14: one finding of twelve inserted a parenthetical
+        # into an otherwise verbatim quotation and the whole review was lost.
+        memo=('The house engages this directly: the TON618 products margin path is closer to the house bear case '
+              '(37.0% in FY2027) than the house base. If the path is correct, **the house base value** would decline.')
+        row=finding()
+        row['current_excerpt']=('The TON618 products margin path (35.5% for FY2027) is closer to the house bear case '
+                                '(37.0% in FY2027) than the house base. If the path is correct, the house base value would decline.')
+        payload=json.dumps({'verdict':'revise','findings':[row]})
+        with self.assertRaisesRegex(ValueError,'current_excerpt'):
+            parse_review(payload,memo=memo)
+        parsed=parse_review(payload,memo=memo,anchor_embellished=True)['findings'][0]
+        self.assertEqual(parsed['current_excerpt_match'],'longest-exact-span')
+        self.assertEqual(parsed['current_excerpt'],'is closer to the house bear case (37.0% in FY2027) than the house base. '
+                                                   'If the path is correct, the house base value would decline.')
+        self.assertNotIn('35.5%',parsed['current_excerpt'])
+        self.assertEqual(parsed['reviewer_excerpt'],row['current_excerpt'])
+        # Exact quotations are untouched and carry no reviewer_excerpt.
+        row['current_excerpt']='the TON618 products margin path is closer to the house bear case'
+        exact=parse_review(json.dumps({'verdict':'revise','findings':[row]}),memo=memo,anchor_embellished=True)['findings'][0]
+        self.assertEqual(exact['current_excerpt_match'],'literal')
+        self.assertNotIn('reviewer_excerpt',exact)
+
+    def test_anchoring_never_accepts_an_invented_or_too_short_quotation(self):
+        memo='- **Operating leases:** The **$12.912 billion** liability is approximately `$0.89` per share.'
+        for excerpt in ['An invented excerpt absent from the memo, long enough to pass any length rule at all.',
+                        'Operating leases: The $12.912 billion asset is approximately $0.89 per share.',
+                        'Operating leases: The $12.912 billion liability ... per share.']:
+            with self.subTest(excerpt=excerpt):
+                row=finding(); row['current_excerpt']=excerpt
+                with self.assertRaisesRegex(ValueError,'contiguous wording'):
+                    parse_review(json.dumps({'verdict':'revise','findings':[row]}),memo=memo,anchor_embellished=True)
+        # A changed number is excluded from the anchor, never reproduced as the memo's wording.
+        row=finding(); row['current_excerpt']='Operating leases: The $12.921 billion liability is approximately $0.89 per share.'
+        parsed=parse_review(json.dumps({'verdict':'revise','findings':[row]}),memo=memo,anchor_embellished=True)['findings'][0]
+        self.assertEqual(parsed['current_excerpt'],'billion liability is approximately $0.89 per share.')
+        self.assertNotIn('12.921',parsed['current_excerpt'])
+
+    def test_central_weakness_and_gap_statement_are_kept_only_when_well_formed(self):
+        row=finding(); row['current_excerpt']='Revenue is 100 [S1].'
+        review={'verdict':'revise','findings':[row],'gap_explained':'Partly',
+                'central_weakness':{'claim':'Terminal growth below the rate the ERP assumes.',
+                                    'computed_effect':'+25 per share','memo_handles_it':'no'}}
+        parsed=parse_review(json.dumps(review),memo=MEMO)
+        self.assertEqual(parsed['central_weakness']['memo_handles_it'],'no')
+        self.assertEqual(parsed['gap_explained'],'partly')
+        # An unclear answer counts against the memo rather than disappearing.
+        for answer,expected in (('maybe','no'),('Partially.','partly'),('No.','no'),('YES','yes')):
+            review['central_weakness']={'claim':'x','computed_effect':'y','memo_handles_it':answer}
+            review['gap_explained']=answer
+            with self.subTest(answer=answer):
+                parsed=parse_review(json.dumps(review),memo=MEMO)
+                self.assertEqual(parsed['central_weakness']['memo_handles_it'],expected)
+                self.assertEqual(parsed['gap_explained'],expected)
+        for broken in ({'claim':'','computed_effect':'y','memo_handles_it':'yes'}, 'text'):
+            review['central_weakness']=broken; review['gap_explained']=''
+            with self.subTest(broken=broken):
+                parsed=parse_review(json.dumps(review),memo=MEMO)
+                self.assertNotIn('central_weakness',parsed)
+                self.assertNotIn('gap_explained',parsed)
+
     def test_quote_normalization_preserves_balancing_boundaries_and_code_runs(self):
         examples = [
             ('**bold** __bold__ *italic* _italic_', 'bold bold italic italic'),
@@ -236,6 +297,11 @@ class DeterministicDiagnosticsTests(unittest.TestCase):
         self.assertIn('quote-date-mismatch',{f['id'] for f in inspect_memo(bad,[SOURCE,quote],{'weighted_value_per_share':20})})
         good=MEMO+'\nAnalysis Date: 2026-11-06\n\nThe market price observed on 2026-11-05 was $344.17 [S2].\n'
         self.assertNotIn('quote-date-mismatch',{f['id'] for f in inspect_memo(good,[SOURCE,quote],{'weighted_value_per_share':20})})
+        # A live draft kept the two dates apart in one sentence; the valuation date is not a quote date.
+        apart=MEMO+'\nThe price is a regular-session quote observed at the 2026-11-05 close [S2]; the valuation is dated 2026-11-07.\n'
+        self.assertNotIn('quote-date-mismatch',{f['id'] for f in inspect_memo(apart,[SOURCE,quote],{'weighted_value_per_share':20})})
+        wrong=MEMO+'\nThe price is a regular-session quote observed at the 2026-11-07 close [S2].\n'
+        self.assertIn('quote-date-mismatch',{f['id'] for f in inspect_memo(wrong,[SOURCE,quote],{'weighted_value_per_share':20})})
 
     def test_visible_valuation_table_and_duplicate_claims_are_checked(self):
         text=MEMO.replace('Weighted intrinsic value per share: $20.00','''| Scenario | Value/share | Probability |
@@ -273,3 +339,42 @@ class GroupedCitationTests(unittest.TestCase):
         findings=inspect_memo(memo,[{'id':'S1','data':'one'},{'id':'S2','data':'two'}])
         unresolved=next(row for row in findings if row['id']=='citation-unresolved')
         self.assertEqual(unresolved['source_refs'],['S99'])
+
+
+class AssessmentFindingTests(unittest.TestCase):
+    def review(self, handles='no', explained='partly', findings=()):
+        return {'verdict': 'pass', 'findings': list(findings), 'gap_explained': explained,
+                'central_weakness': {'claim': 'Terminal growth below the rate the ERP assumes.',
+                                     'computed_effect': '+25 per share', 'memo_handles_it': handles}}
+
+    def test_an_unhandled_central_weakness_is_recorded_for_the_reader_not_a_finding(self):
+        # Python states which inputs can close the gap; every assessment major in
+        # the 2026-11-14/15 runs was refuted or induced by the attribution wording.
+        from investmentideas.quality import assessment_findings
+        self.assertEqual(assessment_findings(self.review()), [])
+
+    def test_no_extra_finding_when_handled_or_already_material(self):
+        from investmentideas.quality import assessment_findings
+        self.assertEqual(assessment_findings(self.review('yes', 'yes')), [])
+        self.assertEqual(assessment_findings(self.review(findings=[{'severity': 'major'}])), [])
+
+    def test_each_answer_counts_on_its_own(self):
+        from investmentideas.quality import assessment_findings
+        self.assertEqual(assessment_findings({'verdict': 'pass', 'findings': [], 'gap_explained': 'no'}), [])
+        self.assertEqual(assessment_findings({'verdict': 'pass', 'findings': [], 'gap_explained': 'yes'}), [])
+
+    def test_a_missing_assessment_is_recorded_without_forcing_a_revision(self):
+        from investmentideas.quality import assessment_findings
+        rows = assessment_findings({'verdict': 'pass', 'findings': []})
+        self.assertEqual([(row['id'], row['severity']) for row in rows], [('review-assessment-missing', 'minor')])
+
+
+class MemoStructureTests(unittest.TestCase):
+    def test_the_twelve_section_headings_satisfy_the_section_checks(self):
+        memo = '\n'.join(['# AAPL', '## 1. Valuation conclusion', 'x [S1]', '## 5. Business economics, industry and competition',
+                          'x [S1]', '## 7. Historical financial quality', 'x [S1]', '## 9. Bear/base/bull scenarios', 'x [S1]',
+                          '## 10. Observations that would change the value', 'x [S1]',
+                          '## 11. Risks, including evidence that the valuation framework is wrong', 'x [S1]',
+                          '## 12. Evidence gaps and unresolved questions', 'x [S1]'])
+        ids = {row['id'] for row in inspect_memo(memo, [{'id': 'S1', 'title': 'Filing', 'kind': 'filing', 'data': {'excerpt': 'Revenue 1'}}])}
+        self.assertFalse({'section-disconfirming-evidence', 'section-catalysts', 'section-risks'} & ids)

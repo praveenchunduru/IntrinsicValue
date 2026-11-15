@@ -16,7 +16,7 @@ import json
 import math
 import re
 
-from .inputs import PRIMARY_INPUT_CONCEPTS, REVENUE, SHARES, STRUCTURED_FORMS
+from .inputs import FINANCING_ABSENCE_SCAN, PRIMARY_INPUT_CONCEPTS, REVENUE, SHARES, STRUCTURED_FORMS
 
 ACCEPTED_FORMS = STRUCTURED_FORMS
 ANNUAL_FORMS = ACCEPTED_FORMS - {'10-Q', '10-Q/A'}
@@ -24,6 +24,10 @@ MAX_REPORTED_FACTS = 1600
 MAX_OBSERVATIONS_PER_PERIOD = 24
 FINANCIAL_CONTEXT_CONCEPTS = frozenset('us-gaap:' + name for name in (
     'OperatingIncomeLoss', 'NetIncomeLoss', 'GrossProfit',
+    'CostOfGoodsAndServicesSold', 'CostOfRevenue', 'ResearchAndDevelopmentExpense',
+    'ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost', 'SellingGeneralAndAdministrativeExpense',
+    'OperatingExpenses', 'CostsAndExpenses', 'SellingAndMarketingExpense', 'MarketingExpense',
+    'GeneralAndAdministrativeExpense',
     'NetCashProvidedByUsedInOperatingActivities', 'PaymentsToAcquirePropertyPlantAndEquipment',
     'ShareBasedCompensation', 'StockBasedCompensation', 'DepreciationDepletionAndAmortization',
     'DepreciationDepletionAndAmortizationPropertyPlantAndEquipment', 'InventoryNet',
@@ -33,6 +37,9 @@ FINANCIAL_CONTEXT_CONCEPTS = frozenset('us-gaap:' + name for name in (
     'WeightedAverageNumberOfShareOutstandingBasicAndDiluted',
     'EarningsPerShareBasic', 'EarningsPerShareDiluted', 'EarningsPerShareBasicAndDiluted',
 ))
+# Identifies the concept list a saved source was collected under, so a run
+# resumed after the list changes can say its reference lines may be missing.
+CONCEPT_SELECTION_SHA256 = hashlib.sha256('\n'.join(sorted(PRIMARY_INPUT_CONCEPTS | FINANCIAL_CONTEXT_CONCEPTS)).encode()).hexdigest()
 _AVERAGE_SHARES = frozenset(concept for concept in FINANCIAL_CONTEXT_CONCEPTS if 'WeightedAverage' in concept)
 _PER_SHARE = frozenset(concept for concept in FINANCIAL_CONTEXT_CONCEPTS if 'EarningsPerShare' in concept)
 
@@ -76,7 +83,17 @@ def _observation_key(item):
             str(item.get('fiscal_year') or ''), str(item.get('fiscal_period') or ''))
 
 
-def normalize_companyfacts(payload, *, identity, source_id=None, as_of=None):
+def _baseline(payload, cutoff):
+    """Reported operating history from the full record, as filed by the cutoff."""
+    from .evidence_tables import historical_baseline
+    try:
+        baseline = historical_baseline(payload, as_of=cutoff.isoformat())
+    except (ValueError, TypeError, KeyError, AttributeError, ArithmeticError):
+        return {}
+    return {'historical_baseline': baseline} if baseline['rows'] else {}
+
+
+def normalize_companyfacts(payload, *, identity, source_id=None, as_of=None, entity_record_complete=False):
     """Return one regulatory-primary source after checking directory identity.
 
     ``identity`` is the SEC directory record containing ``cik_str``, ``title``
@@ -85,6 +102,12 @@ def normalize_companyfacts(payload, *, identity, source_id=None, as_of=None):
     are protected before recent quarters or later cover-page shares are selected.
     Caps never silently drop a competing reported value: normalization fails if
     the conflict-preserving representation cannot fit its explicit bounds.
+
+    ``entity_record_complete`` is set only by a caller that fetched the whole
+    entity record from the SEC endpoint. It attests which financing concepts
+    were looked for, so that their absence on a protected balance date can
+    support a disclosed assumption. A trimmed or hand-built payload must not
+    claim it.
     """
     if not isinstance(payload, dict) or not isinstance(identity, dict):
         raise ValueError('SEC companyfacts and directory identity must be objects')
@@ -216,11 +239,15 @@ def normalize_companyfacts(payload, *, identity, source_id=None, as_of=None):
             'fact_origin': 'sec_companyfacts', 'canonical_payload_sha256': canonical_hash,
             'reported_facts': selected,
             'financial_context_table': context_table,
+            **_baseline(payload, cutoff),
             'reported_fact_note': ('Official SEC standardized-taxonomy entity-wide observations. Original inline context IDs and '
                                    'dimension XML are not provided by this API. Per-record filing dates and accessions remain explicit; '
                                    'missing tags remain unknown, and filing fiscal-year/frame labels do not replace fact periods.'),
-            'selection': {'as_of': cutoff.isoformat(), 'annual_periods': [list(period) for period in annual_periods],
+            'selection': {'as_of': cutoff.isoformat(), 'concepts_sha256': CONCEPT_SELECTION_SHA256, 'annual_periods': [list(period) for period in annual_periods],
                           'protected_balance_dates': sorted(balance_dates), 'share_dates': share_dates,
+                          # Every dimensionless observation of these concepts on a protected balance
+                          # date is retained, so their absence there is an absence in the SEC record.
+                          **({'absence_scan_concepts': sorted(FINANCING_ABSENCE_SCAN)} if entity_record_complete is True else {}),
                           'valid_record_count': len(records), 'selected_record_count': len(selected),
                           'rejected_record_count': rejected, 'omitted_record_count': len(records) - len(selected),
                           'policy': 'Three latest annual revenue periods, same-date bridge facts and annual-filing shares; two latest balance/share dates; recent duration observations; earliest/latest observations of every retained competing value.'},

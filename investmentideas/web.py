@@ -42,9 +42,9 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#18242e;padding:20px;
 <small>SEC requires a real requester contact for filing access. This value stays in memory and is sent only to SEC; SEC_CONTACT_EMAIL can also supply it.</small>
 <label for="ticker">Ticker</label><input id="ticker" required value="AAPL" maxlength="15">
 <label for="mode">Research depth</label><select id="mode"><option value="full" __FULL_SELECTED__>Full memo — research, editable valuation, review and revision</option><option value="quick" __QUICK_SELECTED__>Quick financial overview — four model calls</option></select>
-<label for="profile">Model profile</label><select id="profile"><option value="balanced">Balanced — Qwen extraction, Claude Sonnet analysis</option><option value="economy">Economy — Qwen extraction, DeepSeek analysis</option></select>
-<label for="budget">Total spending allowance (USD)</label><input id="budget" type="number" min="1" max="20" step="0.01" value="__DEFAULT_BUDGET__" required>
-<small>Full research starts with a $10 planning allowance; quick overview starts with $2. This is not a promised charge or completion. Free evidence collection precedes a budget preflight. Requests stop before the next reservation exceeds your allowance; prior charges and uncertain requests count when resuming. Also set a provider credit limit on your dedicated key.</small>
+<label for="profile">Model profile</label><select id="profile"><option value="balanced">Balanced — Claude Opus analysis, GPT-5.6 review</option><option value="economy">Economy — open-weight DeepSeek analysis, Kimi review</option></select>
+<label for="budget">Total spending allowance (USD)</label><input id="budget" type="number" min="1" max="50" step="0.01" value="__DEFAULT_BUDGET__" required>
+<small>Full research starts with a $20 allowance (a ceiling: each call reserves conservatively before it is sent; a full run is expected to cost far less); quick overview starts with $2. This is not a promised charge or completion. Free evidence collection precedes a budget preflight. Requests stop before the next reservation exceeds your allowance; prior charges and uncertain requests count when resuming. Also set a provider credit limit on your dedicated key.</small>
 <details><summary>Additional evidence</summary><label for="evidence">Optional dated source text or filing excerpt</label><textarea id="evidence" rows="5" maxlength="100000" placeholder="Include source URLs, dates and units. Useful if public sources are unavailable."></textarea></details>
 <button id="start">Generate research draft</button></form>
 <p id="status" role="status" aria-live="polite">Ready. Completed stages are saved locally and can be resumed.</p>
@@ -56,7 +56,7 @@ const form=document.getElementById('form'),start=document.getElementById('start'
 const keyInput=document.getElementById('key'),summary=document.getElementById('summary'),downloads=document.getElementById('downloads'),revalue=document.getElementById('revalue');
 const secContact=document.getElementById('sec-contact');
 const ticker=document.getElementById('ticker'),mode=document.getElementById('mode'),profile=document.getElementById('profile'),budget=document.getElementById('budget'),evidence=document.getElementById('evidence');
-let budgetEdited=false;budget.addEventListener('input',()=>{budgetEdited=true;});mode.addEventListener('change',()=>{if(!budgetEdited)budget.value=mode.value==='quick'?'2.00':'10.00';});
+let budgetEdited=false;budget.addEventListener('input',()=>{budgetEdited=true;});mode.addEventListener('change',()=>{if(!budgetEdited)budget.value=mode.value==='quick'?'2.00':'20.00';});
 form.addEventListener('submit',async(e)=>{e.preventDefault();clearTimeout(polling);start.disabled=true;memo.hidden=true;summary.hidden=true;revalue.hidden=true;downloads.replaceChildren();statusText('Starting…');
 const payload={key:keyInput.value,sec_contact:secContact.value,ticker:ticker.value,mode:mode.value,profile:profile.value,budget:Number(budget.value),evidence:evidence.value};keyInput.value='';secContact.value='';
 try{const response=await fetch('/run',{method:'POST',headers:{'Content-Type':'application/json','X-Research-Token':csrf},body:JSON.stringify(payload)});
@@ -182,7 +182,7 @@ def create_server(port=8765, directory='research-output', default_mode='full', *
             if not self.valid():
                 return self.response(403, {'error': 'Local host required'})
             if self.path == '/':
-                page = PAGE.replace('__TOKEN__', token).replace('__FULL_SELECTED__', 'selected' if default_mode == 'full' else '').replace('__QUICK_SELECTED__', 'selected' if default_mode == 'quick' else '').replace('__DEFAULT_BUDGET__', '10.00' if default_mode == 'full' else '2.00')
+                page = PAGE.replace('__TOKEN__', token).replace('__FULL_SELECTED__', 'selected' if default_mode == 'full' else '').replace('__QUICK_SELECTED__', 'selected' if default_mode == 'quick' else '').replace('__DEFAULT_BUDGET__', '20.00' if default_mode == 'full' else '2.00')
                 return self.response(200, page, html=True)
             if self.path == '/status' and self.authenticated():
                 with lock:
@@ -248,7 +248,7 @@ def create_server(port=8765, directory='research-output', default_mode='full', *
                 profile = data.get('profile', 'balanced')
                 if profile not in MODELS:
                     raise ValueError('Invalid model profile')
-                budget = float(data.get('budget', 10 if mode == 'full' else 2))
+                budget = float(data.get('budget', 20 if mode == 'full' else 2))
                 if not math.isfinite(budget) or not 1 <= budget <= 20:
                     raise ValueError('Browser budget must be between $1 and $20')
                 evidence = data.get('evidence', '')

@@ -23,45 +23,82 @@ from . import core
 from .costs import cost_summary
 from .analytics import annual_metrics
 from .fundamentals import yahoo_financials
-from .inputs import canonical_reported_inputs, pin_reported_inputs
-from .quality import DIAGNOSTIC_SCOPE, claim_ledger, inspect_memo, parse_json, parse_review
-from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_facts, archive_focus_excerpts
+from .inputs import canonical_reported_inputs, operating_company_gate, pin_reported_inputs
+from .quality import (DIAGNOSTIC_SCOPE, HOUSE_ATTRIBUTION, RUBRIC, TRADING_TERMS, assessment_findings, claim_ledger,
+                      inspect_memo, parse_json, parse_review, prereview_checks, prose_words, trace_pools, untraced_figures)
+from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_breakdown_facts, inline_facts, archive_focus_excerpts
+from .evidence_tables import (breakdown_tables, filing_supplement_for, historical_baseline, render_baseline,
+                              render_breakdowns)
 from .macro import gather_us_calibration
 from .market_beta import gather_weekly_beta
 from .prompt_context import valuation_context as render_valuation_context
 from .primary_debt import classify_primary_debt
-from .valuation import evaluate, materialize, save_valuation
+from .operating import derive as derive_operating
+from .valuation import _timing as _valuation_timing, evaluate, materialize, save_valuation
+from .companyfacts import CONCEPT_SELECTION_SHA256
 
 VERSION = 'full-2'
-DEFAULT_BUDGET = 10.0
-SECTIONS = '''Executive valuation conclusion; variant thesis and what the market price implies;
-business economics and industry/competition; management and capital allocation; historical
-financial quality; operating forecast and valuation; bear/base/bull scenarios; catalysts;
-risks and disconfirming evidence; evidence gaps and unresolved questions.'''
+# The allowance is a ceiling, not the expected bill. Each call reserves its prompt
+# bytes at the model's highest price tier before it is sent; with GPT-5.6 Sol a
+# review reserves about $5, so a run with one revision needs about $15 of headroom
+# although it is expected to cost about $4.50 (Opus review, 2026-11-15).
+DEFAULT_BUDGET = 20.0
+SECTIONS = '''Write these sections, in this order, as prose around the computed valuation summary that
+Python places above your text (do not re-type its tables; refer to its rows by name):
+(1) Valuation conclusion (about 150 words). The summary above already states the values, what the
+price implies, which inputs alone can and cannot bring value to the price, and the convention step
+the value is most sensitive to; do not restate or reinterpret those figures, and do not assign the
+difference between value and price to causes beyond that computed account. Say in plain words what
+the house concludes and which evidence the conclusion rests on most, citing summary rows by name.
+(2) Variant view (about 400 words): on the inputs that can close the difference, why the house
+forecast differs from what the price requires, with primary evidence. Answer the strongest sourced
+opposing case with operating evidence (demand, pricing, margins, capital needs). If the operating
+forecast is close to consensus, say so.
+(3) Business economics, industry and competition (about 450 words), from primary sources and the
+computed tables.
+(4) Management, capital allocation and financial history (about 450 words), from the reported
+history and breakdown tables; compare buybacks with house value using computed figures.
+(5) Forecast and scenarios (about 500 words): how the bear, base and bull paths start from reported
+results, what drives each, and, if the weights depart from 25/50/25, the cited basis for that. Scenario drivers are house assumptions:
+say so, and cite a source only for the observed fact behind each. Outside estimates appear only as
+labelled unverified context.
+(6) Observations that would change the value (about 300 words), from the computed monitoring cases.
+(7) Risks, including evidence that the valuation framework is wrong (about 300 words).
+(8) Evidence gaps and unresolved questions (about 200 words).'''
+# Memo stages rewrite the full memo. A live revision overran a 14,000-token
+# limit as the memo grew, so the limit leaves room above the word budget.
+MEMO_TOKENS = 18000
+MEMO_WORDS = 'about 3,000 words of prose in total; Python adds the tables, and a revision replaces text rather than adding to it'
 FORECAST_SCHEMA = """Return ONLY compact JSON for house forecasts:
 {"assumptions_label":"House forecasts, not reported facts or guidance",
- "scenario_rationales":{"bear":"Evidence and economic mechanism [S#]","base":"...","bull":"..."},
- "scenarios":{"bear":{"probability":0.25,"growth_rates":[0.02,0.02,0.02,0.02,0.02],
- "ebit_margins":[0.15,0.15,0.15,0.15,0.15],"tax_rate":0.25,"sales_to_capital":2,
- "wacc":0.10,"terminal_growth":0.02,"terminal_roic":0.12},
- "base":{"probability":0.50,"growth_rates":[0.04,0.04,0.04,0.04,0.04],
- "ebit_margins":[0.20,0.20,0.20,0.20,0.20],"tax_rate":0.25,"sales_to_capital":2.5,
- "wacc":0.09,"terminal_growth":0.025,"terminal_roic":0.15},
- "bull":{"probability":0.25,"growth_rates":[0.06,0.06,0.06,0.06,0.06],
- "ebit_margins":[0.25,0.25,0.25,0.25,0.25],"tax_rate":0.25,"sales_to_capital":3,
- "wacc":0.08,"terminal_growth":0.03,"terminal_roic":0.20}}}.
-These numbers demonstrate the schema; they are not company assumptions to copy.
-Use 5–10 forecast years, the same horizon in all scenarios. Probabilities sum to 1;
-WACC exceeds terminal growth. All rates are decimals, not percentage integers.
+ "scenario_rationales":{"bear":"Evidence and economic mechanism for this scenario [S#]","base":"...","bull":"..."},
+ "scenarios":{"bear":{"probability":<decimal>,"tax_rate":<decimal>,"sales_to_capital":<number>,
+ "terminal_roic":0.15},"base":{<same fields>},"bull":{<same fields>}}}
+plus EITHER an operating_model (preferred when the evidence reports revenue by product, service or
+segment; see below), in which case Python derives each scenario's growth and margins from its drivers
+and any stated growth_rates or ebit_margins are dropped, OR, without one, "growth_rates":[<10 annual
+decimals>] and "ebit_margins":[<10 annual decimals>] in every scenario.
+Placeholders mark where your evidence-based numbers go; nothing here is a default.
+Start from the COMPUTED FROM REPORTED FILINGS tables: year-1 growth, gross and operating margins,
+expense levels, tax rate and capital intensity begin at the reported history and year to date, and
+each departure needs evidence in scenario_rationales.
+Use 10 forecast years, the same horizon in all scenarios. Probabilities default to 0.25 bear,
+0.50 base, 0.25 bull. A different split needs "weights_basis": evidence [S#] that makes one state
+more likely than the default; without it Python sets the default. Never cite frequencies, base
+rates or historical patterns the evidence does not contain. All rates are decimals.
+The RATE CONVENTION FOR THIS RUN, stated after these instructions, says whether to give
+scenario wacc and terminal_growth.
 Keep each rationale under 100 words. Do not reproduce historical actuals, cash/debt
 reconciliations, source passages, calculated cashflows or valuation targets: Python
 locks reported inputs and independently computes the outputs.
 The unlevered operating-company model uses GAAP EBIT less operating taxes and
 incremental revenue / sales-to-capital reinvestment. Maintenance investment offsets
 D&A; GAAP EBIT already expenses SBC, R&D and operating rent. Do not deduct those
-again. Explicitly justify growth/margin fade, capital efficiency, tax, WACC,
-terminal growth and terminal ROIC. Terminal reinvestment is g/ROIC of NOPAT;
-explain a material forecast-to-terminal capital-intensity transition.
+again. Explicitly justify growth/margin fade, capital efficiency, tax and WACC.
+Terminal reinvestment is g/ROIC of NOPAT;
+explain a material forecast-to-terminal capital-intensity transition. Terminal return on new
+capital is a house convention that Python sets (15%, about the market's long-run return on new
+capital); the memo shows the value at the terminal discount rate and at 25% beside it.
 Optional counterfactuals map names to base-scenario forecast overrides (the same horizon).
 They are separate diagnostic cases, never probability weights or reported facts; Python computes
 their values. A plausible competing market-pricing case can be included without claiming its
@@ -81,24 +118,44 @@ operating_model instead of guessing consolidated growth/margins. Its shape is
 "bull":"same complete object structure"}}. Example amounts are not issuer forecasts.
 Starting category revenue must reconcile exactly to reported total revenue. Gross margin arrays
 are forward assumptions; never call unreported individual category margins observed facts.
+reported_inputs.operating_reference gives the last reported year's gross profit, cost of revenue,
+R&D, selling_general_administrative, operating expenses (excluding cost of revenue) and operating
+income, and the year to date of the first forecast year where reported. Start year-1 gross margins
+and expense amounts from the most recent reported run-rate. A year-1 EBIT margin more than 5 points
+(less for low-margin businesses) from both the reported annual and year-to-date operating margins is
+rejected unless margin_continuity_basis (an object keyed by bear, base, bull) explains that
+scenario's step with evidence [S#] from the sources. Reinvestment starts from the reported run-rate
+too: a scenario whose year-1 net reinvestment (year-1 revenue change / sales_to_capital) is below
+two thirds of the last reported net reinvestment, with sales_to_capital above 1.5 times the reported
+incremental rate, is rejected unless capital_efficiency_basis (keyed by bear, base, bull) explains
+it with evidence [S#]. Expenses grow with revenue at about the reported ratio of cost growth to
+revenue growth (at most one for one), and final-year EBIT margins stay within 5 points of the
+reported peak, unless cost_path_basis (keyed by bear, base, bull) explains the departure with [S#].
 Use aggregate_ebit_margins mode without gross margins/expenses if only category revenues are supported.
 Omit main scenario growth_rates and, in gross mode, ebit_margins: Python derives them.
-If complete dated market inputs are available, provide discount_rate using the documented
-rates.py schema: matched risk_free_rate/equity_risk_premium observations, explicit unlevered_beta,
-market_equity, financial_debt, finance_lease_debt, pretax_cost_of_debt, marginal_tax_rate.
-Every record needs value, observed_at, source_refs and label; currency/amount_unit match the plan,
-as_of is the valuation date, lease_convention is gaap_operating. Omit main WACC when this
+When the evidence includes the matched risk-free rate and implied equity risk premium, a dated
+discount_rate is required (rates.py schema). You supply unlevered_beta, pretax_cost_of_debt and
+marginal_tax_rate, and outside US-dollar plans a risk_free_rate and equity_risk_premium in the
+cash-flow currency; Python supplies the other records, as described below. marginal_tax_rate is the statutory
+national plus subnational rate (United States: about 25%, the 21% federal rate plus state), never
+the reported effective rate; the effective rate the evidence supports as durable belongs in
+scenario tax_rate (cite the cash tax rate and any legislated minimum such as Pillar Two).
+Build unlevered_beta bottom-up: {"calculation":"bottom_up_sector_weighted","sectors":[{"sector":
+"<exact industry name from the supplied industry beta table>","weight":<share of the business>}],
+"source_refs":["S#"],"label":"why each business maps to that industry and how weights were set"}.
+Weight by the business mix (reported segment revenue, or value if the evidence supports it);
+Python pins every industry beta from the table, so write no beta numbers. The weekly regression
+beta is computed separately as a cross-check. Python also pins the market beta used for the
+terminal cost of capital and dates the valuation; do not supply term_structure,
+terminal_unlevered_beta or valuation_timing.
+Every record you write needs value, observed_at, source_refs and label; currency/amount_unit match
+the plan, as_of is the valuation date, lease_convention is gaap_operating. Omit main WACC when this
 calculation governs. Label sector/yield proxies and differing dates; do not invent a calibration.
-Respect the pinned bridge's finance-lease allocation. If a combined debt subtotal includes
-finance leases and their separate amount is known, financial_debt equals combined debt less
-that amount and finance_lease_debt equals the same reported lease amount, counted once.
-If the split is unknown, use financial_debt at the combined amount with
-allocation:"combined_debt_including_finance_leases" and a label explicitly naming combined debt
-and leases; finance_lease_debt then has value:0, allocation:"included_in_financial_debt" and
-a label explicitly saying zero is an allocation within the combined amount, not an absent liability.
-Both financing records use the same annual balance-sheet measurement date, currency and source
-support. Do not invent a separate lease amount or add leases twice to the canonical bridge.
-If completed-week issuer/benchmark evidence supports a historical equity beta, the unlevered_beta
+Python copies market_equity (quote times reported shares), financial_debt and finance_lease_debt
+from the reported bridge, and, for US-dollar plans with the implied premium in the evidence, the
+risk_free_rate and equity_risk_premium from that source. You supply unlevered_beta,
+pretax_cost_of_debt and marginal_tax_rate; the other records may be omitted.
+Only when no industry in the table fits the business, the unlevered_beta
 record may instead omit value and include calculation:"historical_issuer_cash_corrected" and
 historical_equity_beta:<measured value>, with observed_at, source_refs and label retained.
 Python uses the explicit nonoperating cash bridge and dated financing inputs to derive the
@@ -112,16 +169,14 @@ Without supported category/rate data retain an explicit consolidated house model
 Optional counterfactuals may use operating_overrides with existing component growth_rates/gross_margins
 or existing expense arrays. Never mix these with aggregate growth/EBIT overrides. Maximum eight cases.
 Optional monitoring is a list of name, observation, review_by(YYYY-MM-DD), threshold,
-source_refs and exactly one of counterfactual(name) or calibration_comparison(name).
+source_refs, direction ("lowers_value" or "raises_value": what crossing the threshold does to value)
+and exactly one of counterfactual(name) or calibration_comparison(name); the linked case must move
+value in that direction.
 Python supplies each conditional value and change.
 These are analyst-selected decision thresholds, not company guidance or automatic forecasts.
-Justify reinvestment and terminal returns; avoid a hidden terminal cash discontinuity.
-For a meaningful positive valuation, select an explicit conditional research entry rule:
-"entry_policy":{"basis":"base"|"weighted","margin_of_safety":<decimal from zero to below one>,
-"label":"House valuation entry rule","rationale":"Why this valuation basis and discount are appropriate"}.
-These four fields are exact. Python computes reference value * (1 - margin_of_safety).
-Choose and justify the discount; zero is allowed and no 20% or other policy is supplied by default.
-This is a conditional valuation threshold, not personal trading, sizing or tax advice.
+Justify reinvestment; avoid a hidden terminal cash discontinuity.
+This is valuation research only: do not supply entry thresholds, margins of safety or other
+trading rules.
 Optional "repurchase_tests":[{"name":"historical_price_comparison","amount":<whole currency units>,
 "price":<currency per ordinary share>,"source_refs":["S1"],"label":"Exact period/definition and conditional scope",
 "interpretation":"historical_retrospective_conditional"|"forward_conditional_illustration"}].
@@ -144,12 +199,673 @@ operating view is supported, say so and defend the actual rate/terminal/valuatio
 Represent a sourced strongest opposing economic case coherently; a broker target alone or an
 isolated rate substitution does not reconstruct its model. Do not copy issuer-specific examples.
 '''
-REVIEW_SCHEMA = '''Return ONLY {"verdict":"pass"|"revise","findings":[{"id":"F1",
-"severity":"blocker"|"major"|"minor","issue":"precise defect and location",
-"source_refs":["S1"],"current_excerpt":"exact quote from the CURRENT draft, at most 1200 characters","fix":"specific correction or evidence needed"}]}.
+REVIEW_SCHEMA = '''Return ONLY {"verdict":"pass"|"revise","central_weakness":{"claim":"the one assumption or
+convention that, if wrong, most changes the conclusion","computed_effect":"its value effect from the
+computed output, or not computed","memo_handles_it":"yes"|"partly"|"no"},"gap_explained":"yes"|"partly"|"no",
+"findings":[{"id":"F1",
+"severity":"blocker"|"major"|"minor","rule":"the quality-standard rule ID the defect breaks, such as M3","issue":"precise defect and location",
+"source_refs":["S1"],"current_excerpt":"one contiguous verbatim quote from the CURRENT draft, at most 1200 characters, no added quotation marks or ellipses; for an omission, the heading where the content belongs","fix":"specific correction or evidence needed"}]}.
 Findings are unresolved; use revise if any blocker/major exists. Use pass only when no material
-finding remains. Do not manufacture defects to fill a quota, and verify every accusation
+finding remains. memo_handles_it and gap_explained are recorded for the reader; raise a finding only
+for a defect under a named rule. Severity follows the computed value effect: blocker when it changes the conclusion or the
+main source of the difference between value and price; minor when under 2% of base value. Do not manufacture defects to fill a quota, and verify every accusation
 against the actual draft. Valid source IDs alone do not prove a claim is supported.'''
+
+
+# A second, fresh read of every blocker or major before it costs a revision.
+# Live reviews (2026-11-14) drew different majors from one draft, and one major
+# accused a sentence of doing what it did not do. Python's own findings are
+# facts and are not re-checked.
+FINDING_CHECK = ('Check each review finding below against the draft, the evidence and the Python valuation. A finding '
+    'is upheld when its quoted text is in the draft, that text breaks the named rule of the quality standard, and the '
+    'evidence or computed output supports the accusation. Refute it only when the draft, the evidence or the computed '
+    'output plainly shows it is wrong: the draft already does what the finding asks, the quoted text does not break '
+    'the named rule, the figure is in the computed output or a primary source, or the finding asks for something the '
+    'standard does not require. When unsure, uphold it. Do not add findings or change severities. Return ONLY JSON '
+    '{"checks":[{"id":"F1","upheld":true|false,"reason":"one sentence naming the draft text, source or computed '
+    'figure that decides it"}]}.')
+FINDING_CHECK_TOKENS = 4000
+# Broker-dealers, card issuers and money transmitters run as operating companies
+# only when they report an operating-income line (Goldman Sachs does not).
+FINANCIAL_SIC_NEEDING_OPERATING_INCOME = frozenset({'6099', '6141', '6153', '6199', '6211'})
+EVIDENCE_ABOVE = '\nEvidence: in the evidence block above.'
+
+
+def _evidence_prefix(context):
+    """The evidence block every Claude stage shares, first in the prompt so the provider can cache it."""
+    return 'Evidence:\n'+context+'\n'
+
+
+def _review_prefix(context, valuation_context, visible):
+    """Evidence, valuation and the fenced draft: identical for the review and its finding check."""
+    return (_evidence_prefix(context)+'Valuation:\n'+valuation_context+
+            '\nDraft (quote only text between the markers):\n<<<DRAFT\n'+visible+'\nDRAFT>>>\n')
+
+
+def _carried_refutations(state, iteration, manifest):
+    """(rule, excerpt) -> reason for model-check refutations that still apply to this review.
+
+    Only the model check's refutations carry (Python's are recomputed), only from
+    earlier reviews of the same valuation in the same review cycle, and never for
+    a heading quoted for an omission: a later, different finding on the same text
+    was otherwise refuted without a check and the draft passed (Opus review, 2026-11-15).
+    """
+    carried={}
+    for record in state.get('review_history',[]):
+        if not (state.get('revision_base',0)<=record['iteration']<iteration):
+            continue
+        if (record.get('manifest') or {}).get('valuation_sha256')!=manifest.get('valuation_sha256'):
+            continue
+        for finding in (record.get('finding_check') or {}).get('refuted',[]):
+            excerpt=finding.get('current_excerpt')
+            reason=str(finding.get('check_reason',''))
+            if (not excerpt or excerpt.lstrip().startswith('#') or
+                    reason.startswith(('Python traced','The quoted text','Refuted in review'))):
+                continue
+            carried[(finding.get('rule'),excerpt)]=f'Refuted in review {record["iteration"]}: {reason}'
+    return carried
+
+
+def _check_ids(material):
+    """Positional IDs for the check: reviewer, assessment and earlier IDs can collide."""
+    return [f'C{index}' for index in range(1, len(material) + 1)]
+
+
+def _refuted_findings(raw, material):
+    """Positions in ``material`` that the check refuted, with the stated reason.
+
+    Anything unparseable, malformed or unstated is upheld, and an ID that the
+    check both upholds and refutes is upheld.
+    """
+    try:
+        value = _response_json(raw)[0]
+    except (ValueError, TypeError):
+        return {}
+    checks = value.get('checks') if isinstance(value, dict) else None
+    position = {identifier: index for index, identifier in enumerate(_check_ids(material))}
+    refuted, upheld_ids = {}, set()
+    for check in checks if isinstance(checks, list) else []:
+        identifier = check.get('id') if isinstance(check, dict) else None
+        if not isinstance(identifier, str) or identifier not in position:
+            continue
+        upheld = check.get('upheld')
+        reason = check.get('reason')
+        if (upheld is False or (isinstance(upheld, str) and upheld.strip().lower() == 'false')) and \
+                isinstance(reason, str) and reason.strip():
+            refuted.setdefault(position[identifier], reason.strip()[:600])
+        else:
+            upheld_ids.add(position[identifier])
+    return {index: reason for index, reason in refuted.items() if index not in upheld_ids}
+
+
+# A response cut off at its limit is rejected, never used. The open-weight
+# research model overran a 3,500-token limit on a live search lane
+# (2026-11-14), so the limit leaves headroom over the requested length.
+WEB_RESEARCH_TOKENS = 6000
+# Plans are validated strictly and each failure names one defect. A single
+# repair could not clear two independent format defects in one live plan
+# (2026-11-14), which ended the run before a draft existed.
+PLAN_REPAIRS = 3
+PLAN_FIELD_RULES = ('\nField rules: unknown fields are rejected, so use only the field names shown above. Inside '
+                    'operating_model the top level has only currency, amount_unit, assumptions_label, earnings_mode, '
+                    'components and scenarios (optionally counterfactual_policy). Each component has only name, '
+                    'base_revenue and source_refs (optionally gross_margin_group, disclosure). Each operating scenario '
+                    'has only components and, in gross_profit_less_expenses mode, expenses. Each scenario component has '
+                    'only growth_rates and, in that mode, gross_margins. Do not add label, note, rationale, horizon or '
+                    'reconciliation fields there; explanations belong in scenario_rationales. amount_unit is always the '
+                    'literal string "currency_units", never a currency code. counterfactuals is an object keyed by case '
+                    'name, never a list, for example {"lower_services_margin":{"operating_overrides":{"components":'
+                    '{"services":{"gross_margins":[0.7,0.7,0.7,0.7,0.7]}}}}}. Each case changes the base scenario only: '
+                    'no bear, base or bull keys, no name or label field, and every array spans the full horizon. '
+                    'With an operating_model, scenarios omit growth_rates (and ebit_margins in gross_profit_less_expenses '
+                    'mode). With discount_rate, scenarios omit wacc. Follow the RATE CONVENTION FOR THIS RUN for '
+                    'terminal_growth. Every observed_at is a YYYY-MM-DD date, except the month (YYYY-MM) of an '
+                    'industry-table beta.')
+# Diagnostics a plan may carry. Each is computed separately from the scenario
+# values, so an invalid one can be left out without changing the valuation.
+OPTIONAL_PLAN_SECTIONS = ('counterfactuals','calibration_comparisons','monitoring','repurchase_tests')
+
+
+# Recorded in run state when a model-authored plan was locked under the
+# market-consistent conventions. A plan saved before them is re-locked under
+# its own conventions on resume instead of failing outside any repair loop.
+PLAN_CONVENTIONS = 'market_consistent_v1'
+
+
+def _default_reviewer(profile, strong):
+    """A reviewer from a different model than the author whenever one is configured.
+
+    Overriding the author model must not make the author review its own memo.
+    """
+    for candidate in (core.REVIEWERS.get(profile), core.MODELS.get(profile, (None, None))[1]):
+        if candidate and candidate != strong:
+            return candidate
+    return strong
+
+
+def _lock_and_value(candidate, state, *, apply_conventions=True, prior=None):
+    """Lock reported inputs and conventions into one plan, then value it.
+
+    Shared by the plan stage and the review-correction stage so both apply the
+    same pins, coverage check, source check and requested counterfactuals.
+    """
+    locked,changes=_lock_plan(candidate,state['sources'],apply_conventions=apply_conventions)
+    if not locked['reported_inputs']['coverage'].get('complete'):
+        raise ValueError('Reported-input coverage is incomplete')
+    _validate_plan_sources(locked,state['sources'])
+    if 'requested_counterfactuals' in state:
+        locked['counterfactuals']=copy.deepcopy(state['requested_counterfactuals'])
+    result=_evaluate(locked)
+    _check_continuity(locked,result,state['sources'],prior)
+    if prior and 'forecast_continuity' in result:
+        result['forecast_continuity']=forecast_continuity(locked,result)
+    if prior and 'reinvestment_continuity' in result:
+        result['reinvestment_continuity']=reinvestment_continuity(locked,result)
+    if prior and 'cost_path_continuity' in result:
+        result['cost_path_continuity']=cost_path_continuity(locked,result)
+    return locked,changes,result
+
+
+# A year-1 EBIT margin this far from the last reported operating margin needs
+# a stated, evidenced basis. Live plans on 2026-11-14 reached 27% and 20%
+# against Apple's reported 33% by inventing expense levels. The band narrows
+# for low-margin businesses, where five points exceeds all operating income.
+MARGIN_CONTINUITY = .05
+MARGIN_CONTINUITY_FLOOR = .015
+MARGIN_CONTINUITY_SHARE = .4
+# A correction that leaves a scenario's year-1 margin within this distance of
+# the plan it corrects keeps that plan's stated basis.
+MARGIN_CARRY_TOLERANCE = .01
+SCENARIO_NAMES = ('bear','base','bull')
+
+
+def _continuity_band(margin):
+    return min(MARGIN_CONTINUITY,max(MARGIN_CONTINUITY_FLOOR,MARGIN_CONTINUITY_SHARE*abs(margin)))
+
+
+def forecast_continuity(plan, result):
+    """Year-1 EBIT margin in each scenario against the reported annual and year-to-date margins."""
+    reference=((plan or {}).get('reported_inputs') or {}).get('operating_reference') or {}
+    margin=reference.get('operating_margin')
+    if not isinstance(margin,(int,float)) or not result or not result.get('scenarios'):
+        return None
+    ytd=reference.get('year_to_date') if isinstance(reference.get('year_to_date'),dict) else None
+    ytd_margin=ytd.get('operating_margin') if ytd and isinstance(ytd.get('operating_margin'),(int,float)) else None
+    bases=(plan or {}).get('margin_continuity_basis') if isinstance((plan or {}).get('margin_continuity_basis'),dict) else {}
+    rows={}
+    for name,scenario in result['scenarios'].items():
+        first=(scenario.get('cashflows') or [{}])[0]
+        year_one=first.get('ebit_margin')
+        if not isinstance(year_one,(int,float)):
+            continue
+        row={'year_one_ebit_margin':year_one,'change_percentage_points':(year_one-margin)*100,
+             'within_band':abs(year_one-margin)<=_continuity_band(margin)+1e-12}
+        if ytd_margin is not None:
+            row['change_from_year_to_date_percentage_points']=(year_one-ytd_margin)*100
+            row['within_band']=row['within_band'] or abs(year_one-ytd_margin)<=_continuity_band(ytd_margin)+1e-12
+        if isinstance(bases.get(name),str):
+            row['stated_basis']=bases[name]
+        rows[name]=row
+    lines=reference.get('lines') or {}
+    output={'reported_operating_margin':margin,'period':reference.get('period'),
+            'reported_lines':{key:line.get('value') for key,line in lines.items()},
+            'source_refs':sorted({ref for line in lines.values() for ref in line.get('source_refs',[])}),
+            'band_percentage_points':_continuity_band(margin)*100,'scenarios':rows,
+            'basis':'Year-1 EBIT margin from the computed cash flows against the reported operating margin of the revenue '
+                    'anchor year and, where reported, the year to date of the first forecast year. A diagnostic of '
+                    'forecast continuity; the reported lines are not valuation inputs.'}
+    if ytd_margin is not None:
+        output['year_to_date']={'operating_margin':ytd_margin,'period':ytd.get('period'),
+                                'source_refs':ytd.get('source_refs',[]),'band_percentage_points':_continuity_band(ytd_margin)*100}
+    return output
+
+
+# Year-1 reinvestment needs a stated basis when it falls below this share of the
+# last reported net reinvestment while sales-to-capital exceeds this multiple of
+# the reported incremental rate. A live Microsoft plan (2026-11-15) reinvested
+# USD 43.6 billion in year 1 against USD 81.6 billion reported, at twice the
+# reported capital efficiency, and was valued at 1.49 times the price.
+REINVESTMENT_YEARS = 3
+REINVESTMENT_SHARE = 2 / 3
+REINVESTMENT_RATIO = 1.5
+
+
+def reinvestment_reference(sources):
+    """Last reported net reinvestment and the incremental sales-to-capital behind it, or None.
+
+    Net reinvestment is capital expenditure less depreciation and amortization plus
+    acquisitions. A business whose depreciation exceeds its capital spending, or
+    whose revenue fell, has no meaningful rate and is not checked.
+    """
+    grouped={}
+    for sid,row in _history_rows(sources):
+        grouped.setdefault(sid,[]).append(row)
+    for sid,rows in grouped.items():
+        usable=[row for row in rows if all(isinstance(row.get(key),(int,float)) and not isinstance(row.get(key),bool)
+                                           for key in ('revenue','capital_expenditure','depreciation_amortization'))]
+        if len(usable)<2:
+            continue
+        recent=usable[-(REINVESTMENT_YEARS+1):]
+        # Finance-lease additions are capacity bought on credit (Microsoft FY26: USD 24.6
+        # billion, 21% of capex), counted as reinvestment by owner choice (2026-11-15).
+        nets=[row['capital_expenditure']-row['depreciation_amortization']+(row.get('acquisitions') or 0)+
+              (row.get('finance_lease_additions') or 0) for row in recent[1:]]
+        growth=recent[-1]['revenue']-recent[0]['revenue']
+        if sum(nets)<=0 or nets[-1]<=0 or growth<=0:
+            return None
+        last=recent[-1]
+        return {'fiscal_year_end':last.get('fiscal_year_end'),'net_reinvestment':nets[-1],
+                'capital_expenditure':last['capital_expenditure'],'depreciation_amortization':last['depreciation_amortization'],
+                'acquisitions':last.get('acquisitions'),'finance_lease_additions':last.get('finance_lease_additions'),
+                'incremental_sales_to_capital':growth/sum(nets),'years':len(nets),
+                'source_refs':[sid],
+                'basis':'Net reinvestment is reported capital expenditure less depreciation and amortization plus '
+                        'acquisitions and finance-lease additions where reported; incremental sales-to-capital is the '
+                        'revenue increase over those years divided by their net reinvestment. Working capital is not included.'}
+    return None
+
+
+def reinvestment_continuity(plan, result):
+    """Year-1 net reinvestment and sales-to-capital in each scenario against the reported reference."""
+    reference=(plan or {}).get('reinvestment_reference')
+    if not isinstance(reference,dict) or not result or not result.get('scenarios'):
+        return None
+    bases=(plan or {}).get('capital_efficiency_basis') if isinstance((plan or {}).get('capital_efficiency_basis'),dict) else {}
+    rows={}
+    for name,scenario in result['scenarios'].items():
+        first=(scenario.get('cashflows') or [{}])[0]
+        reinvested,growth,revenue=first.get('net_reinvestment'),first.get('revenue_growth'),first.get('revenue')
+        if not all(isinstance(x,(int,float)) for x in (reinvested,growth,revenue)) or growth<=-1:
+            continue
+        change=revenue-revenue/(1+growth)
+        efficiency=change/reinvested if reinvested>0 else None
+        low=growth>0 and reinvested<REINVESTMENT_SHARE*reference['net_reinvestment'] and (
+            efficiency is None or efficiency>REINVESTMENT_RATIO*reference['incremental_sales_to_capital'])
+        row={'year_one_net_reinvestment':reinvested,'year_one_sales_to_capital':efficiency,'within_band':not low}
+        if isinstance(bases.get(name),str):
+            row['stated_basis']=bases[name]
+        rows[name]=row
+    return dict(reference,scenarios=rows,share=REINVESTMENT_SHARE,ratio=REINVESTMENT_RATIO)
+
+
+# Owner choice (2026-11-15): costs after year 1 follow the reported ratio of cost
+# growth to revenue growth unless a cited basis says otherwise. Plans forecast
+# R&D and SG&A in dollars and let them fall from 19% to 10% of Microsoft's
+# revenue, lifting every scenario's margin; the ratio is capped at 1 so a period
+# of costs outgrowing revenue (Apple R&D) does not force margin compression.
+COST_ELASTICITY_TOLERANCE = .25
+MARGIN_PEAK_ALLOWANCE = .05
+# A break also needs the cost share of revenue to fall this much; the ratio of two
+# small growth rates is unstable (a bear case at +1.5% revenue, +1.0% costs).
+COST_SHARE_FALL = .02
+COST_LINE_WORDS = {'research_and_development': ('research', 'r_and_d', 'rd'),
+                   'selling_general_administrative': ('selling', 'general', 'administrative', 'marketing', 'sga', 'sg_a')}
+
+
+def _cost_lines(expenses, lines):
+    """Plan expense arrays that correspond to the reported lines the reference uses."""
+    chosen=[]
+    for name,values in expenses.items():
+        words=str(name).lower()
+        if isinstance(values,list) and values and any(any(word in words for word in COST_LINE_WORDS.get(line,()))
+                                                      for line in lines):
+            chosen.append(values)
+    return chosen
+
+
+def cost_path_reference(sources):
+    """Reported R&D and SG&A growth relative to revenue growth, and the peak operating margin, or None."""
+    grouped={}
+    for sid,row in _history_rows(sources):
+        grouped.setdefault(sid,[]).append(row)
+    for sid,rows in grouped.items():
+        usable=[row for row in rows if isinstance(row.get('revenue'),(int,float)) and row['revenue']>0]
+        if len(usable)<3:
+            continue
+        recent=usable[-5:]
+        first,last=recent[0],recent[-1]
+        lines=[line for line in ('research_and_development','selling_general_administrative')
+               if all(isinstance(row.get(line),(int,float)) and row[line]>0 for row in (first,last))]
+        margins=[row['operating_margin'] for row in recent if isinstance(row.get('operating_margin'),(int,float))]
+        if not lines or not margins:
+            return None
+        years=len(recent)-1
+        revenue_growth=(last['revenue']/first['revenue'])**(1/years)-1
+        opex_first,opex_last=sum(first[line] for line in lines),sum(last[line] for line in lines)
+        elasticity=(((opex_last/opex_first)**(1/years)-1)/revenue_growth) if revenue_growth>.01 else None
+        return {'fiscal_year_end':last.get('fiscal_year_end'),'years':years,'lines':lines,
+                'opex_elasticity':elasticity,'last_opex_share':opex_last/last['revenue'],
+                'max_operating_margin':max(margins),'source_refs':[sid],
+                'basis':'Cost growth relative to revenue growth uses the reported '+' and '.join(line.replace('_',' ') for line in lines)+
+                        ' over the reported years; the peak is the highest reported operating margin in those years.'}
+    return None
+
+
+def cost_path_continuity(plan, result):
+    """Plan cost growth against reported cost growth, and final-year margin against the reported peak."""
+    reference=(plan or {}).get('cost_path_reference')
+    if not isinstance(reference,dict) or not result or not result.get('scenarios'):
+        return None
+    bases=(plan or {}).get('cost_path_basis') if isinstance((plan or {}).get('cost_path_basis'),dict) else {}
+    model=(plan or {}).get('operating_model') or {}
+    floor=(min(reference['opex_elasticity'],1.0)-COST_ELASTICITY_TOLERANCE
+           if isinstance(reference.get('opex_elasticity'),(int,float)) else None)
+    rows={}
+    for name,scenario in result['scenarios'].items():
+        flows=scenario.get('cashflows') or []
+        if not flows:
+            continue
+        explicit=min(scenario.get('explicit_forecast_years') or len(flows),len(flows))
+        final=flows[explicit-1]
+        row={'final_ebit_margin':final['ebit_margin'],'reasons':[]}
+        expenses=(((model.get('scenarios') or {}).get(name) or {}).get('expenses')
+                  if model.get('earnings_mode')=='gross_profit_less_expenses' else None)
+        if isinstance(expenses,dict) and expenses and floor is not None:
+            arrays=_cost_lines(expenses,reference.get('lines') or [])
+            horizon=min([len(values) for values in arrays]+[explicit]) if arrays else 0
+            if horizon>=2:
+                totals=[sum(values[index] for values in arrays) for index in range(horizon)]
+                revenues=[flows[index]['revenue'] for index in range(horizon)]
+                steps=horizon-1
+                if totals[0]>0 and revenues[0]>0 and totals[-1]>0 and revenues[-1]>revenues[0]:
+                    revenue_growth=(revenues[-1]/revenues[0])**(1/steps)-1
+                    if revenue_growth>.01:
+                        elasticity=((totals[-1]/totals[0])**(1/steps)-1)/revenue_growth
+                        row.update(plan_opex_elasticity=elasticity,final_opex_share=totals[-1]/revenues[-1])
+                        if elasticity<floor and totals[0]/revenues[0]-totals[-1]/revenues[-1]>=COST_SHARE_FALL:
+                            row['reasons'].append(f'costs grow {elasticity:.2f} times as fast as revenue against the reported '
+                                                  f'{reference["opex_elasticity"]:.2f}, falling to {totals[-1]/revenues[-1]:.1%} of revenue')
+        if final['ebit_margin']>reference['max_operating_margin']+MARGIN_PEAK_ALLOWANCE:
+            row['reasons'].append(f'the final-year EBIT margin of {final["ebit_margin"]:.1%} exceeds the reported peak of '
+                                  f'{reference["max_operating_margin"]:.1%} by more than {MARGIN_PEAK_ALLOWANCE*100:.0f} points')
+        row['within_band']=not row['reasons']
+        if isinstance(bases.get(name),str):
+            row['stated_basis']=bases[name]
+        rows[name]=row
+    return dict(reference,scenarios=rows,floor=floor)
+
+
+def _evaluate(plan):
+    """Value a locked plan and attach the forecast-continuity diagnostics."""
+    result=evaluate(plan)
+    continuity=forecast_continuity(plan,result)
+    if continuity:
+        result['forecast_continuity']=continuity
+    reinvestment=reinvestment_continuity(plan,result)
+    if reinvestment:
+        result['reinvestment_continuity']=reinvestment
+    costs=cost_path_continuity(plan,result)
+    if costs:
+        result['cost_path_continuity']=costs
+    return result
+
+
+def _cost_path_breaks(locked, result, known, prior):
+    """Scenarios whose cost path or final margin departs from the reported history without a cited basis."""
+    check=result.get('cost_path_continuity')
+    if not check:
+        return []
+    bases=locked.get('cost_path_basis')
+    if bases is not None and (not isinstance(bases,dict) or set(bases)-set(SCENARIO_NAMES)):
+        raise ValueError('cost_path_basis must be an object keyed by bear, base or bull')
+    bases=dict(bases or {})
+    if prior:
+        prior_plan,prior_result=prior
+        prior_rows=((prior_result or {}).get('cost_path_continuity') or {}).get('scenarios') or {}
+        prior_bases=(prior_plan or {}).get('cost_path_basis') or {}
+        for name,row in check['scenarios'].items():
+            before=prior_rows.get(name)
+            if (name not in bases and before and isinstance(prior_bases.get(name),str) and
+                    abs(row['final_ebit_margin']-before['final_ebit_margin'])<=MARGIN_CARRY_TOLERANCE):
+                bases[name]=prior_bases[name]
+                row['stated_basis']=bases[name]
+        if bases:
+            locked['cost_path_basis']=bases
+    breaks=[]
+    for name,row in check['scenarios'].items():
+        basis=bases.get(name)
+        cited=re.findall(r'\[(S\d+)\]',basis) if isinstance(basis,str) else []
+        unknown=[ref for ref in cited if known and ref not in known]
+        if unknown:
+            raise ValueError(f'cost_path_basis.{name} cites {", ".join(unknown)}, which is not in the evidence')
+        if not row['within_band'] and not (isinstance(basis,str) and len(basis.strip())>=40 and cited):
+            breaks.append(f'{name}: '+'; '.join(row['reasons']))
+    if not breaks:
+        return []
+    elasticity=check.get('opex_elasticity')
+    return ['Cost path departs from the reported history ('+
+            (f'reported {" and ".join(line.replace("_"," ") for line in check["lines"])} grew {elasticity:.2f} times as fast as '
+             f'revenue over {check["years"]} years; ' if isinstance(elasticity,(int,float)) else '')+
+            f'peak reported operating margin {check["max_operating_margin"]:.1%} [{", ".join(check["source_refs"])}]) in '+
+            ' | '.join(breaks)+'. Grow expenses with revenue at about the reported ratio (at most one for one) and keep '
+            'final-year margins near the reported range, or state the evidence in cost_path_basis.<scenario> with [S#] citations']
+
+
+def _reinvestment_breaks(locked, result, known, prior):
+    """Scenario labels whose year-1 reinvestment breaks from the reported run-rate without a cited basis."""
+    check=result.get('reinvestment_continuity')
+    if not check:
+        return []
+    bases=locked.get('capital_efficiency_basis')
+    if bases is not None and (not isinstance(bases,dict) or set(bases)-set(SCENARIO_NAMES)):
+        raise ValueError('capital_efficiency_basis must be an object keyed by bear, base or bull')
+    bases=dict(bases or {})
+    if prior:
+        prior_plan,prior_result=prior
+        prior_rows=((prior_result or {}).get('reinvestment_continuity') or {}).get('scenarios') or {}
+        prior_bases=(prior_plan or {}).get('capital_efficiency_basis') or {}
+        for name,row in check['scenarios'].items():
+            before=prior_rows.get(name)
+            if (name not in bases and before and isinstance(prior_bases.get(name),str) and
+                    before.get('year_one_net_reinvestment') and
+                    abs(row['year_one_net_reinvestment']/before['year_one_net_reinvestment']-1)<=.02):
+                bases[name]=prior_bases[name]
+                row['stated_basis']=bases[name]
+        if bases:
+            locked['capital_efficiency_basis']=bases
+    breaks=[]
+    for name,row in check['scenarios'].items():
+        basis=bases.get(name)
+        cited=re.findall(r'\[(S\d+)\]',basis) if isinstance(basis,str) else []
+        unknown=[ref for ref in cited if known and ref not in known]
+        if unknown:
+            raise ValueError(f'capital_efficiency_basis.{name} cites {", ".join(unknown)}, which is not in the evidence')
+        if not row['within_band'] and not (isinstance(basis,str) and len(basis.strip())>=40 and cited):
+            efficiency=row['year_one_sales_to_capital']
+            breaks.append(f'{name} {row["year_one_net_reinvestment"]/1e9:,.1f} billion'+
+                          (f' at sales-to-capital {efficiency:.2f}' if efficiency is not None else ''))
+    if not breaks:
+        return []
+    return [f'Year-1 net reinvestment is below two thirds of the reported {check["net_reinvestment"]/1e9:,.1f} billion '
+            f'(fiscal year ending {check["fiscal_year_end"]}: capital expenditure {check["capital_expenditure"]/1e9:,.1f} billion '
+            f'less depreciation and amortization {check["depreciation_amortization"]/1e9:,.1f} billion plus acquisitions'+
+            (' and finance-lease additions' if check.get('finance_lease_additions') else '')+'), '
+            f'with sales-to-capital above {REINVESTMENT_RATIO:g} times the reported {check["years"]}-year incremental rate of '
+            f'{check["incremental_sales_to_capital"]:.2f} [{", ".join(check["source_refs"])}], in: '+', '.join(breaks)+
+            '. Set sales_to_capital from the reported rate, or, if falling reinvestment is the forecast, state its evidence '
+            'in capital_efficiency_basis.<scenario> with [S#] citations to sources in the evidence']
+
+
+def _check_continuity(locked, result, sources=(), prior=None):
+    """Send a plan back when year-1 margins break from the reported results without a cited basis.
+
+    ``prior`` is the (plan, result) a review correction replaces: a scenario whose
+    year-1 margin the correction leaves unchanged keeps the prior plan's basis.
+    """
+    known_sources={source.get('id') for source in sources if isinstance(source,dict)}
+    reinvestment=_reinvestment_breaks(locked,result,known_sources,prior)+_cost_path_breaks(locked,result,known_sources,prior)
+    continuity=result.get('forecast_continuity')
+    if not continuity:
+        if reinvestment:
+            raise ValueError('. '.join(reinvestment))
+        return
+    bases=locked.get('margin_continuity_basis')
+    if bases is not None and (not isinstance(bases,dict) or set(bases)-set(SCENARIO_NAMES)):
+        raise ValueError('margin_continuity_basis must be an object keyed by bear, base or bull')
+    bases=dict(bases or {})
+    known={source.get('id') for source in sources if isinstance(source,dict)}
+    if prior:
+        prior_plan,prior_result=prior
+        prior_rows=((prior_result or {}).get('forecast_continuity') or {}).get('scenarios') or {}
+        prior_bases=(prior_plan or {}).get('margin_continuity_basis') or {}
+        for name,row in continuity['scenarios'].items():
+            before=prior_rows.get(name)
+            if (name not in bases and before and abs(row['year_one_ebit_margin']-before['year_one_ebit_margin'])<=MARGIN_CARRY_TOLERANCE
+                    and (isinstance(prior_bases.get(name),str) or before.get('within_band') is False)):
+                # The correction did not move year 1. A supplied plan's own step
+                # is treated as already accepted.
+                bases[name]=prior_bases.get(name) or 'Year-1 margin unchanged from the plan this correction replaces.'
+                row['stated_basis']=bases[name]
+                row['basis_carried_from_prior_plan']=True
+        if bases:
+            locked['margin_continuity_basis']=bases
+    breaks=[]
+    for name,row in continuity['scenarios'].items():
+        basis=bases.get(name)
+        cited=re.findall(r'\[(S\d+)\]',basis) if isinstance(basis,str) else []
+        unknown=[ref for ref in cited if known and ref not in known]
+        if unknown:
+            raise ValueError(f'margin_continuity_basis.{name} cites {", ".join(unknown)}, which is not in the evidence')
+        carried=row.get('basis_carried_from_prior_plan')
+        explained=carried or (isinstance(basis,str) and len(basis.strip())>=40 and bool(cited))
+        if not row['within_band'] and not explained:
+            breaks.append(f'{name} {row["year_one_ebit_margin"]:.1%}')
+    if not breaks:
+        if reinvestment:
+            raise ValueError('. '.join(reinvestment))
+        return
+    lines=continuity['reported_lines']
+    def billions(key):
+        value=lines.get(key)
+        return f'{value/1e9:,.1f} billion' if isinstance(value,(int,float)) else "not in this run's collected facts"
+    expenses=''
+    operating=locked.get('operating_model') or {}
+    if operating.get('earnings_mode')=='gross_profit_less_expenses':
+        planned=[]
+        for name in SCENARIO_NAMES:
+            amounts=((operating.get('scenarios') or {}).get(name) or {}).get('expenses') or {}
+            first={line:values[0] for line,values in amounts.items()
+                   if isinstance(values,list) and values and isinstance(values[0],(int,float))}
+            if first:
+                planned.append(name+' '+', '.join(f'{line} {value/1e9:,.1f} billion' for line,value in first.items()))
+        if planned:
+            expenses=' Year-1 expenses in the plan: '+'; '.join(planned)+'.'
+    period=(continuity.get('period') or {}).get('end_date','the last reported year')
+    ytd=continuity.get('year_to_date')
+    ytd_text=(f' The year to date ending {(ytd.get("period") or {}).get("end_date")} reports a '
+              f'{ytd["operating_margin"]:.1%} operating margin [{", ".join(ytd["source_refs"])}].' if ytd else '')
+    raise ValueError(
+        f'Year-1 EBIT margin breaks from the reported {continuity["reported_operating_margin"]:.1%} operating margin '
+        f'(fiscal year ending {period}) by more than {continuity["band_percentage_points"]:.1f} points in: '+', '.join(breaks)+
+        '.'+ytd_text+f' Reported for that year: gross profit {billions("gross_profit")}, R&D {billions("research_and_development")}, '
+        f'SG&A {billions("selling_general_administrative")}, operating expenses excluding cost of revenue '
+        f'{billions("operating_expenses")}, operating income {billions("operating_income")} [{", ".join(continuity["source_refs"])}].'+
+        expenses+' Start year-1 gross margins and expenses from the most recent reported run-rate (annual or year to date), '
+        'or, if a step of this size is the forecast, state its evidence in margin_continuity_basis.<scenario> with [S#] '
+        'citations to sources in the evidence'+(('. '+'. '.join(reinvestment)) if reinvestment else ''))
+
+
+CONTINUITY_RULE = ('\nYear-1 continuity: start year-1 gross margins and expenses from the most recent reported run-rate '
+                   'in reported_inputs.operating_reference (annual or year to date). A larger step needs '
+                   'margin_continuity_basis.<bear|base|bull> with [S#] citations to sources in the evidence. Start '
+                   'reinvestment from the reported net reinvestment and incremental sales-to-capital; a large fall needs '
+                   'capital_efficiency_basis.<bear|base|bull> with [S#] citations. Grow expenses at about the reported ratio to '
+                   'revenue growth and keep final-year margins near the reported peak, or cite cost_path_basis.<scenario>.')
+LEGACY_PLAN_NOTE = ('This forecast plan was saved before the market-consistent rate and terminal-growth conventions and is '
+                    'valued under its own conventions. Run in a new --output folder to build a plan under the current '
+                    'conventions.')
+
+
+def _add_plan_note(state, note):
+    """A note that describes the plan now valued; replaced when another plan is adopted."""
+    state.setdefault('plan_gap_notes',[])
+    if note not in state['plan_gap_notes']:
+        state['plan_gap_notes'].append(note)
+    if note not in state['gaps']:
+        state['gaps'].append(note)
+
+
+def _reset_plan_notes(state):
+    for note in state.pop('plan_gap_notes',[]):
+        if note in state['gaps']:
+            state['gaps'].remove(note)
+    state.pop('omitted_plan_sections',None)
+
+
+def _record_omitted_sections(state, omitted, stage):
+    for section,reason in omitted.items():
+        state.setdefault('omitted_plan_sections',{})[section]=reason
+        _add_plan_note(state,f'The {stage} optional {section} did not pass validation ({reason}) and was omitted; '
+                             'nothing was computed for it.')
+
+
+def _correction_rate_text(sources, plan, apply):
+    """The rate instruction for a review correction, matched to how it will be locked."""
+    currency=((plan.get('reported_inputs') or {}).get('currency') or plan.get('currency') or
+              canonical_reported_inputs(sources).get('currency'))
+    rate=plan.get('discount_rate') if isinstance(plan.get('discount_rate'),dict) else {}
+    if apply or rate.get('term_structure')=='glide_to_market_v1' or 'valuation_timing' in plan:
+        return _rate_convention(sources,currency)
+    growth={name:(scenario or {}).get('terminal_growth') for name,scenario in (plan.get('scenarios') or {}).items()
+            if isinstance(scenario,dict)}
+    return ('\nRATE CONVENTION FOR THIS RUN: this supplied plan keeps its own constant discount rate. Keep each scenario\'s '
+            'terminal_growth'+('' if rate else ' and wacc')+' as in the current proposal '+json.dumps(growth)+
+            ' unless a finding requires a change; do not add term_structure or valuation_timing.')
+
+
+def _omit_invalid_optional_sections(plan,validated):
+    """Validate a plan, leaving out optional diagnostics that alone fail.
+
+    Returns ``(validated(plan_used), {section: reason})``. If the plan is invalid
+    without any optional section, that core error is raised for repair. A paid
+    repair of a whole plan for one malformed diagnostic did not converge live
+    (2026-11-14): the model alternated between two rejected shapes.
+    """
+    try:
+        return validated(plan),{}
+    except (ValueError,KeyError,TypeError):
+        present=[section for section in OPTIONAL_PLAN_SECTIONS if section in plan]
+        if not present:
+            raise
+    kept={key:value for key,value in plan.items() if key not in present}
+    outcome,omitted=validated(kept),{}
+    for section in present:
+        trial={**kept,section:plan[section]}
+        try:
+            outcome=validated(trial)
+            kept=trial
+            continue
+        except (ValueError,KeyError,TypeError) as exc:
+            reason=str(exc)[:300]
+        # One malformed case should not take the section's valid cases with it.
+        cases=plan[section]
+        if isinstance(cases,dict) and len(cases)>1:
+            accepted={}
+            for name,case in cases.items():
+                trial={**kept,section:{**accepted,name:case}}
+                try:
+                    outcome=validated(trial)
+                    accepted[name]=case
+                except (ValueError,KeyError,TypeError) as exc:
+                    omitted[f'{section}.{name}']=str(exc)[:300]
+            if accepted:
+                kept={**kept,section:accepted}
+                continue
+        elif isinstance(cases,list) and len(cases)>1:
+            accepted=[]
+            for index,case in enumerate(cases):
+                trial={**kept,section:[*accepted,case]}
+                try:
+                    outcome=validated(trial)
+                    accepted.append(case)
+                except (ValueError,KeyError,TypeError) as exc:
+                    label=case.get('name',index) if isinstance(case,dict) else index
+                    omitted[f'{section}[{label}]']=str(exc)[:300]
+            if accepted:
+                kept={**kept,section:accepted}
+                continue
+        omitted[section]=reason
+    return outcome,omitted
 
 
 def _digest(value):
@@ -220,6 +936,20 @@ def _prepare_source(source):
     raw=source.get('raw_document')
     data=source.get('data',{})
     companyfacts=isinstance(data,dict) and data.get('fact_origin')=='sec_companyfacts'
+    # Reported history and product/segment tables are computed once here, so
+    # the forecast author and writer copy reported figures (2026-11-14: the
+    # writer took Apple's category revenue from unverified web excerpts).
+    # (The company-facts history is computed by normalize_companyfacts itself.)
+    if (isinstance(raw,str) and not companyfacts and isinstance(data,dict) and
+          (source.get('kind')=='regulatory_primary' or source.get('source_tier')=='regulatory_primary')):
+        try:
+            tables=breakdown_tables(inline_breakdown_facts(raw))
+        except (ValueError,TypeError,KeyError,ArithmeticError):
+            tables={}
+        if tables:
+            data=copy.deepcopy(data)
+            data['breakdown_tables']=tables
+            source['data']=data
     if isinstance(raw,str) and not companyfacts:
         facts=inline_facts(raw)
         if facts:
@@ -426,8 +1156,32 @@ def _refresh_primary_focus(folder,sources):
         raw=archive.read_bytes()
         if hashlib.sha256(raw).hexdigest()!=source.get('archive_sha256'):
             raise ValueError('Primary archive checksum changed; supply a new source instead of editing its archive')
+        # Reported history and breakdown tables are derived from the archive on
+        # every run, outside source.data, so a folder collected before they
+        # existed gets them without new paid research.
+        # Derived again on every run (a copy saved in source.data at collection
+        # would otherwise freeze the table at the code that collected it).
         if isinstance(source.get('data'),dict) and source['data'].get('fact_origin')=='sec_companyfacts':
+            try:
+                as_of=(source['data'].get('selection') or {}).get('as_of')
+                # Gaps in company facts (extension-tagged acquisitions and D&A, one half of a
+                # buyback pair, cover-page share counts) are filled from the 10-K's inline facts.
+                baseline=historical_baseline(json.loads(raw.decode('utf-8')),as_of=as_of,
+                                             supplement=filing_supplement_for(folder,sources,as_of))
+            except (ValueError,TypeError,KeyError,AttributeError,UnicodeDecodeError):
+                baseline=None
+            current=source.get('historical_baseline') or source['data'].get('historical_baseline')
+            if baseline and baseline['rows'] and baseline!=current:
+                source['historical_baseline']=baseline
+                changed=True
             continue  # Canonical JSON is audited through its structured facts, not HTML prose windows.
+        try:
+            tables=breakdown_tables(inline_breakdown_facts(raw.decode('utf-8')))
+        except (ValueError,TypeError,KeyError,ArithmeticError,UnicodeDecodeError):
+            tables={}
+        if tables and tables!=source.get('breakdown_tables'):
+            source['breakdown_tables']=tables
+            changed=True
         focus=archive_focus_excerpts(raw.decode('utf-8'))
         if focus and focus!=source.get('primary_focus_excerpts'):
             # Keep derived windows outside source.data so supplemental-source
@@ -437,20 +1191,122 @@ def _refresh_primary_focus(folder,sources):
     return changed
 
 
+# Unverified web excerpts are bounded: they support attributed outside views and
+# consensus context only. A live run sent 74 KB of them and the memo leaned on
+# them for company facts the filings already contained.
+UNVERIFIED_EXCERPT_CHARS = 2000
+UNVERIFIED_TOTAL_CHARS = 30000
+UNVERIFIED_TIERS = {'search_excerpt_unverified'}
+EVIDENCE_TIER_RULE = (
+    'Evidence tiers. (1) COMPUTED FROM REPORTED FILINGS and PRIMARY AND OFFICIAL SOURCES support company facts and '
+    'numbers. (2) UNVERIFIED WEB EXCERPTS support only attributed outside views, consensus or guidance context and '
+    'qualitative colour; label each such use inline as unverified, and never make an unverified excerpt the only '
+    'support for a company fact, a number used in a comparison, or the valuation conclusion. Prefer the primary source '
+    'whenever both contain a fact.')
+# Plan text is printed in the exhibits (monitoring cases, counterfactuals,
+# repurchase tests). A live plan (2026-11-14) cited an unverified aggregator
+# beside the 10-K for buyback figures the 10-K holds, and the review flagged it.
+PLAN_SOURCE_RULE = ('\n'+EVIDENCE_TIER_RULE+' This applies to every plan field Python prints: source_refs, labels, '
+    'margin_continuity_basis, monitoring cases, counterfactuals and repurchase tests cite the primary source for '
+    'company facts and figures; an unverified excerpt appears only beside an outside view that the label names as one.')
+
+
+def _computed_tables(sources):
+    """Rendered reported-history and breakdown tables for every source that has them."""
+    tables=[]
+    for source in sources:
+        data=source.get('data') if isinstance(source,dict) else None
+        data=data if isinstance(data,dict) else {}
+        # The copy derived from the archive on this run is current; data holds the collection-time copy.
+        baseline=source.get('historical_baseline') or data.get('historical_baseline')
+        breakdowns=source.get('breakdown_tables') or data.get('breakdown_tables')
+        if baseline:
+            tables.append(render_baseline(baseline,source.get('id')))
+        if breakdowns:
+            tables.append(render_breakdowns(breakdowns,source.get('id')))
+    return '\n\n'.join(tables)
+
+
+def _label_unverified(text, sources):
+    """Mark every citation of an unverified web excerpt inline: [S16] becomes [S16 unverified].
+
+    Labelling by construction: live reviews (2026-11-14) kept finding unlabelled
+    unverified support, including in plan text that Python renders.
+    """
+    unverified={source.get('id') for source in sources
+                if isinstance(source,dict) and source.get('source_tier') in UNVERIFIED_TIERS}
+    if not unverified:
+        return text
+    def label(match):
+        return re.sub(r'\b(S\d+)\b(?![ \t]*,?[ \t]*unverified)',
+                      lambda ref:ref.group(1)+' unverified' if ref.group(1) in unverified else ref.group(1),match.group(0))
+    return re.sub(r'\[[^\[\]\n]*\bS\d+[^\[\]\n]*\]',label,text)
+
+
+def _last_edits(response):
+    """The last complete JSON object carrying "edits" in a response, fenced or not.
+
+    A live fix response (2026-11-14) gave edits, wrote "Wait, I need to re-read",
+    and gave corrected edits; the last object is the model's answer.
+    """
+    decoder=json.JSONDecoder()
+    found=None
+    for match in re.finditer(r'\{\s*"edits"',response if isinstance(response,str) else ''):
+        try:
+            value,_=decoder.raw_decode(response,match.start())
+        except ValueError:
+            continue
+        if isinstance(value,dict) and isinstance(value.get('edits'),list):
+            found=value['edits']
+    return found
+
+
+def _apply_edits(memo, edits):
+    """Apply quote-and-replacement edits whose quote occurs exactly once; report the rest."""
+    applied,skipped=0,[]
+    for edit in edits if isinstance(edits,list) else []:
+        quote=edit.get('quote') if isinstance(edit,dict) else None
+        replacement=edit.get('replacement') if isinstance(edit,dict) else None
+        if not isinstance(quote,str) or not quote.strip() or not isinstance(replacement,str):
+            skipped.append('malformed edit')
+            continue
+        count=memo.count(quote)
+        if count==2 and not replacement.strip():
+            # Deleting a duplicated passage removes its second occurrence.
+            position=memo.rfind(quote)
+            memo=memo[:position]+memo[position+len(quote):]
+            applied+=1
+            continue
+        if count!=1:
+            skipped.append(f'quote found {count} times: {quote[:80]}')
+            continue
+        memo=memo.replace(quote,replacement)
+        applied+=1
+    return memo,applied,skipped
+
+
 def _evidence_context(sources):
-    # Excerpts are bounded; full originals remain in the source archive. Never
-    # pass an entire filing, private environment or credentials into a prompt.
-    packed = []
+    """Evidence for model prompts in three labelled tiers.
+
+    Excerpts are bounded; full originals remain in the source archive. Never
+    pass an entire filing, private environment or credentials into a prompt.
+    """
+    computed, primary, unverified, used = [], [], [], 0
     for source in sources:
         row = {key: source[key] for key in ('id','title','url','kind','source_tier','retrieved_at','primary_focus_excerpts') if key in source}
         data = source.get('data')
+        rendered = _computed_tables([source])
+        if rendered:
+            computed.append(rendered)
+        if isinstance(data, dict):
+            data = {key: value for key, value in data.items() if key not in ('historical_baseline', 'breakdown_tables')}
         if source.get('kind')=='user_evidence':
             # The public interface already bounds this focused input at 100 KB.
             # Include all accepted text, including corrections near its end.
             row['data']=copy.deepcopy(data)
         elif isinstance(data, dict) and (source.get('kind') in {'financial_timeseries','sec_facts','macro_calibration'} or 'excerpts' in data or 'inline_facts' in data):
             # Preserve all structured financial rows; do not truncate JSON midway.
-            row['data'] = copy.deepcopy(data)
+            row['data'] = copy.deepcopy(core.prompt_companyfacts(data))
             if 'inline_facts' in row['data']:
                 keys=('concept','context_ref','instant','start_date','end_date','unit','scale','sign',
                       'normalized_value','normalized_decimal','is_nil','dimensions')
@@ -458,10 +1314,24 @@ def _evidence_context(sources):
                     for fact in row['data']['inline_facts']]
         else:
             text = json.dumps(data, ensure_ascii=False)
-            row['excerpt'] = text[:14000]
-            row['excerpt_truncated'] = len(text) > 14000
-        packed.append(row)
-    return json.dumps(packed, ensure_ascii=False)
+            limit = 14000
+            if source.get('source_tier') in UNVERIFIED_TIERS:
+                limit = max(0, min(UNVERIFIED_EXCERPT_CHARS, UNVERIFIED_TOTAL_CHARS - used))
+                used += min(len(text), limit)
+            if limit >= 200:
+                row['excerpt'] = text[:limit]
+                row['excerpt_truncated'] = len(text) > limit
+            else:
+                row['excerpt_omitted'] = 'Prompt budget for unverified excerpts reached; title and URL only.'
+        (unverified if source.get('source_tier') in UNVERIFIED_TIERS else primary).append(row)
+    parts = []
+    if computed:
+        parts.append('COMPUTED FROM REPORTED FILINGS (Python tables; cite the bracketed source ID):\n' + '\n\n'.join(computed))
+    parts.append('PRIMARY AND OFFICIAL SOURCES:\n' + json.dumps(primary, ensure_ascii=False))
+    if unverified:
+        parts.append('UNVERIFIED WEB EXCERPTS (search results; attributed outside views and consensus context only, '
+                     'labelled unverified where cited):\n' + json.dumps(unverified, ensure_ascii=False))
+    return '\n\n'.join(parts)
 
 
 def _workflow_contract():
@@ -471,8 +1341,14 @@ def _workflow_contract():
             'forecast':_digest([FORECAST_SCHEMA,UNDERWRITING_GUIDANCE]),
             'review':_digest(REVIEW_SCHEMA), 'sections':_digest(SECTIONS),
             'implementation':_digest({name:hashlib.sha256((root/name).read_bytes()).hexdigest()
-                for name in ('pipeline.py','prompt_context.py','quality.py','valuation.py','inputs.py','operating.py','rates.py','primary_debt.py','companyfacts.py')
+                for name in ('pipeline.py','prompt_context.py','quality.py','valuation.py','inputs.py','operating.py','rates.py','primary_debt.py','companyfacts.py',
+                             'evidence_tables.py','research.py')
                 if (root/name).is_file()})}
+
+
+def _revisions_used(state):
+    """Revisions spent since the last contract refresh started a new review cycle."""
+    return state['iteration']-state.get('revision_base',0)
 
 
 def _refresh_workflow_contract(folder,state):
@@ -496,6 +1372,8 @@ def _refresh_workflow_contract(folder,state):
     state['complete']=False
     state['quality_status']='needs_review'
     state['review_invalidated']=True
+    # A refresh starts a new review cycle; it does not spend the revision allowance.
+    state['revision_base']=state['iteration']
     state.pop('pending_revision',None)
     # A legacy run has no evidence of which contract produced its forecasts.
     # Preserve the model for inspection and require a fresh review. Known
@@ -503,6 +1381,7 @@ def _refresh_workflow_contract(folder,state):
     if previous and any(name in changed for name in ('system','forecast','implementation')):
         if not state.get('provided_forecast_digest'):
             state.pop('plan',None)
+            state.pop('plan_conventions',None)
             state.pop('valuation',None)
         if not state.get('provided_draft_digest'):
             state.pop('current_memo',None)
@@ -552,7 +1431,7 @@ def _recover_supplied_evidence(folder,state,evidence):
 
 
 def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
-                              forecast_plan=None, draft=None, max_revisions=3):
+                              forecast_plan=None, draft=None, max_revisions=1):
     """Price known repeated context before the first potentially billed call.
 
     Future search excerpts, forecasts, derived valuation data and memo prose are
@@ -563,31 +1442,39 @@ def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
     context = _evidence_context(state['sources'])
     stages = []
     def add(stage, model, prompt, tokens, web=False):
+        # Reasoning tokens are reserved on top of the output limit, as the router does.
+        catalog=getattr(router,'catalog',{}) or {}
+        if core.reasoning_request(catalog.get(model),model,core.reasoning_budget(stage)) is not None:
+            tokens+=core.reasoning_budget(stage)
         stages.append({'stage':stage, 'model':model, 'known_prompt_utf8_bytes':len(prompt.encode()),
                        'max_completion_tokens':tokens, 'web_search':web,
                        'reservation_floor_usd':router.estimate(model,prompt,tokens,web=web)})
     if not state.get('web_research_complete'):
         for lane in ('business','challenge','expectations','claims'):
-            add('web_'+lane,easy,f'Research {ticker}: {lane}.',3500,web=True)
+            add('web_'+lane,easy,f'Research {ticker}: {lane}.',WEB_RESEARCH_TOKENS,web=True)
     supplied_model = forecast_plan is not None or state.get('plan')
     supplied_memo = draft is not None or state.get('current_memo')
     if not (supplied_model and supplied_memo):
         add('evidence_synthesis',easy,'Build a dated evidence table.\nEvidence:\n'+context,6500)
     if not supplied_model:
         add('valuation_plan',strong,'Build an investment valuation plan.\n'+
-            FORECAST_SCHEMA+UNDERWRITING_GUIDANCE+'\nEvidence:\n'+context,12000)
+            FORECAST_SCHEMA+UNDERWRITING_GUIDANCE+PLAN_SOURCE_RULE+'\nEvidence:\n'+context,12000)
     valuation = ''
     if state.get('valuation') is not None and state.get('plan'):
         valuation = render_valuation_context(state['plan'],state['valuation'])
     if not supplied_memo:
         add('full_draft',strong,'Write a complete investment-committee draft.\nEvidence:\n'+
-            context+'\nValuation:\n'+valuation,14000)
+            context+'\nValuation:\n'+valuation,MEMO_TOKENS)
+        # The free checks flagged every saved draft, so the fix call is planned for.
+        add('draft_check_fix_'+str(state['iteration']),strong,'Correct only the problems listed below.\nEvidence:\n'+context,8000)
     add('review_'+str(state['iteration']),reviewer,'Independently audit the complete memo.\n'+
         REVIEW_SCHEMA+'\nEvidence:\n'+context+'\nValuation:\n'+valuation+
         '\nDraft:\n'+(draft or state.get('current_memo','')),12000)
+    add('finding_check_'+str(state['iteration']),reviewer,FINDING_CHECK+'\nEvidence:\n'+context+'\nValuation:\n'+valuation+
+        '\nDraft:\n'+(draft or state.get('current_memo','')),FINDING_CHECK_TOKENS)
     floor = sum(row['reservation_floor_usd'] for row in stages)
     suggested=max(DEFAULT_BUDGET,float(math.ceil(floor)))
-    return {'scope':'First draft and one review; revisions and format/forecast repairs excluded',
+    return {'scope':'First draft, its fix call, one review and its finding check; revisions and format/forecast repairs excluded',
             'basis':'Uncached UTF-8 byte reservations at maximum catalog price tiers and configured output limits. '
                     'Only currently known context is included. Future search results, synthesis, forecasts, '
                     'computed valuation and memo text can increase reservations; this floor is not a completion guarantee or predicted bill.',
@@ -601,7 +1488,10 @@ def _fetch_calibration_bytes(url):
     # are never attached to evidence requests.
     # No "github" in the User-Agent: SEC returns HTTP 403 for any UA
     # containing that token (verified live 2026-11-07); keep this UA plain too.
-    request = Request(url, headers={'User-Agent':'IntrinsicValue research'})
+    # An explicit Accept header is required: FRED closes the connection without
+    # a response for this User-Agent when Accept is absent (verified live
+    # 2026-11-14: same UA with Accept -> 200, without -> RemoteDisconnected).
+    request = Request(url, headers={'User-Agent':'IntrinsicValue research','Accept':'*/*'})
     with urlopen(request, timeout=25) as response:
         raw = response.read(3000001)
     if len(raw) > 3000000:
@@ -609,7 +1499,260 @@ def _fetch_calibration_bytes(url):
     return raw
 
 
-def _lock_plan(plan, sources):
+AGGREGATE_TOLERANCE=.005
+
+
+MARKET_BETA_SECTOR_PREFIX='Total Market (without financial'
+
+
+def _glide_available(sources, currency):
+    """Whether the market-consistent rate glide can be pinned for this run."""
+    erp=_calibration_source(sources,dataset='damodaran_us_implied_erp')
+    table=_calibration_source(sources,dataset='damodaran_us_sector_betas')
+    market=any(isinstance(row,dict) and str(row.get('sector','')).startswith(MARKET_BETA_SECTOR_PREFIX) and row.get('is_aggregate')
+               for row in ((table or {}).get('data') or {}).get('sectors',[]))
+    return currency=='USD' and erp is not None and market
+
+
+def _rate_convention(sources, currency):
+    """The rate instructions for this run, matched to what Python will apply."""
+    erp=_calibration_source(sources,dataset='damodaran_us_implied_erp')
+    if _glide_available(sources,currency):
+        return ('\nRATE CONVENTION FOR THIS RUN: the market-consistent rate path applies. Omit scenario wacc and '
+                'terminal_growth. Python discounts with the current cost of capital for years 1-5, moves to '
+                'market-average business risk by year 10, and sets terminal growth to the risk-free rate, the long-run '
+                'growth the equity risk premium itself assumes. State terminal_growth only below that rate, with a '
+                'company-specific terminal_growth_basis (secular decline, shrinking market); a lower number is not a '
+                'conservative default, it values the company below the market\'s own assumption. State it, with a '
+                'basis, when final forecast growth is below 1% or terminal ROIC is below the risk-free rate.')
+    if erp is not None and currency=='USD':
+        return ('\nRATE CONVENTION FOR THIS RUN: one constant discount rate is used, because the market-consistent '
+                'path also needs the industry table\'s market beta, which was not retrieved. With discount_rate, omit '
+                'scenario wacc and state terminal_growth for each scenario, below the cost of capital and no higher than '
+                'the risk-free rate.')
+    if erp is not None:
+        return ('\nRATE CONVENTION FOR THIS RUN: one constant discount rate is used. The risk-free rate and equity risk '
+                'premium in the evidence are US measurements and do not apply to cash flows in '+str(currency)+'. Either '
+                'give a discount_rate whose risk_free_rate is a dated government yield in the cash-flow currency with its '
+                'own source, or give wacc for each scenario. State terminal_growth for each scenario, below the cost of '
+                'capital and no higher than long-run nominal growth in the cash-flow currency.')
+    return ('\nRATE CONVENTION FOR THIS RUN: no dated risk-free rate and equity risk premium were retrieved. Give wacc '
+            'and terminal_growth for each scenario; WACC exceeds terminal growth.')
+
+
+def _calibration_source(sources, dataset=None, kind=None):
+    for source in sources:
+        data=source.get('data') if isinstance(source,dict) else None
+        if not isinstance(data,dict):
+            continue
+        if (dataset and data.get('dataset')==dataset) or (kind and source.get('kind')==kind):
+            return source
+    return None
+
+
+def _pin_financing_records(rate, reported, record):
+    """Copy debt, finance leases and market equity into the rate block from the reported bridges.
+
+    A live plan (2026-11-14) wrote Apple's $1.456 billion of separately reported
+    finance leases as a zero 'included in debt' allocation and was rejected for
+    it. These are reported amounts, so Python supplies them, as it does betas.
+    An explicit market-value debt or independent market cap is left alone.
+    """
+    debt=reported.get('net_debt_bridge') or {}
+    claims=reported.get('other_claims_bridge') or {}
+    refs={key:[ref for ref in value if isinstance(ref,str) and re.fullmatch(r'S\d+',ref)]
+          for key,value in (reported.get('source_refs') or {}).items() if isinstance(value,list)}
+    day=debt.get('as_of')
+    if isinstance(debt.get('debt'),(int,float)) and day:
+        def put(field, value, label, allocation=None, force_label=False):
+            current=rate.get(field) if isinstance(rate.get(field),dict) else {}
+            if current.get('measurement') not in (None,'book_value_proxy'):
+                return
+            pinned={k:v for k,v in current.items() if k!='allocation'}
+            pinned.update(value=value,observed_at=day,measurement='book_value_proxy',
+                          source_refs=list(dict.fromkeys(refs.get('net_debt' if field=='financial_debt' else 'other_equity_claims')
+                                                         or refs.get('net_debt') or current.get('source_refs') or [])))
+            if allocation:
+                pinned['allocation']=allocation
+            changed=any(current.get(key)!=pinned.get(key) for key in ('value','observed_at','allocation'))
+            # A label that described a different number would contradict the pin.
+            if force_label or changed or not isinstance(pinned.get('label'),str) or not pinned['label'].strip():
+                pinned['label']=label
+            if changed:
+                record(f'discount_rate.{field}',{key:current.get(key) for key in ('value','observed_at','allocation')},
+                       {key:pinned.get(key) for key in ('value','observed_at','allocation')},'pinned from the reported equity bridge')
+            rate[field]=pinned
+        lease=claims.get('reported_finance_lease_liabilities')
+        if not debt.get('finance_leases_included_in_net_debt'):
+            put('financial_debt',debt['debt'],'Reported financial debt excluding finance leases')
+            put('finance_lease_debt',lease if isinstance(lease,(int,float)) else 0,
+                'Reported finance lease liabilities' if isinstance(lease,(int,float)) else
+                'Finance lease liabilities assumed zero: no finance-lease concept reported')
+        elif isinstance(lease,(int,float)):
+            put('financial_debt',debt['debt']-lease,'Reported combined debt less separately reported finance leases')
+            put('finance_lease_debt',lease,'Reported finance lease liabilities')
+        else:
+            put('financial_debt',debt['debt'],'Combined financial debt including finance leases',
+                'combined_debt_including_finance_leases',force_label=True)
+            put('finance_lease_debt',0,'Finance-lease zero allocation: included in combined debt',
+                'included_in_financial_debt',force_label=True)
+    price,shares=reported.get('market_price'),(reported.get('actuals') or {}).get('shares_outstanding')
+    quoted=((reported.get('input_dates') or {}).get('market_price') or {}).get('observed_at')
+    current=rate.get('market_equity') if isinstance(rate.get('market_equity'),dict) else {}
+    if (isinstance(price,(int,float)) and isinstance(shares,(int,float)) and quoted and
+            current.get('construction',current.get('measurement')) in (None,'quote_times_reported_shares')):
+        quoted=quoted[:10]
+        pinned={**current,'value':price*shares,'observed_at':quoted,'construction':'quote_times_reported_shares',
+                'source_refs':list(dict.fromkeys([*(refs.get('market_price') or []),*(refs.get('shares_outstanding') or [])]))}
+        pinned.pop('measurement',None)
+        changed=current.get('value')!=pinned['value'] or current.get('observed_at')!=quoted
+        if changed or not pinned.get('label'):
+            pinned['label']='Saved quote times reported shares outstanding'
+        if changed:
+            record('discount_rate.market_equity',{key:current.get(key) for key in ('value','observed_at')},
+                   {key:pinned[key] for key in ('value','observed_at')},'saved quote times reported shares')
+        rate['market_equity']=pinned
+
+
+def _pin_market_conventions(locked, sources, reported, valuation_day, changes):
+    """Pin the market-consistent conventions and every beta number from the run's own sources.
+
+    The model chooses the industry mapping; Python supplies each number. Pins are
+    idempotent, and a change is recorded only when a value actually changes.
+    """
+    def record(field, previous, pinned, reason):
+        if previous!=pinned:
+            changes.append({'field':field,'previous':previous,'pinned':pinned,'source_refs':[],'reason':reason})
+    erp=_calibration_source(sources,dataset='damodaran_us_implied_erp')
+    table=_calibration_source(sources,dataset='damodaran_us_sector_betas')
+    regression=_calibration_source(sources,kind='historical_equity_beta')
+    notes=[]
+    if 'discount_rate' in locked and locked['discount_rate'] is None:
+        record('discount_rate',None,'omitted','an explicit null discount rate is treated as absent')
+        locked.pop('discount_rate')
+    rate=locked.get('discount_rate')
+    if rate is not None and not isinstance(rate,dict):
+        raise ValueError('discount_rate must be an object or omitted')
+    usd=locked.get('currency')=='USD'
+    if rate is None:
+        if erp is not None and usd and not locked.get('unavailable'):
+            raise ValueError('A dated discount_rate is required: the evidence includes a matched risk-free rate and '
+                             f'implied equity risk premium ({erp["id"]}).'+_rate_convention(sources,locked.get('currency')))
+        notes.append('No dated risk-free rate and equity risk premium in the cash-flow currency were available, so the '
+                     'market-consistent rate glide and terminal-growth convention are not applied.')
+        return notes
+    if erp is not None and not usd:
+        cited={ref for key in ('risk_free_rate','equity_risk_premium') if isinstance(rate.get(key),dict)
+               for ref in (rate[key].get('source_refs') or [])}
+        if erp['id'] in cited:
+            raise ValueError(f'The US risk-free rate and equity risk premium ({erp["id"]}) cannot discount cash flows in '
+                             f'{locked.get("currency")}.'+_rate_convention(sources,locked.get('currency')))
+    _pin_financing_records(rate,reported,record)
+    if erp is not None and usd:
+        # The conventions rest on the premium and the Treasury rate it was
+        # solved at. Python copies both from the source, as it does the betas.
+        data=erp['data']
+        for key in ('risk_free_rate','equity_risk_premium'):
+            current=rate.get(key) if isinstance(rate.get(key),dict) else {}
+            pinned={**current,'value':data[key],'observed_at':data['observed_at'],'source_refs':[erp['id']],
+                    'label':('Treasury rate paired with the implied equity risk premium' if key=='risk_free_rate' else
+                             'Damodaran implied equity risk premium, sustainable-payout model')}
+            if current.get('value')!=pinned['value'] or current.get('observed_at')!=pinned['observed_at']:
+                record(f'discount_rate.{key}',{k:current.get(k) for k in ('value','observed_at')},
+                       {'value':pinned['value'],'observed_at':pinned['observed_at']},'pinned from the implied premium source')
+            rate[key]=pinned
+    marginal=(rate.get('marginal_tax_rate') or {}).get('value') if isinstance(rate.get('marginal_tax_rate'),dict) else None
+    if locked.get('currency')=='USD' and isinstance(marginal,(int,float)) and marginal<.21:
+        raise ValueError(f'discount_rate.marginal_tax_rate {marginal:.1%} is below the 21% US federal statutory rate. The '
+                         'marginal rate is the statutory federal plus state rate (about 25%), never the reported effective rate; '
+                         'the effective rate belongs in scenario tax_rate')
+    rows={row['sector']:row for row in (table or {}).get('data',{}).get('sectors',[]) if isinstance(row,dict)}
+    beta=rate.get('unlevered_beta')
+    if isinstance(beta,dict) and beta.get('calculation')=='bottom_up_sector_weighted':
+        if table is None:
+            raise ValueError('A bottom-up beta needs the supplied industry beta table; none was retrieved')
+        sectors=beta.get('sectors')
+        if not isinstance(sectors,list) or not sectors:
+            raise ValueError('bottom_up_sector_weighted needs sectors: [{"sector": <exact table name>, "weight": w}]')
+        for item in sectors:
+            row=rows.get(item.get('sector')) if isinstance(item,dict) else None
+            if row is None or row.get('is_aggregate'):
+                raise ValueError(f'Bottom-up sector {item.get("sector") if isinstance(item,dict) else item!r} is not an '
+                                 f'industry name in {table["id"]}; use the exact names in that table')
+            for key,value in (('cash_corrected_unlevered_beta',row['cash_corrected_unlevered_beta']),('firms',row.get('firms'))):
+                record(f'discount_rate.unlevered_beta.sectors.{item["sector"]}.{key}',item.get(key),value,'pinned from the industry beta table')
+                item[key]=value
+        for key,value in (('observed_at',table['data']['observed_at']),('date_precision','month')):
+            record(f'discount_rate.unlevered_beta.{key}',beta.get(key),value,'industry table observation month')
+            beta[key]=value
+        refs=list(dict.fromkeys([*(beta.get('source_refs') or []),table['id']]))
+        beta['source_refs']=refs
+        beta.pop('value',None)
+    elif isinstance(beta,dict) and beta.get('calculation')=='historical_issuer_cash_corrected' and regression is not None:
+        measured=regression['data']['beta']
+        record('discount_rate.unlevered_beta.historical_equity_beta',beta.get('historical_equity_beta'),measured,'pinned from the weekly regression source')
+        beta['historical_equity_beta']=measured
+    locked.pop('beta_cross_checks',None)
+    if regression is not None and isinstance(beta,dict):
+        measured=regression['data']['beta']
+        def case(name,label,value):
+            return {'name':name,'label':label,'unlevered_beta':{'calculation':'historical_issuer_cash_corrected',
+                'historical_equity_beta':value,'observed_at':regression['data']['last_return_week_end'],
+                'source_refs':[regression['id']],'label':label}}
+        checks=[]
+        if beta.get('calculation')!='historical_issuer_cash_corrected':
+            checks.append(case('regression_beta',f'Five-year weekly regression equity beta {measured:.3f} against '
+                               f'{regression["data"].get("benchmark_symbol","the index")}, cash-corrected and relevered',measured))
+        checks.append(case('blume_adjusted_regression_beta','Regression beta moved one third toward one (2/3 x measured + 1/3), '
+                           'the common adjustment for estimation error',2/3*measured+1/3))
+        locked['beta_cross_checks']=checks
+    market=next((row for name,row in rows.items() if name.startswith(MARKET_BETA_SECTOR_PREFIX) and row.get('is_aggregate')),None)
+    if locked.get('currency')=='USD' and erp is not None and market is not None:
+        pinned={'value':market['cash_corrected_unlevered_beta'],'observed_at':table['data']['observed_at'],
+                'date_precision':'month','source_refs':[table['id']],
+                'label':f'{market["sector"]} cash-corrected unlevered beta: the market\'s average operating-asset beta, '
+                        'relevered at this firm\'s leverage for the terminal cost of capital'}
+        record('discount_rate.term_structure',rate.get('term_structure'),'glide_to_market_v1','market-consistent rate path')
+        record('discount_rate.terminal_unlevered_beta',rate.get('terminal_unlevered_beta'),pinned,'pinned from the industry beta table')
+        rate['term_structure']='glide_to_market_v1'
+        rate['terminal_unlevered_beta']=pinned
+    else:
+        rate.pop('term_structure',None); rate.pop('terminal_unlevered_beta',None)
+        missing=[name for name,scenario in (locked.get('scenarios') or {}).items()
+                 if isinstance(scenario,dict) and scenario.get('terminal_growth') is None]
+        if missing:
+            raise ValueError('Scenarios '+', '.join(missing)+' need terminal_growth.'+_rate_convention(sources,locked.get('currency')))
+        notes.append('The market-consistent rate glide and terminal-growth convention need USD cash flows, the matched '
+                     'US risk-free rate and implied equity risk premium, and the market beta from the industry table; '
+                     'they are not applied, so one constant discount rate is used.')
+    dates=reported.get('input_dates',{})
+    anchor=(dates.get('revenue') or {}).get('end_date')
+    if anchor and anchor==(dates.get('net_debt') or {}).get('instant'):
+        days=(date.fromisoformat(valuation_day)-date.fromisoformat(anchor)).days
+        timing={'convention':'stub_v1','anchor_date':anchor}
+        try:
+            # One rule: the engine's own fiscal-year test decides.
+            _valuation_timing({'valuation_timing':timing,'valuation_date':valuation_day})
+            usable=True
+        except ValueError:
+            usable=False
+        if usable:
+            record('valuation_timing',locked.get('valuation_timing'),timing,'present value dated at the valuation date')
+            locked['valuation_timing']=timing
+        else:
+            locked.pop('valuation_timing',None)
+            notes.append(f'The annual balance sheet is {days} days from the valuation date, so no stub adjustment is made; '
+                         'values are as of the fiscal year end.')
+    else:
+        locked.pop('valuation_timing',None)
+    return notes
+
+
+def _rounded(values):
+    return [round(v,4) if isinstance(v,(int,float)) and not isinstance(v,bool) else v for v in values] if isinstance(values,list) else values
+
+
+def _lock_plan(plan, sources, *, apply_conventions=True):
     if not isinstance(plan,dict):
         raise ValueError('Forecast plan must be an object')
     # The forecast schema does not carry valuation_date, so a model-authored
@@ -646,6 +1789,107 @@ def _lock_plan(plan, sources):
     proposal['share_unit']='shares'
     proposal['valuation_date']=valuation_day
     locked,changes=pin_reported_inputs(proposal,sources)
+    operating=locked.get('operating_model')
+    if (isinstance(operating,dict) and operating.get('amount_unit')==reported['currency'] and
+            operating.get('currency')==reported['currency']):
+        # Models sometimes write the currency code where the unit belongs
+        # (observed live 2026-11-14, twice in one run). A currency code states
+        # no scale. Component revenue must still reconcile exactly to pinned
+        # revenue, so an operating model in thousands or millions is rejected.
+        operating['amount_unit']='currency_units'
+        changes.append({'field':'operating_model.amount_unit','previous':reported['currency'],'pinned':'currency_units',
+            'source_refs':[],'reason':'currency code written as the unit label; scale is verified by exact component-revenue reconciliation'})
+    if isinstance(operating,dict) and isinstance(locked.get('scenarios'),dict):
+        # The operating model governs revenue growth, and in gross-profit mode
+        # EBIT margins: Python derives both, and stated aggregate arrays are
+        # removed and recorded. Sending a disagreeing plan back for repair was
+        # tried live (2026-11-14): to match its stated margins the author
+        # invented expense levels ($68-96 billion of R&D against $45.8 billion
+        # reported). The detailed drivers now govern; the stated paths and the
+        # largest gap stay in the recorded changes and the assumption notes.
+        fields=['growth_rates']+(['ebit_margins'] if operating.get('earnings_mode')=='gross_profit_less_expenses' else [])
+        stated={name:{field:scenario[field] for field in fields if field in scenario}
+                for name,scenario in locked['scenarios'].items() if isinstance(scenario,dict)}
+        if any(stated.values()):
+            trial=copy.deepcopy(locked)
+            for scenario in trial['scenarios'].values():
+                for field in fields:
+                    scenario.pop(field,None)
+            try:
+                derived=derive_operating(trial)
+            except (ValueError,KeyError,TypeError):
+                derived=None
+            if derived is not None:
+                conflicts=[]
+                for name,arrays in stated.items():
+                    for field,values in arrays.items():
+                        computed=derived['scenarios'][name][field]
+                        if (not isinstance(values,list) or len(values)!=len(computed) or
+                                any(not isinstance(v,(int,float)) or isinstance(v,bool) or abs(v-c)>AGGREGATE_TOLERANCE
+                                    for v,c in zip(values,computed))):
+                            conflicts.append(f'{name}.{field} stated {_rounded(values)} but the operating_model gives {_rounded(computed)}')
+                gaps={}
+                for name,arrays in stated.items():
+                    for field,values in arrays.items():
+                        computed=derived['scenarios'][name][field]
+                        if isinstance(values,list) and len(values)==len(computed) and all(
+                                isinstance(v,(int,float)) and not isinstance(v,bool) for v in values):
+                            gaps[(name,field)]=max(abs(v-c) for v,c in zip(values,computed))
+                for name,arrays in stated.items():
+                    for field in arrays:
+                        disagreed=any(text.startswith(f'{name}.{field} ') for text in conflicts)
+                        changes.append({'field':f'scenarios.{name}.{field}','previous':locked['scenarios'][name].pop(field),
+                            'pinned':'derived from operating_model','source_refs':[],
+                            'reason':('stated array differs from the governing operating model; the drivers govern'
+                                      if disagreed else 'aggregate forecast array matched the governing operating model within tolerance')})
+                if conflicts:
+                    worst=max(gaps.items(),key=lambda item:item[1],default=None)
+                    derived_note=('The plan also stated growth or EBIT-margin paths that its operating drivers do not produce'+
+                                  (f' (largest gap {worst[1]*100:.1f} points, {worst[0][0]} {worst[0][1].replace("_"," ")})' if worst else '')+
+                                  '; the drivers govern and the stated paths are recorded with the input changes.')
+                    locked['_derived_path_note']=derived_note
+    opted_in=((isinstance(locked.get('discount_rate'),dict) and
+               locked['discount_rate'].get('term_structure')=='glide_to_market_v1') or 'valuation_timing' in locked)
+    if apply_conventions or opted_in:
+        convention_notes=_pin_market_conventions(locked,sources,reported,valuation_day,changes)
+        if apply_conventions:
+            convention_notes=[*convention_notes,*_pin_house_conventions(locked,sources,changes)]
+    else:
+        convention_notes=['This supplied plan keeps its own rate and timing conventions; the market-consistent rate path '
+                          'and valuation-date stub apply only when a plan opts in with discount_rate.term_structure or valuation_timing.']
+    derived_note=locked.pop('_derived_path_note',None)
+    if derived_note:
+        convention_notes=[*convention_notes,derived_note]
+    convention_notes=[*convention_notes,*_pin_repurchase_history(locked,sources,changes)]
+    reference=reinvestment_reference(sources)
+    if reference:
+        locked['reinvestment_reference']=reference
+    else:
+        locked.pop('reinvestment_reference',None)
+    costs=cost_path_reference(sources)
+    if costs:
+        locked['cost_path_reference']=costs
+    else:
+        locked.pop('cost_path_reference',None)
+    if 'entry_policy' in locked:
+        # Valuation research only (settled owner decision): no entry thresholds.
+        changes.append({'field':'entry_policy','previous':locked.pop('entry_policy'),'pinned':None,'source_refs':[],
+            'reason':'entry thresholds and margins of safety are outside this valuation-only research'})
+    rate=locked.get('discount_rate')
+    if isinstance(rate,dict):
+        # Dated rate inputs govern WACC, so a scenario WACC beside them is a
+        # duplicate the guidance says to omit. Observation dates are calendar
+        # dates; a full timestamp keeps its written date. Both are recorded.
+        for name,scenario in (locked.get('scenarios') or {}).items():
+            if isinstance(scenario,dict) and 'wacc' in scenario:
+                changes.append({'field':f'scenarios.{name}.wacc','previous':scenario.pop('wacc'),'pinned':'computed from discount_rate',
+                    'source_refs':[],'reason':'scenario WACC duplicated the governing dated discount-rate inputs'})
+        for name,record in rate.items():
+            stamp=record.get('observed_at') if isinstance(record,dict) else None
+            if isinstance(stamp,str) and re.fullmatch(r'\d{4}-\d{2}-\d{2}T[0-9:.]+(?:Z|[+-]\d{2}:\d{2})?',stamp):
+                record['observed_at']=stamp[:10]
+                changes.append({'field':f'discount_rate.{name}.observed_at','previous':stamp,'pinned':stamp[:10],
+                    'source_refs':[],'reason':'timestamp shortened to its written calendar date'})
     if 'market_price' not in locked['reported_inputs']:
         locked.pop('market_price',None)
         locked['source_refs'].pop('market_price',None)
@@ -656,17 +1900,121 @@ def _lock_plan(plan, sources):
     lease_allocation=(
         'Finance leases are already included in the selected combined net-debt subtotal and are not deducted again in other claims. '
         if bridge.get('finance_leases_included_in_net_debt') else
+        'Finance lease liabilities are assumed zero because the scanned SEC record reports no finance lease liability concept; this is not a reported zero. '
+        if locked.get('other_claims_bridge',{}).get('reported_finance_lease_liabilities') is None else
         'Reported finance leases are deducted once in other equity claims, outside the selected financial net-debt subtotal. ')
+    if bridge.get('short_term_financing',{}).get('basis')=='identified_categories_house_assumption':
+        lease_allocation+=('Short-term financing beyond the identified reported categories is assumed zero because the scanned SEC '
+            'record reports no other short-term borrowing amount; an absent concept is not a reported zero, and undisclosed '
+            'borrowings would lower equity value. ')
     locked['assumptions_label']=(
         'Growth, margins, taxes, discount rates, capital efficiency, terminal returns and scenario weights '
         'are house forecasts, not reported facts or company guidance. Historical actuals use the '
         'reported-input snapshot. Only the cash and investment assets selected in the pinned bridge are '
         'classified as nonoperating under an explicit house policy. Omitted investment categories are '
-        'not reported zeros, and required operating cash is not established as zero. '+lease_allocation+
+        'not reported zeros. All selected cash and investments are treated as nonoperating; any part the business '
+        'needs to operate would lower equity value. '+lease_allocation+
         'Additional unidentified '
-        'claims are assumed zero, not established absent. GAAP EBIT retains operating rent, SBC and R&D. '
-        'Annual year-end cash flows are used without an interim balance-sheet roll-forward or stub-period adjustment.')
+        'claims are assumed zero, not established absent. GAAP EBIT retains operating rent, SBC and R&D. '+
+        ('Discount rates move from the current cost of capital toward market-average business risk over years 6-10, and '
+         'terminal growth equals the risk-free rate, the long-run growth the equity risk premium assumes, unless a '
+         'scenario states a lower rate with a company-specific basis. '
+         if (locked.get('discount_rate') or {}).get('term_structure')=='glide_to_market_v1' else '')+
+        ('Present value is dated at the valuation date with a first-year stub; net debt stays at the annual balance sheet. '
+         if locked.get('valuation_timing') else
+         'Annual year-end cash flows are used without an interim balance-sheet roll-forward or stub-period adjustment. ')+
+        ' '.join(convention_notes))
     return locked,changes
+
+
+# House conventions Python sets on every plan built under the current
+# conventions (owner choices, 2026-11-15). The plan author picked 25% terminal
+# return for both Apple and Microsoft, the largest single sensitivity in both
+# memos, and same-evidence plans differed by up to 4% from weights alone.
+HOUSE_TERMINAL_ROIC = .15
+DEFAULT_WEIGHTS = {'bear': .25, 'base': .50, 'bull': .25}
+
+
+def _pin_house_conventions(locked, sources, changes):
+    """Terminal return on new capital and scenario weights follow the house rules.
+
+    Weights other than 25/50/25 stand only with a weights_basis of at least 40
+    characters citing sources in the evidence.
+    """
+    notes=[]
+    scenarios=locked.get('scenarios') if isinstance(locked.get('scenarios'),dict) else {}
+    moved=[]
+    for name,scenario in scenarios.items():
+        if isinstance(scenario,dict) and scenario.get('terminal_roic')!=HOUSE_TERMINAL_ROIC:
+            changes.append({'field':f'scenarios.{name}.terminal_roic','previous':scenario.get('terminal_roic'),
+                            'pinned':HOUSE_TERMINAL_ROIC,'source_refs':[],
+                            'reason':'terminal return on new capital is the house convention'})
+            scenario['terminal_roic']=HOUSE_TERMINAL_ROIC
+            moved.append(name)
+    if moved:
+        notes.append(f'Terminal return on new capital is the house {HOUSE_TERMINAL_ROIC:.0%} in every scenario; the '
+                     'convention panel shows the value at the terminal discount rate and at 25%.')
+    known={source.get('id') for source in sources if isinstance(source,dict)}
+    basis=locked.get('weights_basis')
+    cited=re.findall(r'\[(S\d+)\]',basis) if isinstance(basis,str) else []
+    supported=isinstance(basis,str) and len(basis.strip())>=40 and bool(cited) and all(ref in known for ref in cited)
+    weights={name:(scenarios.get(name) or {}).get('probability') for name in DEFAULT_WEIGHTS}
+    if set(scenarios)==set(DEFAULT_WEIGHTS) and not supported and any(
+            not isinstance(weights[name],(int,float)) or abs(weights[name]-DEFAULT_WEIGHTS[name])>1e-9 for name in DEFAULT_WEIGHTS):
+        for name,weight in DEFAULT_WEIGHTS.items():
+            changes.append({'field':f'scenarios.{name}.probability','previous':weights[name],'pinned':weight,'source_refs':[],
+                            'reason':'scenario weights default to 25/50/25 without a cited weights_basis'})
+            scenarios[name]['probability']=weight
+        locked.pop('weights_basis',None)
+        notes.append('Scenario weights are the house default of 25/50/25; the plan gave no cited basis for another split.')
+    return notes
+
+
+def _history_rows(sources):
+    for source in sources:
+        data=source.get('data') if isinstance(source.get('data'),dict) else {}
+        baseline=source.get('historical_baseline') or data.get('historical_baseline')
+        for row in (baseline or {}).get('rows') or []:
+            yield source.get('id'),row
+
+
+def _pin_repurchase_history(locked, sources, changes):
+    """A historical repurchase case uses the reported program value and average price.
+
+    A live plan (2026-11-15) priced Apple's fiscal 2026 buybacks at cash-flow
+    payments over program shares (USD 290.88) while the reported history showed
+    the program's own price (USD 288.89); the memo quoted both and the review
+    flagged it. A case whose amount is within 3% of a reported year's buybacks
+    takes that year's program value and price.
+    """
+    notes=[]
+    rows=[(sid,row) for sid,row in _history_rows(sources)
+          if isinstance(row.get('average_repurchase_price'),(int,float)) and isinstance(row.get('shares_repurchased'),(int,float))
+          and row['average_repurchase_price']>0 and row['shares_repurchased']>0]
+    for case in locked.get('repurchase_tests') or []:
+        if not isinstance(case,dict) or case.get('interpretation')!='historical_retrospective_conditional':
+            continue
+        amount,price=case.get('amount'),case.get('price')
+        if not all(isinstance(x,(int,float)) and not isinstance(x,bool) and x>0 for x in (amount,price)):
+            continue
+        for sid,row in rows:
+            value=row['average_repurchase_price']*row['shares_repurchased']
+            if not any(isinstance(candidate,(int,float)) and candidate>0 and abs(amount/candidate-1)<=.03
+                       for candidate in (value,row.get('repurchases'))):
+                continue
+            if abs(price/row['average_repurchase_price']-1)>.0005 or abs(amount/value-1)>.0005:
+                previous={'amount':amount,'price':price}
+                case['amount']=round(value)
+                case['price']=row['average_repurchase_price']
+                if isinstance(case.get('source_refs'),list) and sid not in case['source_refs']:
+                    case['source_refs']=[*case['source_refs'],sid]
+                changes.append({'field':f'repurchase_tests.{case.get("name")}','previous':previous,
+                                'pinned':{'amount':case['amount'],'price':case['price']},'source_refs':[sid],
+                                'reason':'historical case set to the reported program value and average price of the matching fiscal year'})
+                notes.append(f'The historical repurchase case {case.get("name")} uses the reported fiscal {str(row.get("fiscal_year_end",""))[:4]} '
+                             f'program value and average price from the reported history [{sid}].')
+            break
+    return notes
 
 
 def _validate_plan_sources(plan, sources):
@@ -735,20 +2083,13 @@ def _computed_exhibits(result,currency):
                     f'{multiple(row["forecast_year1"]["market_ev_to_"+metric])} | '
                     f'{multiple(row["original_dcf_exit"]["ev_to_final_forecast_"+metric])} | '
                     f'{returns(original)} | {returns(row["unchanged_entry_multiple_exit_returns"][metric])} |')
+        stub=((result.get('discounting') or {}).get('timing') or {}).get('stub_years') or 0
+        timing=('at its discount time from the valuation date (the first year counts only its unexpired fraction and later flows '
+                'fall at year k minus the stub)' if stub else 'at integer model years')
         lines += ['', 'Entry earnings use the first explicit forecast year, not trailing earnings; exit earnings use the final explicit year. '
             'The return comparison holds operating cash flows, opening financing/claims and shares fixed and changes only the exit valuation. '
-            'All annual FCFF is distributed under the debt/claims-settled diagnostic at integer model years; this is not a common-share payout, '
+            f'All annual FCFF is distributed under the debt/claims-settled diagnostic {timing}; this is not a common-share payout, '
             'ongoing buyback or stock-price-return forecast. Multiple/return alternatives do not change the house DCF or scenario weights.']
-    entry=diagnostics.get('entry_policy')
-    if isinstance(entry,dict):
-        policy=entry['policy']
-        price=entry.get('conditional_entry_price')
-        threshold=f'{currency} {price:,.2f}' if price is not None else 'not meaningful for this reference value'
-        lines += ['', '### Conditional research entry threshold', '',
-            f'{clean(policy["label"])}: **{threshold}**, using {clean(policy["basis"])} value and '
-            f'the explicitly selected {policy["margin_of_safety"]:.1%} valuation discount. '+clean(policy['rationale']),
-            '', 'This is a conditional house valuation rule, separate from a WACC reset or promised holding-period return. '
-                'No discount is supplied by default; this is not personal trading or portfolio advice.']
     repurchases=diagnostics.get('repurchase_tests')
     if isinstance(repurchases,list) and repurchases:
         lines += ['', '### Conditional repurchase economics', '',
@@ -758,13 +2099,68 @@ def _computed_exhibits(result,currency):
             refs=row['source_refs'] if isinstance(row['source_refs'],list) else [row['source_refs']]
             citations=' '.join('['+ref.strip().strip('[]')+']' for ref in refs)
             lines.append(f'| {clean(row["label"])} / {clean(row["interpretation"]).replace("_"," ")} {citations} | '
-                f'{currency} {row["amount"]:,.0f} | {currency} {row["price"]:,.2f} | {row["shares_repurchased"]:,.0f} | '
+                f'{currency} {row["amount"]/1e9:,.1f} billion | {currency} {row["price"]:,.2f} | {row["shares_repurchased"]/1e6:,.1f} million | '
                 f'{currency} {row["post_repurchase_weighted_per_share_value"]:,.2f} | '
                 f'{currency} {row["weighted_value_change"]["dollar_delta"]:+,.2f} |')
         lines += ['', 'Each independent case spends the pinned selected nonoperating cash and retires shares once while keeping operating value fixed. '
             'Historical-price tests compare with current underwriting, not historical fair value or an observed historical loss. '
             'Forward illustrations are not repurchase forecasts; the same cash is not also counted as a dividend or future FCFF distribution.']
     return lines
+
+
+def _scale_exhibit(plan, result, currency):
+    """Year-10 scale against today, so a reader can judge the size the forecast implies.
+
+    A memo audit (2026-11-15) found no memo discussed a base-case year-10 EBIT of
+    USD 574 billion or a terminal enterprise value near USD 10 trillion.
+    """
+    base=(result.get('scenarios') or {}).get('base') or {}
+    flows=base.get('cashflows') or []
+    revenue=((plan or {}).get('actuals') or {}).get('revenue')
+    if not flows or not isinstance(revenue,(int,float)) or revenue<=0:
+        return []
+    last=flows[-1]
+    market=((result.get('computed_diagnostics') or {}).get('valuation_multiples') or {}).get('market') or {}
+    def billions(value):
+        return f'{currency} {value/1e9:,.1f} billion'
+    text=(f'Base case, final forecast year {last.get("year")}: revenue {billions(last["revenue"])} '
+          f'({last["revenue"]/revenue:,.1f} times the last reported {billions(revenue)}), EBIT {billions(last["ebit"])} '
+          f'({last["ebit_margin"]:.1%} margin) and free cash flow to the firm {billions(last["fcff"])}.')
+    terminal=base.get('terminal_enterprise_value')
+    if isinstance(terminal,(int,float)):
+        text+=f' Terminal enterprise value at that year: {billions(terminal)}'
+        enterprise=market.get('enterprise_value')
+        if isinstance(enterprise,(int,float)) and enterprise>0:
+            text+=f', {terminal/enterprise:,.1f} times today\'s market enterprise value of {billions(enterprise)}'
+        text+='.'
+    return ['', '### Scale check', '', text]
+
+
+def reported_tables_section(sources):
+    """The reported history and breakdown tables, printed by Python for the reader.
+
+    Writers re-typed these tables and introduced errors ("not shown" for a reported
+    56.6% segment margin, 2026-11-15); the reader now gets Python's copy.
+    """
+    lines=[]
+    for source in sources:
+        data=source.get('data') if isinstance(source.get('data'),dict) else {}
+        baseline=source.get('historical_baseline') or data.get('historical_baseline')
+        if baseline and baseline.get('rows'):
+            text=render_baseline(baseline,source.get('id')).split('\n')
+            notes=text[text.index('Basis notes:'):] if 'Basis notes:' in text else []
+            text=text[:len(text)-len(notes)]
+            caption,header,rows=text[0],text[1].split(' | '),[row.split(' | ') for row in text[2:] if row.strip()]
+            lines+=['', caption, '', '| Measure | '+' | '.join(row[0] for row in rows)+' |',
+                    '|---|'+'---:|'*len(rows)]
+            for index,name in enumerate(header[1:],1):
+                lines.append(f'| {name} | '+' | '.join(row[index] if index<len(row) else 'n/a' for row in rows)+' |')
+            if notes:
+                lines+=['']+notes
+        breakdowns=source.get('breakdown_tables') or data.get('breakdown_tables')
+        if breakdowns:
+            lines+=['', render_breakdowns(breakdowns,source.get('id'))]
+    return (['', '## Reported history and segments (computed by Python from filings)']+lines) if lines else []
 
 
 def valuation_section(plan, result):
@@ -776,13 +2172,22 @@ def valuation_section(plan, result):
     currency = result.get('currency', plan['currency'])
     lines = ['\n## Executable valuation', '',
              'The following values are recomputed by Python from the editable assumptions; forecasts are house assumptions.', '',
-             '| Scenario | Probability | WACC | Terminal growth | Value per share |',
-             '|---|---:|---:|---:|---:|']
+             '| Scenario | Probability | Discount rate | Terminal growth | Value per share | Value / price |',
+             '|---|---:|---:|---:|---:|---:|']
     for name in ('bear','base','bull'):
         scenario, inputs = result['scenarios'][name], plan['scenarios'][name]
-        lines.append(f'| {name.title()} | {inputs["probability"]:.1%} | {inputs["wacc"]:.1%} | '
-                     f'{inputs["terminal_growth"]:.1%} | {currency} {scenario["per_share_value"]:,.2f} |')
-    lines += ['',f'Weighted intrinsic value per share: {currency} {result["weighted_per_share_value"]:,.2f}',
+        rate = (f'{scenario["initial_rate"]:.2%} → {scenario["terminal_rate"]:.2%}' if 'terminal_rate' in scenario and
+                abs(scenario['initial_rate']-scenario['terminal_rate'])>1e-12 else f'{scenario.get("initial_rate", inputs.get("wacc", 0)):.2%}')
+        growth = scenario.get('terminal_growth', inputs.get('terminal_growth'))
+        ratio = f'{scenario["value_to_price"]:.2f}' if 'value_to_price' in scenario else 'n/a'
+        lines.append(f'| {name.title()} | {inputs["probability"]:.1%} | {rate} | {growth:.2%} | {currency} {scenario["per_share_value"]:,.2f} | {ratio} |')
+    thin=[name for name in ('bear','base','bull') if 'terminal_rate' in result['scenarios'][name] and
+          result['scenarios'][name].get('terminal_spread') is not None and result['scenarios'][name]['terminal_spread']<.02]
+    if thin:
+        lines += ['', 'Terminal rate within two points of terminal growth in '+', '.join(thin)+': the value is fragile to '
+                      'small changes in either.']
+    lines += ['',f'Weighted intrinsic value per share: {currency} {result["weighted_per_share_value"]:,.2f}'+
+              (f'; value / price {result["weighted_value_to_price"]:.2f}' if 'weighted_value_to_price' in result else ''),
               '',f'Forecast basis: {plan["assumptions_label"]}',
               '', 'Amounts use whole currency units and actual share counts. Net debt includes the selected cash deduction once. '
                   'See assumptions.json, cashflows.csv and sensitivity.csv for the inputs and calculations.']
@@ -795,8 +2200,18 @@ def valuation_section(plan, result):
         row=dates.get(field,{})
         when=(row.get('instant') or row.get('observed_at') or row.get('end_date')) if isinstance(row,dict) else None
         measurements.append(label+': '+str(when or 'not supplied'))
-    lines += ['', 'Measurement dates — '+ '; '.join(measurements)+'. '
-              'Balances are not rolled forward to the quote date; the annual cash-flow model has no stub-period adjustment.']
+    timing=(result.get('discounting') or {}).get('timing',{})
+    if timing.get('convention')=='stub_v1':
+        lines += ['', 'Measurement dates — '+ '; '.join(measurements)+'.', '',
+                  f'Valuation date {timing["valuation_date"]}: present value is discounted to this date, the first forecast '
+                  f'year counts only its unexpired {1-timing["stub_years"]:.0%}, and net debt stays at the '
+                  f'{timing["anchor_date"]} annual balance sheet.']
+    else:
+        lines += ['', 'Measurement dates — '+ '; '.join(measurements)+'. '
+                  'Balances are not rolled forward to the quote date; the annual cash-flow model has no stub-period adjustment.']
+    lines += _continuity_exhibit(result)
+    lines += _scale_exhibit(plan, result, currency)
+    lines += _market_consistency_exhibits(result, currency)
     cases=result.get('counterfactuals',{})
     if cases:
         lines += ['', '### Conditional counterfactuals', '',
@@ -826,11 +2241,29 @@ def valuation_section(plan, result):
                   f'relevered beta: {calibration["relevered_beta"]:.4f}; debt weight: {calibration["debt_weight"]:.2%}. '
                   'These are calculations from the disclosed dated inputs and proxy choices, not observed issuer required returns.']
     comparisons=result.get('calibration_comparisons',[])
-    if comparisons:
+    if comparisons and any('terminal_growth' in row for row in comparisons):
+        def money(value):
+            return f'{value:,.2f}' if isinstance(value,(int,float)) else '—'
+        lines += ['', '| Conditional rate method | Initial rate | Terminal rate | Terminal growth | Base value/share | Change from base | Value with house terminal growth |',
+                  '|---|---:|---:|---:|---:|---:|---:|']
+        for row in comparisons:
+            if row.get('per_share_value') is None:
+                lines.append(f'| {row["name"].replace("_"," ")} | {row["wacc"]:.2%} | — | — | not calculated | — | — |')
+            else:
+                lines.append(f'| {row["name"].replace("_"," ")} | {row["wacc"]:.2%} | {row["terminal_rate"]:.2%} | '
+                             f'{row["terminal_growth"]:.2%} | {money(row["per_share_value"])} | {row["value_change"]["dollar_delta"]:+,.2f} | '
+                             f'{money(row.get("per_share_value_at_house_terminal_growth", row["per_share_value"]))} |')
+        lines += ['', 'The named rate inputs change, and with them the whole rate path. Where terminal growth defaults to the '
+                      'risk-free rate it moves with the comparison\'s risk-free rate; the last column holds it at the house '
+                      'rate. Historical-fit endpoints are not valuation confidence intervals.']
+    elif comparisons:
         lines += ['', '| Conditional rate method | WACC | Base value/share | Change from base |',
                   '|---|---:|---:|---:|']
         for row in comparisons:
-            lines.append(f'| {row["name"].replace("_"," ")} | {row["wacc"]:.2%} | {row["per_share_value"]:,.2f} | {row["value_change"]["dollar_delta"]:+,.2f} |')
+            if row.get('per_share_value') is None:
+                lines.append(f'| {row["name"].replace("_"," ")} | {row["wacc"]:.2%} | not calculated | — |')
+            else:
+                lines.append(f'| {row["name"].replace("_"," ")} | {row["wacc"]:.2%} | {row["per_share_value"]:,.2f} | {row["value_change"]["dollar_delta"]:+,.2f} |')
         lines += ['', 'Only the named rate inputs change. Historical-fit endpoints are not valuation confidence intervals.']
     monitoring=result.get('monitoring',[])
     if monitoring:
@@ -847,8 +2280,251 @@ def valuation_section(plan, result):
     return '\n'.join(lines)+'\n'
 
 
+def _terminal_growth_sentence(result, risk_free):
+    """State terminal growth as computed in each scenario, not as the default alone."""
+    scenarios=result.get('scenarios') or {}
+    default=[name for name,row in scenarios.items() if row.get('terminal_growth_source')=='risk_free_rate']
+    stated=[(name,row) for name,row in scenarios.items() if row.get('terminal_growth_source')!='risk_free_rate']
+    if not stated:
+        return (f'Terminal growth equals the {risk_free:.2%} risk-free rate in every scenario, the long-run growth the '
+                'equity risk premium assumes.')
+    parts=[f'{name} states {row["terminal_growth"]:.2%}'+
+           (f' ({str(row["terminal_growth_basis"]).strip().rstrip(".")})' if row.get('terminal_growth_basis') else '')
+           for name,row in stated if isinstance(row.get('terminal_growth'),(int,float))]
+    lead=(f'Terminal growth equals the {risk_free:.2%} risk-free rate, the long-run growth the equity risk premium assumes, in '
+          +', '.join(default)+'; ' if default else f'The {risk_free:.2%} risk-free rate is the terminal-growth default; ')
+    return lead+'; '.join(parts)+'.'
+
+
+def _continuity_exhibit(result):
+    continuity=result.get('forecast_continuity')
+    if not continuity:
+        return _reinvestment_lines(result)+_cost_path_lines(result)
+    refs=', '.join(continuity['source_refs'])
+    cells='; '.join(f'{name} {row["year_one_ebit_margin"]:.1%} ({row["change_percentage_points"]:+.1f} pt)'
+                    for name,row in continuity['scenarios'].items())
+    ytd=continuity.get('year_to_date')
+    lines=['', '### Year-1 margin against the last reported results', '',
+           f'Reported operating margin {continuity["reported_operating_margin"]:.1%} for the fiscal year ending '
+           f'{(continuity.get("period") or {}).get("end_date","")} [{refs}]'+
+           (f'; {ytd["operating_margin"]:.1%} for the year to date ending {(ytd.get("period") or {}).get("end_date","")} '
+            f'[{", ".join(ytd["source_refs"])}]' if ytd else '')+f'. Year-1 EBIT margin: {cells}.']
+    for name,row in continuity['scenarios'].items():
+        if row.get('stated_basis') and not row.get('within_band'):
+            lines.append(f'- {name.title()} year-1 step, stated basis: {row["stated_basis"]}')
+    return lines+_reinvestment_lines(result)+_cost_path_lines(result)
+
+
+def _reinvestment_text(check):
+    cells='; '.join(f'{name} {row["year_one_net_reinvestment"]/1e9:,.1f} billion'+
+                    (f' ({row["year_one_sales_to_capital"]:.2f})' if row.get('year_one_sales_to_capital') is not None else '')
+                    for name,row in check['scenarios'].items())
+    return (f'Year-1 net reinvestment against the reported {check["net_reinvestment"]/1e9:,.1f} billion (fiscal year ending '
+            f'{check["fiscal_year_end"]}; {check["years"]}-year incremental sales-to-capital {check["incremental_sales_to_capital"]:.2f}) '
+            f'[{", ".join(check["source_refs"])}]: {cells}.')
+
+
+def _cost_path_lines(result):
+    check=result.get('cost_path_continuity')
+    if not check or not check.get('scenarios'):
+        return []
+    elasticity=check.get('opex_elasticity')
+    cells='; '.join(f'{name}: final-year EBIT margin {row["final_ebit_margin"]:.1%}'+
+                    (f', costs grow {row["plan_opex_elasticity"]:.2f} times as fast as revenue to {row["final_opex_share"]:.1%} of it'
+                     if 'plan_opex_elasticity' in row else '') for name,row in check['scenarios'].items())
+    lines=['', '### Cost path against the reported history', '',
+           (f'Reported {" and ".join(line.replace("_"," ") for line in check["lines"])} grew {elasticity:.2f} times as fast as '
+            f'revenue over {check["years"]} years; ' if isinstance(elasticity,(int,float)) else '')+
+           f'peak reported operating margin {check["max_operating_margin"]:.1%} [{", ".join(check["source_refs"])}]. {cells}.']
+    for name,row in check['scenarios'].items():
+        if row.get('stated_basis') and not row.get('within_band'):
+            lines.append(f'- {name.title()} cost path, stated basis: {row["stated_basis"]}')
+    return lines
+
+
+def _reinvestment_lines(result):
+    check=result.get('reinvestment_continuity')
+    if not check or not check.get('scenarios'):
+        return []
+    lines=['', '### Year-1 reinvestment against the last reported results', '', _reinvestment_text(check)+' '+check['basis']]
+    for name,row in check['scenarios'].items():
+        if row.get('stated_basis') and not row.get('within_band'):
+            lines.append(f'- {name.title()} year-1 reinvestment, stated basis: {row["stated_basis"]}')
+    return lines
+
+
+def _market_consistency_exhibits(result, currency):
+    """Computed exhibits for what the price implies and where the difference comes from."""
+    lines=[]
+    discounting=result.get('discounting') or {}
+    if discounting.get('convention')=='glide_to_market_v1':
+        path=', '.join(f'{rate:.2%}' for rate in discounting['base_rate_path'])
+        lines += ['', '### Discount-rate path', '',
+            f'Base case, years 1-{len(discounting["base_rate_path"])}: {path}; terminal {discounting["terminal_rate"]:.2%}. '
+            f'The terminal rate uses the market operating-asset beta {discounting["terminal_unlevered_beta"]:.2f} relevered at this '
+            f'firm\'s leverage ({discounting["terminal_relevered_beta"]:.2f}). Damodaran\'s spreadsheet default would be '
+            f'{discounting["damodaran_default_terminal_rate"]:.2%} (risk-free rate plus equity risk premium). '+
+            _terminal_growth_sentence(result,discounting["risk_free_rate"])]
+    implied=result.get('implied_return_at_price')
+    if implied:
+        lines += ['', '### What the price implies', '',
+            '| Scenario | Implied return at the price | Required return (flat equivalent) | Difference | Terminal spread at implied return |',
+            '|---|---:|---:|---:|---:|']
+        def cell(value, pattern):
+            return pattern.format(value) if isinstance(value,(int,float)) else 'not solved'
+        for name,row in implied['scenarios'].items():
+            spread=row.get('terminal_spread_at_implied_return')
+            flag=' (fragile)' if row.get('fragile') else ''
+            lines.append(f'| {name.title()} | {cell(row.get("implied_return"),"{:.2%}")} | {cell(row.get("required_return_flat_equivalent"),"{:.2%}")} | '
+                         f'{cell(row.get("gap_percentage_points"),"{:.2f} pt")} | {cell(spread,"{:.2%}")}{flag} |')
+        weighted=implied['probability_weighted_value']
+        lines.append(f'| Probability-weighted value | {cell(weighted.get("implied_return"),"{:.2%}")} | '
+                     f'{cell(weighted.get("required_return_flat_equivalent"),"{:.2%}")} | {cell(weighted.get("gap_percentage_points"),"{:.2f} pt")} | |')
+        lines += ['', 'The implied return is the one discount rate, applied in every year and in the terminal value, at which value '
+                      'equals the price; the required return is the same calculation at the house value. This describes what the '
+                      'price implies, not a forecast of shareholder returns. A terminal spread under two points marks a fragile '
+                      'result.']
+    panel=result.get('convention_panel')
+    if panel:
+        lines += ['', '### Value under alternative conventions (base case, one change at a time)', '',
+                  '| Alternative | Value per share | Change | Status |', '|---|---:|---:|---|']
+        for row in panel['rows']:
+            value=f'{currency} {row["per_share_value"]:,.2f}' if row.get('per_share_value') is not None else '—'
+            change=f'{row["dollar_delta"]:+,.2f}' if row.get('dollar_delta') is not None else '—'
+            status=row['status'].replace('_',' ')+(' (sensitivity)' if row.get('kind')=='sensitivity' else '')
+            lines.append(f'| {row["label"]} | {value} | {change} | {status} |')
+        if panel.get('largest_meaningful_step'):
+            lines += ['', f'Largest convention step: {panel["largest_meaningful_step"].replace("_"," ")}. Rows carry no probability and are never tuned to the price.']
+    checks=result.get('beta_cross_checks') or []
+    if checks:
+        lines += ['', '| Beta cross-check | Unlevered beta | Initial discount rate | Base value | Change |', '|---|---:|---:|---:|---:|']
+        for row in checks:
+            if row.get('status')=='calculated':
+                lines.append(f'| {row["label"]} | {row["unlevered_beta"]:.3f} | {row["wacc"]:.2%} | {currency} {row["per_share_value"]:,.2f} | '
+                             f'{row["value_change"]["dollar_delta"]:+,.2f} |')
+            else:
+                lines.append(f'| {row["label"]} | — | — | not calculated | — |')
+    return lines
+
+
+def computed_summary(plan, result):
+    """The valuation summary Python places at the top of every memo.
+
+    The model writes interpretation around it and never re-types it: a live first
+    draft (2026-11-14) mis-copied years, signs and ranges when it rebuilt these
+    tables itself.
+    """
+    if not result or not result.get('scenarios'):
+        return ''
+    currency=result.get('currency') or (plan or {}).get('currency','')
+    def money(value):
+        return f'{currency} {value:,.2f}'
+    lines=['## Valuation summary (computed by Python)','',
+           '| Scenario | Probability | Value per share | Value / price |','|---|---:|---:|---:|']
+    for name in ('bear','base','bull'):
+        row=result['scenarios'][name]
+        ratio=f'{row["value_to_price"]:.2f}' if 'value_to_price' in row else 'n/a'
+        lines.append(f'| {name.title()} | {row["probability"]:.0%} | {money(row["per_share_value"])} | {ratio} |')
+    weighted=result['weighted_per_share_value']
+    lines.append(f'| Weighted | 100% | {money(weighted)} | '+
+                 (f'{result["weighted_value_to_price"]:.2f} |' if 'weighted_value_to_price' in result else 'n/a |'))
+    dates=(plan or {}).get('input_dates',{}) if isinstance((plan or {}).get('input_dates'),dict) else {}
+    quoted=((dates.get('market_price') or {}).get('observed_at') or '')[:10]
+    if result.get('market_price') is not None:
+        lines+=['',f'Price {money(result["market_price"])}'+(f', observed {quoted}' if quoted else '')+
+                (f'; valuation date {result["valuation_date"]}.' if result.get('valuation_date') else '.')]
+    implied=(result.get('implied_return_at_price') or {}).get('probability_weighted_value') or {}
+    if isinstance(implied.get('implied_return'),(int,float)) and isinstance(implied.get('required_return_flat_equivalent'),(int,float)):
+        lines+=['',f'What the price implies: one flat discount rate of {implied["implied_return"]:.2%} equates the weighted value '
+                   f'with the price; the house cash flows at the house rate path are equivalent to '
+                   f'{implied["required_return_flat_equivalent"]:.2%} (difference {implied["gap_percentage_points"]:.2f} points).']
+    requirements=(result.get('price_requirements') or {}).get('rows') or []
+    if requirements:
+        lines+=['','What the price requires (base case, one input at a time, all others fixed; rows are alternatives):','',
+                '| Input | House | Needed for value = price |','|---|---:|---|']
+        def over(path):
+            if not isinstance(path,dict):
+                return ''
+            measure='a year compounded' if path.get('measure')=='compound_annual_growth' else 'average'
+            return f'{path["over_forecast"]:.1%} {measure} over {path["years"]} years'
+        def shifted(delta,path):
+            text=f'{delta*100:+.1f} points in every explicit year'
+            return text+(f': {path["year1"]:.1%} in year 1, {over(path)}' if isinstance(path,dict) else '')
+        for row in requirements:
+            house=(f'{row["house"]:.1%} in year 1'+(f', {over(row.get("house_path"))}' if row.get('house_path') else '')
+                   if row['kind']=='shift' else
+                   f'{row["house"]:.2f}' if row['input']=='sales_to_capital' else f'{row["house"]:.2%}')
+            if row['status']=='solved':
+                needed=(shifted(row['needed'],row.get('needed_path')) if row['kind']=='shift' else
+                        f'{row["needed"]:.2f}' if row['input']=='sales_to_capital' else f'{row["needed"]:.2%}')
+            elif row['status']=='not_reachable':
+                limit=(shifted(row['at'],row.get('at_path')) if row['kind']=='shift' else
+                       f'{row["at"]:.2f}' if row['input']=='sales_to_capital' else f'{row["at"]:.2%}')
+                needed=(f'not reachable; the closest is {money(row["closest_value"])} at {limit}, still '
+                        f'{"above" if row["direction"]=="above" else "below"} the price')
+            else:
+                needed='not calculated'
+            lines.append(f'| {row["label"]} | {house} | {needed} |')
+        # Which inputs can close the gap is stated by Python: live drafts named
+        # one cause in the conclusion and another in the variant view, and both
+        # reviews called it a major defect (2026-11-14, 2026-11-15).
+        names={'revenue_growth':'revenue growth','ebit_margin':'EBIT margin','terminal_roic':'terminal return on new capital',
+               'sales_to_capital':'sales-to-capital','terminal_growth':'terminal growth'}
+        def move(row):
+            if row['kind']=='shift':
+                return f'{row["needed"]*100:+.1f} points in every explicit year'
+            if row['input']=='sales_to_capital':
+                return f'{row["house"]:.2f} to {row["needed"]:.2f}'
+            return f'{row["house"]:.2%} to {row["needed"]:.2%}'
+        closes=[row for row in requirements if row['status']=='solved']
+        cannot=[row for row in requirements if row['status']=='not_reachable']
+        attribution=('Inputs that alone can bring the base value to the price: '+
+                     ('; '.join(f'{names.get(row["input"],row["label"])} ({move(row)})' for row in closes) or 'none')+'.')
+        if cannot:
+            attribution+=(' Inputs that cannot, within the values the engine accepts: '+
+                          ', '.join(names.get(row['input'],row['label']) for row in cannot)+'.')
+        attribution+=(' These are alternatives; the inputs interact.' if len(closes)!=1 else
+                      ' Only this input alone can close the difference.')
+        lines+=['',attribution]
+    panel=[row for row in ((result.get('convention_panel') or {}).get('rows') or [])
+           if row.get('kind')=='convention' and row.get('status')=='calculated' and row.get('dollar_delta') is not None]
+    if panel:
+        panel=sorted(panel,key=lambda row:-abs(row['dollar_delta']))[:3]
+        lines+=['','Largest convention steps (base case, one change at a time; never added together): '+
+                '; '.join(f'{row["label"].split(" (")[0].split(":")[0]} {money(row["per_share_value"])} ({row["dollar_delta"]:+,.2f})'
+                          for row in panel)+'.']
+    continuity=result.get('forecast_continuity')
+    if continuity:
+        lines+=['',f'Year-1 EBIT margin against the reported {continuity["reported_operating_margin"]:.1%}: '+
+                '; '.join(f'{name} {row["year_one_ebit_margin"]:.1%}' for name,row in continuity['scenarios'].items())+'.']
+    check=result.get('reinvestment_continuity')
+    if check and check.get('scenarios'):
+        lines+=['',_reinvestment_text(check)]
+    return '\n'.join(lines)+'\n'
+
+
+def _with_summary(memo, plan, result):
+    """Place the computed summary after the memo's title line."""
+    summary=computed_summary(plan,result)
+    # Only Python writes this block: drop any copy in the model's text first.
+    # The summary has no headings, so a copy ends at the next heading of any level;
+    # stopping only at levels 1-2 would delete a memo written with ### sections.
+    memo=re.sub(r'(?ms)^## Valuation summary \(computed by Python\)\n.*?(?=^#|\Z)','',memo)
+    if not summary:
+        return memo
+    lines=memo.lstrip().split('\n')
+    if lines and lines[0].startswith('# '):
+        head,rest=[lines[0]],lines[1:]
+        while rest and (not rest[0].strip() or rest[0].startswith('**') or rest[0].strip()=='---'):
+            head.append(rest.pop(0))
+        return '\n'.join(head).rstrip()+'\n\n'+summary+'\n'+'\n'.join(rest)
+    return summary+'\n'+memo
+
+
 def _render(memo, sources, gaps, plan, result, state):
-    refs = '\n'.join(f'- [{s["id"]}] {s["title"]} — {s.get("url") or "supplied text"}; '
+    # The register carries the same tier label as the memo text.
+    refs = '\n'.join(f'- [{s["id"]}{" unverified" if s.get("source_tier") in UNVERIFIED_TIERS else ""}] '
+                     f'{s["title"]} — {s.get("url") or "supplied text"}; '
                      f'retrieved {s.get("retrieved_at","not recorded")}' for s in sources)
     unresolved = [f for r in state.get('review_history',[]) for f in r.get('findings',[])]
     # Only the latest revision's unresolved findings apply; prior findings remain
@@ -859,16 +2535,32 @@ def _render(memo, sources, gaps, plan, result, state):
     if not note:
         note = ('No currently recorded material finding. This is a model assessment, not certification.'
                 if state.get('complete') else 'Review is incomplete; unresolved issues have not been determined.')
-    return (memo.rstrip() + '\n' + valuation_section(plan,result) + '\n## Source register\n'+refs+
+    latest = state['review_history'][-1] if state.get('review_history') else {}
+    refuted = (latest.get('finding_check') or {}).get('refuted') or []
+    if refuted:
+        note += ('\n\nRaised by the reviewer and not upheld on a second check:\n' +
+                 '\n'.join(f'- {f["severity"]}: {f["issue"]} Check: {f["check_reason"]}' for f in refuted))
+    weakness = latest.get('central_weakness')
+    if isinstance(weakness, dict):
+        note += (f"\n\nReviewer's central weakness: {weakness['claim']} Computed effect: {weakness['computed_effect']}. "
+                 f"Memo handles it: {weakness['memo_handles_it']}. Difference between value and price explained: "
+                 f"{latest.get('gap_explained','not stated')}.")
+    if latest.get('review_model'):
+        same = latest.get('review_model') == latest.get('author_model')
+        note += (f"\n\nReview model: {latest['review_model']}" +
+                 (f"; author model: {latest['author_model']}" if latest.get('author_model') else '') +
+                 ('. The same model wrote and reviewed this memo.' if same else '.'))
+    body = _label_unverified(_with_summary(memo,plan,result).rstrip() + '\n' + valuation_section(plan,result) +
+                             '\n'.join(reported_tables_section(sources)), sources)
+    return (body + '\n## Source register\n'+refs+
             '\n\n## Evidence limitations\n'+ ('\n'.join('- '+g for g in gaps) or 'No retrieval gap recorded; source completeness still requires review.')+
             '\n\n## Review status\n'+state.get('quality_status','in_progress')+
             '\n\n'+note+
-            '\n\nThis portable research draft is separate from the OAuth system’s signed publications. '
-            'Software checks and model reviews do not establish investment truth or forecast accuracy.\n')
+            '\n\nSoftware checks and model reviews do not establish investment truth or forecast accuracy.\n')
 
 
 def run(ticker, key, *, profile='balanced', budget=DEFAULT_BUDGET, directory='research-output', evidence='',
-        easy_model=None, strong_model=None, progress=lambda message: None, max_revisions=3, review_notes='', extra_sources=None, counterfactuals=None, draft=None, review_model=None,
+        easy_model=None, strong_model=None, progress=lambda message: None, max_revisions=1, review_notes='', extra_sources=None, counterfactuals=None, draft=None, review_model=None,
         source_snapshot=None, forecast_plan=None):
     ticker = core.symbol(ticker)
     if source_snapshot is not None:
@@ -932,10 +2624,12 @@ def run(ticker, key, *, profile='balanced', budget=DEFAULT_BUDGET, directory='re
             # used by its old stage keys, which did not include that field.
             marker.setdefault('legacy_stage_system_sha256',_digest(core.SYSTEM))
         core.save(marker_path,marker)
-        return _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,review_notes,extra_sources or [],counterfactuals,draft,review_model,source_snapshot,forecast_plan)
+        default_reviewer=_default_reviewer(profile,strong)
+        return _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,review_notes,extra_sources or [],counterfactuals,draft,review_model,source_snapshot,forecast_plan,default_reviewer=default_reviewer)
 
 
-def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,review_notes,extra_sources,counterfactuals,draft,review_model,source_snapshot=None,forecast_plan=None):
+def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,review_notes,extra_sources,counterfactuals,draft,review_model,source_snapshot=None,forecast_plan=None,default_reviewer=None):
+    default_reviewer=default_reviewer or strong
     notes_reopened=False
     state_path=folder/'state.json'
     state=json.loads(state_path.read_text()) if state_path.exists() else {
@@ -976,8 +2670,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         if draft is None:
             state.pop('current_memo',None)
     previous_reviewer=state.get('review_model')
-    reviewer=review_model or previous_reviewer or strong
-    if reviewer!=state.get('review_model',strong):
+    reviewer=review_model or previous_reviewer or default_reviewer
+    if reviewer!=state.get('review_model',default_reviewer):
         if state.get('complete'):
             state['iteration']+=1
             notes_reopened=True
@@ -996,7 +2690,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         if state.get('plan') and not state['plan'].get('unavailable'):
             state['plan']['counterfactuals']=copy.deepcopy(counterfactuals)
             # Validate/evaluate explicit edits before any further paid call.
-            state['valuation']=evaluate(state['plan'])
+            state['valuation']=_evaluate(state['plan'])
         state['complete']=False
         state['quality_status']='needs_review'
         state['review_invalidated']=True
@@ -1038,8 +2732,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
     if state.get('complete') and not extra_sources:
         progress(f'Using completed research: {folder / "memo.md"}')
         return folder
-    if state['iteration'] > max_revisions:
-        raise ValueError(f'Increase max_revisions to at least {state["iteration"]} to investigate the new review notes')
+    if _revisions_used(state) > max_revisions:
+        raise ValueError(f'Increase max_revisions to at least {_revisions_used(state)} to investigate the new review notes')
     refresh_coverage=bool(state.get('coverage_preflight_failed') and source_snapshot is None and not extra_sources)
     if refresh_coverage:
         state['evidence_collected']=False
@@ -1151,11 +2845,19 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         checkpoint()
     if state.get('complete'):
         return folder
-    if state['iteration'] > max_revisions:
+    if _revisions_used(state) > max_revisions:
         raise ValueError('Increase max_revisions to review the supplemented research snapshot')
     reported=canonical_reported_inputs(state['sources'],as_of=(forecast_plan or state.get('plan',{})).get('valuation_date'))
     core.save(folder/'reported-inputs.json',reported)
     coverage=reported['coverage']
+    # Banks and insurers are refused before any paid stage: the operating-company FCFF
+    # model does not value them (JPMorgan reached the plan prompt's own refusal only
+    # after four paid web calls). A missing operating-income line alone is not refused.
+    gate=operating_company_gate(state['sources'],reported)
+    gate['refused']=bool(gate.get('financial_institution') or
+                         (gate.get('sic') in FINANCIAL_SIC_NEEDING_OPERATING_INCOME and gate.get('operating_income_reported') is False))
+    if gate['refused']:
+        coverage={**coverage,'complete':False,'conflicts':[gate['message'],*coverage.get('conflicts',[])]}
     if coverage.get('conflicts') or not coverage.get('complete'):
         state['coverage_preflight_failed']=True
         prior=folder/'revisions'/'model-before-incomplete-coverage'
@@ -1174,7 +2876,9 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         details='; '.join(coverage.get('conflicts',[])) or ', '.join(coverage.get('missing_fields',[]))
         notes='; '.join(coverage.get('notes',[]))
         message='Reported-input preflight stopped before paid research: '+details+'. '+notes
-        recovery=('Supply primary disclosures with --sources, or start a fresh non-snapshot run with --sec-contact'
+        recovery=('This issuer needs a financial-institution valuation model, which this tool does not provide'
+            if gate.get('refused') else
+            'Supply primary disclosures with --sources, or start a fresh non-snapshot run with --sec-contact'
             if source_snapshot is not None else 'Supply primary disclosures with --sources or retry SEC access with --sec-contact')
         (folder/'memo.md').write_text('# '+ticker+' — financial input coverage incomplete\n\n'+message+
             '\n\n'+recovery+'. '
@@ -1185,13 +2889,14 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         raise error
     if state.get('plan',{}).get('unavailable_due_to_coverage'):
         state.pop('plan',None)
+        state.pop('plan_conventions',None)
     state.pop('coverage_preflight_failed',None)
     if forecast_plan is not None and (changed_forecast or not state.get('plan')):
-        supplied,changes=_lock_plan(forecast_plan,state['sources'])
+        supplied,changes=_lock_plan(forecast_plan,state['sources'],apply_conventions=False)
         if 'requested_counterfactuals' in state:
             supplied['counterfactuals']=copy.deepcopy(state['requested_counterfactuals'])
         _validate_plan_sources(supplied,state['sources'])
-        state['valuation']=evaluate(supplied)
+        state['valuation']=_evaluate(supplied)
         state['plan']=supplied
         state['provided_forecast_digest']=_digest(forecast_plan)
         state.setdefault('forecast_history',[]).append({'sha256':_digest(forecast_plan),
@@ -1207,6 +2912,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         checkpoint()
     try:
         router=core.Router(key,budget,state['ledger'],checkpoint)
+        # One provider per run keeps the cached evidence prefix warm across stages.
+        router.session='iv-'+_digest(str(folder.resolve()))[:24]
         router.validate_models((easy,strong,reviewer))
     except (ValueError,RuntimeError) as exc:
         exc.folder=folder
@@ -1237,8 +2944,10 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         if state.get('quality_status')=='budget_paused':
             state['quality_status']='in_progress'
         checkpoint()
-    def call(name,model,prompt,tokens=6000,web=False):
-        cache=name+':'+_digest([prompt,model,tokens,web,core.SYSTEM])[:12]
+    def call(name,model,prompt,tokens=6000,web=False,prefix=None):
+        thinking=core.reasoning_budget(name)
+        cache=name+':'+_digest([prompt,model,tokens,web,core.SYSTEM]+([thinking] if thinking else [])+
+                               (['prefix',_digest(prefix)] if prefix else []))[:12]
         legacy=name+':'+_digest([prompt,model,tokens,web])[:12]
         # The old digest omitted SYSTEM. It is reusable only when the saved
         # contract proves that its system instructions are still identical.
@@ -1249,7 +2958,14 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             return state['stages'][cache]
         progress(name+': '+model)
         try:
-            value=router.complete(name,model,prompt,max_tokens=tokens,web=web)
+            extra={'prefix':prefix} if prefix else {}
+            try:
+                value=router.complete(name,model,prompt,max_tokens=tokens,web=web,**extra)
+            except core.ReasoningExhausted:
+                # Spent and recorded; one retry without thinking rather than a stopped run.
+                checkpoint()
+                progress(name+core.WITHOUT_REASONING+': '+model)
+                value=router.complete(name+core.WITHOUT_REASONING,model,prompt,max_tokens=tokens,web=web,**extra)
             state['stages'][cache]=value
             return value
         except core.BudgetExceeded as exc:
@@ -1270,7 +2986,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             answer=call('web_'+lane,easy,
                         f'Research {ticker} as of {datetime.now(timezone.utc).date()}: {question}. '
                         'Use the web search results. Identify exact source passages, dates and definitions. '
-                        'Separate facts from hypotheses; do not invent source contents.',tokens=3500,web=True)
+                        'Separate facts from hypotheses; do not invent source contents. '
+                        'Answer in at most about 900 words.',tokens=WEB_RESEARCH_TOKENS,web=True)
             row=next(r for r in reversed(state['ledger']) if r['stage']=='web_'+lane and r.get('status')=='complete')
             for annotation in row.get('annotations',[]):
                 if not annotation.get('content'):
@@ -1312,43 +3029,93 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'If operating expectations are near consensus, say so and identify the actual rate, terminal '
                 'or capitalization disagreement instead of manufacturing contrarianism. '
                 'List the five highest-impact uncertainties.\nEvidence:\n'+context,tokens=6500)
+    stale=[source['id'] for source in state['sources'] if isinstance(source,dict) and isinstance(source.get('data'),dict)
+           and source['data'].get('fact_origin')=='sec_companyfacts' and
+           (source['data'].get('selection') or {}).get('concepts_sha256')!=CONCEPT_SELECTION_SHA256]
+    if stale:
+        note=(f'SEC facts {", ".join(stale)} were collected under an earlier concept list, so reported cost and expense '
+              'lines may be missing from the operating reference. Run in a new --output folder to collect them.')
+        if note not in state['gaps']:
+            state['gaps'].append(note)
     if 'plan' not in state:
         prompt=('Build an investment valuation plan for '+ticker+'. Ground actuals in supplied evidence; '
                 'use primary reports where accessible, and reconcile secondary-series dates and definitions.\n'+
-                FORECAST_SCHEMA+UNDERWRITING_GUIDANCE+'\nIMMUTABLE reported inputs (copy these values exactly; forecast judgments only):\n'+json.dumps(reported)+'\nEvidence:\n'+context+'\nDiligence synthesis:\n'+thesis+'\nRetrieval gaps:\n'+gaps)
-        text=call('valuation_plan',strong,prompt,tokens=12000)
-        for repair in range(2):
+                FORECAST_SCHEMA+_rate_convention(state['sources'],reported.get('currency'))+UNDERWRITING_GUIDANCE+PLAN_FIELD_RULES+PLAN_SOURCE_RULE+'\nIMMUTABLE reported inputs (copy these values exactly; forecast judgments only):\n'+json.dumps(reported)+
+                (('\nReported reinvestment (reference for year-1 reinvestment and sales_to_capital):\n'+
+                  json.dumps(reinvestment_reference(state['sources']))) if reinvestment_reference(state['sources']) else '')+
+                (('\nReported cost path (reference for expense growth and final-year margins):\n'+
+                  json.dumps(cost_path_reference(state['sources']))) if cost_path_reference(state['sources']) else '')+
+                EVIDENCE_ABOVE+'\nDiligence synthesis:\n'+thesis+'\nRetrieval gaps:\n'+gaps+
+                # A rerun after a discarded plan would otherwise resend the identical request.
+                ('\nAn earlier attempt at this plan was rejected for these reasons; avoid them: '+
+                 ' | '.join(state['plan_repair_reasons']) if state.get('plan_repair_reasons') else ''))
+        text=call('valuation_plan',strong,prompt,tokens=12000,prefix=_evidence_prefix(context))
+        failures=[]
+        for repair in range(PLAN_REPAIRS+1):
             try:
-                plan=parse_json(text)
+                # A valid plan behind a line of analysis was rejected live
+                # (2026-11-14) and cost a paid repair; accept exactly one
+                # complete fenced block, as the correction stage does.
+                plan,normalized=_response_json(text)
+                if normalized:
+                    recovery={'stage':'valuation_plan'+('' if repair==0 else '_repair'),'attempt':repair,
+                              'method':'one_explicit_complete_json_fence'}
+                    if recovery not in state.setdefault('response_normalizations',[]):
+                        state['response_normalizations'].append(recovery)
                 if not isinstance(plan,dict):
                     raise ValueError('Valuation plan must be an object')
                 if plan.get('unavailable'):
                     state['valuation_missing']=plan
                     state['plan']=plan
                     break
-                plan,changes=_lock_plan(plan,state['sources'])
-                if not plan['reported_inputs']['coverage'].get('complete'):
-                    raise ValueError('Reported-input coverage is incomplete')
+                (plan,changes,result),omitted=_omit_invalid_optional_sections(plan,lambda candidate:_lock_and_value(candidate,state))
                 state.setdefault('actual_input_corrections',[]).extend(changes)
-                _validate_plan_sources(plan,state['sources'])
-                if 'requested_counterfactuals' in state:
-                    plan['counterfactuals']=copy.deepcopy(state['requested_counterfactuals'])
-                result=evaluate(plan)
+                _reset_plan_notes(state)
+                _record_omitted_sections(state,omitted,'forecast plan\'s')
                 state['plan'],state['valuation']=plan,result
+                state['plan_conventions']=PLAN_CONVENTIONS
                 save_valuation(folder,plan,result)
                 break
-            except (ValueError,KeyError,TypeError) as exc:
-                if repair:
-                    raise RuntimeError('Valuation plan remains invalid after one repair: '+str(exc)) from None
-                text=call('valuation_plan_repair',strong,prompt+'\nRejected JSON:\n'+text+
-                          '\nRepair this precise validation failure without inventing actuals: '+str(exc),tokens=12000)
+            except (ValueError,KeyError,TypeError,AttributeError) as exc:
+                failures.append(str(exc))
+                state['plan_repair_reasons']=list(failures)
+                if repair==PLAN_REPAIRS:
+                    # A saved response is replayed on resume. Keeping a plan
+                    # that cannot validate would stop every later attempt at
+                    # the same point, so the rejected plan and its repairs are
+                    # discarded; their recorded spending is retained.
+                    for name in [name for name in state['stages'] if name.startswith('valuation_plan')]:
+                        state['stages'].pop(name)
+                    checkpoint()
+                    raise RuntimeError(f'Valuation plan remains invalid after {PLAN_REPAIRS} repairs: '+str(exc)+
+                                       '. The rejected plan was discarded; run the same command again for a fresh forecast') from None
+                rejected=text
+                text=call('valuation_plan_repair'+('' if repair==0 else f'_{repair+1}'),strong,prompt+'\nRejected JSON:\n'+text+
+                          '\nRepair this precise validation failure without inventing actuals: '+str(exc)+
+                          ('\nEarlier attempts were rejected for these reasons; do not reintroduce them: '+
+                           ' | '.join(failures[:-1]) if failures[:-1] else '')+
+                          '\nReturn only the complete corrected JSON object, with no analysis before or after it.'+PLAN_FIELD_RULES,tokens=12000,
+                          prefix=_evidence_prefix(context))
+                if text.strip()==rejected.strip():
+                    # A repair that returns the rejected plan unchanged will not
+                    # pass on a further paid attempt (Microsoft replay, 2026-11-15).
+                    failures.append('the repair returned the rejected plan unchanged')
+                    state['plan_repair_reasons']=list(failures)
+                    for name in [name for name in state['stages'] if name.startswith('valuation_plan')]:
+                        state['stages'].pop(name)
+                    checkpoint()
+                    raise RuntimeError('Valuation plan repair returned the rejected plan unchanged: '+str(exc)+
+                                       '. The rejected plan was discarded; run the same command again for a fresh forecast')
         checkpoint()
     if not state['plan'].get('unavailable'):
-        state['plan'],changes=_lock_plan(state['plan'],state['sources'])
+        current=not state.get('provided_forecast_digest') and state.get('plan_conventions')==PLAN_CONVENTIONS
+        if not state.get('provided_forecast_digest') and not current:
+            _add_plan_note(state,LEGACY_PLAN_NOTE)
+        state['plan'],changes=_lock_plan(state['plan'],state['sources'],apply_conventions=current)
         state.setdefault('actual_input_corrections',[]).extend(changes)
         if 'requested_counterfactuals' in state:
             state['plan']['counterfactuals']=copy.deepcopy(state['requested_counterfactuals'])
-        state['valuation']=evaluate(state['plan'])
+        state['valuation']=_evaluate(state['plan'])
         save_valuation(folder,state['plan'],state['valuation'])
     plan,result=state['plan'],state.get('valuation')
     valuation_context=(render_valuation_context(plan,result) if result is not None else
@@ -1359,56 +3126,30 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         'basis':'Deterministic presentation size, not a token count or a promised cost saving. Full saved math remains authoritative.'}
     if not state.get('current_memo'):
         draft=call('full_draft',strong,
-            'Write a complete investment-committee equity research draft for '+ticker+
-            ', roughly 3000-4500 words plus useful exhibits, with a concise decision-first opening and clear headings. '+SECTIONS+
-            '\nSupport material factual claims with [S#] references. Use the archived evidence and actual '
-            'computed valuation and computed_diagnostics, not model mental arithmetic. Explain what must be true for the market price '
-            'and what invalidates the thesis. Address management, governance, economic reinvestment, SBC/dilution, '
-            'competitive-return fade, taxes, debt/cash/claims, tail risks and decision-changing sensitivities '
-            'to the extent evidence supports them. Missing evidence must narrow the conclusion. '
-            'Tie category demand, pricing/mix, delivery costs and GAAP expenses to the computed operating forecast. '
-            'Compare dated Street estimates on a matching basis and identify the true disagreement; known near-term '
-            'headwinds are not automatically an analytical edge. Engage named outside arguments and disclosed conflicts. '
-            'Trace each load-bearing variant from outside expectation to house array, economic mechanism, '
-            'source/counterevidence, computed conditional value and observation that would change the choice. '
-            'If no differentiated operating view is supported, state that directly and defend the actual '
-            'rate, terminal-duration or capitalization disagreement. Answer the strongest available credible '
-            'opponent on the other side of the saved quote economically; a target panel or isolated rate '
-            'sensitivity does not reproduce an outside model. Missing full-model access does not erase '
-            'the sourced demand, supply, price/mix, margin or capital-allocation argument. '
-            'For material one-off margin benefits/refunds, distinguish reported and normalized baselines '
-            'and show how runoff, input costs, price/mix and expenses reach the forecast, with an explicit '
-            'house residual where components cannot be quantified. Link inventory composition, trade cash '
-            'movements and procurement commitments to margin timing and reinvestment without double counting '
-            'the composite working-capital baseline or ordinary purchase costs. '
-            'Explain the dated discount-rate build, source/proxy limits and separate hurdle if present. '
-            'Use the computed monitoring cases to show dated observation -> changed input -> conditional value, '
-            'without adding correlated cases together. Do not replace missing research with repeated caveats. '
-            'Do not invent transcripts, guidance, consensus, exact fiscal dates, buybacks, or model features. '
-            'This is valuation research only: do not give buy/sell/underweight ratings, portfolio sizing, '
-            'tax or cost-basis advice. State the valuation view and what must be true instead. '
-            'When computed entry_policy is meaningful, state its numerical conditional research entry price, '
-            'valuation basis, selected discount and rationale. This is a house research threshold, not a '
-            'personal trading instruction or promised return. Do not invent a 20% discount or hide the '
-            'entry discipline behind only "wait for a lower price". If the policy/value is unavailable, '
-            'explain that precise gap rather than inventing a threshold. '
-            'Use plain analytical prose, without slogans, world-class superlatives, or rhetorical contrast formulas. '
-            'Distinguish the house thesis from the competing market-pricing case; genuine falsifiers must '
-            'undermine the house conclusion and change a named forecast or model assumption. '
-            'State reverse-DCF growth as conditional on named fixed assumptions for its explicit forecast horizon, '
-            'not as a unique observed market belief. Use computed_diagnostics for every numerical tax or WACC '
-            'sensitivity and state which other assumptions are fixed. '
-            'Use computed_diagnostics.valuation_multiples to show market versus original exit multiples '
-            'with matched first/final forecast earnings definitions, alongside original-exit and unchanged-entry-'
-            'multiple return diagnostics. Explain the rerating embedded in any return claim; the debt/claims-'
-            'settled FCFF stream is not a forecast of actual common-share payouts. Assess sourced repurchase '
-            'prices against current house value. EPS accretion alone does not prove value creation. Use '
-            'computed repurchase_tests when supplied, distinguish retrospective conditional comparisons '
-            'from forward illustrations, and retire cash/shares once without also paying that cash out. '
-            'The executable valuation table is appended separately; discuss its economics without duplicating '
-            'a conflicting numeric table. Forecasts are house assumptions, not reported facts.\nEvidence:\n'+context+
-            '\nSynthesis:\n'+thesis+'\nValuation:\n'+valuation_context+'\nGaps:\n'+gaps,tokens=14000)
-        state['current_memo']=draft
+            'Write the prose of an investment-committee equity research memo for '+ticker+', '+MEMO_WORDS+'. '+SECTIONS+
+            '\nPython places the COMPUTED SUMMARY below at the top of the memo and appends the full computed exhibits '
+            'after your text. Do not re-type their tables. Copy any computed or reported figure exactly as it appears in '
+            'the summary, the COMPUTED FROM REPORTED FILINGS tables, the valuation output or a source. Do not calculate '
+            'new figures (growth rates, margins, per-share amounts, differences or sums); if a figure you need is not '
+            'shown, make the point without it. Cite every factual claim with [S#] from the evidence; a causal claim '
+            '(driven by, reflected, helped by) needs a source that states that cause. Attribute model '
+            'outputs (values, price requirements, implied returns, monitoring cases) to the computed summary or exhibits '
+            'in words, and place each [S#] directly after the reported or sourced figure it supports, not after a model output.\n'+
+            EVIDENCE_TIER_RULE+'\n'+RUBRIC+'\n'
+            'Engage the strongest sourced opposing economic case and answer it with evidence; a target or rating alone '
+            'is not an argument. Use the computed monitoring cases, counterfactuals, multiples and repurchase tests for '
+            'those topics and say which inputs they hold fixed; reverse-DCF and implied-return figures are conditional '
+            'on named fixed assumptions, not market beliefs. GAAP EBIT already expenses stock compensation, which is a '
+            'real cost. Missing evidence narrows the conclusion; state each gap once instead of repeating caveats. '
+            'Do not invent transcripts, guidance, consensus, dates or quotes. Valuation research only: no ratings, '
+            'target prices, entry levels, margins of safety, upside or downside, or position sizing; write value / '
+            'price. Plain analytical prose without slogans, superlatives or rhetorical contrast formulas. Refer to the '
+            'computed summary, exhibits and reported tables by name; never mention Python, prompts or instructions, and '
+            'add no tables of your own.'
+            '\nCOMPUTED SUMMARY (placed above your text):\n'+computed_summary(plan,result)+
+            EVIDENCE_ABOVE+'\nSynthesis:\n'+thesis+'\nValuation:\n'+valuation_context+'\nGaps:\n'+gaps,tokens=MEMO_TOKENS,
+            prefix=_evidence_prefix(context))
+        state['current_memo']=_label_unverified(draft,state['sources'])
         checkpoint()
     revisions=folder/'revisions';revisions.mkdir(exist_ok=True)
     reviews=folder/'reviews';reviews.mkdir(exist_ok=True)
@@ -1437,29 +3178,88 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'Preserve the genuine outside-to-house variant bridge or an honest admission of no operating '
             'edge; normalized one-off margin, inventory/procurement cash and reinvestment links; and the '
             'strongest sourced opponent across the saved quote. Explain computed market/exit multiple '
-            'and consistent return comparisons, the justified conditional entry threshold if meaningful, '
-            'and repurchase economics against current house value. Do not resolve a finding by inventing '
+            'and consistent return comparisons, and repurchase economics against current house value. '
+            'Adopt a reviewer-proposed number only when it appears in the computed output or a source; otherwise '
+            'keep the computed figure. Copy computed and reported figures exactly and do not calculate new ones; '
+            'attribute model outputs to the computed summary in words and place each [S#] after the sourced figure '
+            'it supports. Python places the computed summary above your text and the exhibits after it; do not '
+            're-type their tables. Do not resolve a finding by inventing '
             'a policy discount, nonrecurring adjustment, source passage or double-counted cash distribution. '
-            'Return the full revised memo only, roughly 3000-4500 words plus exhibits.\nEvidence:\n'+context+
-            '\nValuation:\n'+valuation_context+'\nMemo:\n'+memo+'\nFindings:\n'+json.dumps(combined)+'\nAdjudicated model response:\n'+json.dumps(candidate),tokens=14000)
-        state['current_memo']=corrected
+            'Return the full revised memo only, '+MEMO_WORDS+'. The current prose is '+str(prose_words(memo))+
+            ' words; the revision must not be longer, and should be shorter where the current prose exceeds 3,000 words. '
+            'Keep the required section order.\n'+EVIDENCE_TIER_RULE+'\n'+RUBRIC+EVIDENCE_ABOVE+
+            ('\nThe forecast correction for these findings was rejected; the valuation below is unchanged. Do not '
+             'describe any forecast change as made.' if isinstance(candidate,dict) and candidate.get('correction_rejected') else '')+
+            ('\nNotes on the plan now valued:\n'+'\n'.join(state.get('plan_gap_notes',[])) if state.get('plan_gap_notes') else '')+
+            '\nValuation:\n'+valuation_context+'\nMemo:\n'+memo+'\nFindings:\n'+json.dumps(combined)+'\nAdjudicated model response:\n'+json.dumps(candidate),tokens=MEMO_TOKENS,
+            prefix=_evidence_prefix(context))
+        state['current_memo']=_label_unverified(corrected,state['sources'])
         state['iteration']=iteration+1
         state.pop('pending_revision',None)
         checkpoint()
 
-    while state['iteration']<=max_revisions:
+    while _revisions_used(state)<=max_revisions:
         iteration=state['iteration']
         memo=state['current_memo']
         pending=state.get('pending_revision')
         if _pending_revision_matches(pending,state):
-            if iteration>=max_revisions:
-                raise ValueError(f'Increase max_revisions to at least {iteration+1} to resume the pending prose revision')
+            if _revisions_used(state)>=max_revisions:
+                raise ValueError(f'Increase max_revisions to at least {_revisions_used(state)+1} to resume the pending prose revision')
             finish_revision(iteration,memo,pending['findings'],pending['model_response'])
             continue
         if pending:
             state.pop('pending_revision',None)
             checkpoint()
-        visible=memo+'\n'+valuation_section(plan,result)
+        # Free checks before the paid review, and one targeted fix call when they
+        # find defects (untraced or unlabelled figures, added convention rows,
+        # length). Edits are exact quote replacements applied by Python.
+        computed_inputs=(result,plan,_computed_tables(state['sources']))
+        issues=prereview_checks(_with_summary(memo,plan,result),state['sources'],computed_inputs) if result else []
+        fixed=state.setdefault('prereview_fixes',{})
+        # Keyed by the draft's own text: a contract refresh can replace the draft
+        # within one iteration, and the new draft must be checked and fixed.
+        memo_key=hashlib.sha256(memo.encode()).hexdigest()[:16]
+        done=any(memo_key in (record.get('memo_sha256'),record.get('fixed_memo_sha256'))
+                 for record in fixed.values() if isinstance(record,dict))
+        # Length is left to the writing stages: a live fix call (2026-11-14) asked to
+        # cut 1,300 words overran its output limit and was deleting the conclusion's
+        # required rows. The fix call corrects figures, labels and added rows only.
+        fixable=[issue for issue in issues if issue['id']!='length']
+        if fixable and not done:
+            try:
+                response=call(f'draft_check_fix_{iteration}',strong,
+                'Correct only the problems listed below in this memo draft. Return ONLY JSON {"edits":[{"quote":"exact '
+                'contiguous text copied from the memo","replacement":"corrected text"}]}. Each quote must appear exactly '
+                'once in the memo; keep each quote to one sentence or less. For an untraced figure, use the exact figure from '
+                'the computed summary, the COMPUTED FROM REPORTED FILINGS tables, the valuation output or a primary source, '
+                'or remove the figure. For a figure found only in unverified excerpts, cite the primary source that contains '
+                'it, label it as unverified context, or remove it. Describe convention rows separately, never as adding up. '
+                'Change nothing else.\n'+
+                EVIDENCE_TIER_RULE+'\nProblems:\n'+json.dumps(fixable)+'\nCOMPUTED SUMMARY:\n'+computed_summary(plan,result)+
+                EVIDENCE_ABOVE+'\nComputed exhibits:\n'+valuation_section(plan,result)+'\nMemo:\n'+memo,tokens=8000,
+                prefix=_evidence_prefix(context))
+            except core.IncompleteResponse as exc:
+                # The fix is a free-check convenience; the review still sees the draft
+                # and the same checks. A charged but unusable answer does not stop the run.
+                response=''
+                progress(f'Pre-review fix not applied: {exc}'.split(', so it')[0])
+            # A live fix response (2026-11-14) gave edits, wrote "Wait, I need to
+            # re-read", and gave corrected edits. The last complete block is the
+            # model's answer; each edit is still applied only on an exact match.
+            edits=_last_edits(response) if response else []
+            memo,applied,skipped=_apply_edits(memo,edits)
+            memo=_label_unverified(memo,state['sources'])
+            if not response:
+                skipped=['the fix response was incomplete and was not used']
+            elif edits is None:
+                skipped=['no complete edits object could be parsed from the response']
+            fixed[f'{iteration}:{memo_key}']={'memo_sha256':memo_key,'fixed_memo_sha256':hashlib.sha256(memo.encode()).hexdigest()[:16],
+                                             'issues':[issue['id'] for issue in issues],'edits_applied':applied,'edits_skipped':skipped[:20]}
+            state['current_memo']=memo
+            checkpoint()
+            issues=prereview_checks(_with_summary(memo,plan,result),state['sources'],computed_inputs)
+        visible=_label_unverified(_with_summary(memo,plan,result)+'\n'+valuation_section(plan,result)+
+                                  '\n'.join(reported_tables_section(state['sources'])),state['sources'])
         (revisions/f'memo-{iteration}.md').write_text(visible,encoding='utf-8')
         # A review can fail after a new draft/model is saved. Keep the reader
         # download consistent with those artifacts even before review succeeds.
@@ -1472,47 +3272,38 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         manifest={'memo_sha256':hashlib.sha256(visible.encode()).hexdigest(),
                   'sources_sha256':_digest(state['sources']),'valuation_sha256':_digest(result),
                   'review_type':'model_peer_review_not_publication_certification'}
-        deterministic=inspect_memo(visible,state['sources'],result)
+        deterministic=inspect_memo(visible,state['sources'],result)+[
+            {key:value for key,value in issue.items() if key!='items'}|{'issue':issue['issue']+' Examples: '+
+             '; '.join(item['figure'] or item['sentence'][:80] for item in issue['items'][:8])} for issue in issues]
         fresh_notes=(state.get('external_notes','') if state.get('external_notes_digest') !=
                      state.get('external_notes_reviewed_digest') else '')
-        prompt=('Independently audit this complete equity memo against its exact supplied evidence and '
-                'Python valuation. Source support, dates/periods/session, currency/units, claimed cash conversion, '
-                'buybacks/liquidity, net debt/cash/claims, WACC/tax/terminal reinvestment, scenario plausibility, '
-                'market-implied economics, thesis direction and genuine falsifiers, strongest contrary explanation and '
-                'decision framing all matter. Recompute every quoted sensitivity against computed_diagnostics; '
-                'Also audit the research argument: company-specific economic drivers, dated Street comparison, '
-                'authentic named outside views, calibrated required returns and observation-to-value monitoring. '
-                'Verify outside expectation -> house adjustment -> named annual driver -> Python-computed '
-                'conditional effect. A near-consensus operating view must not be sold as an invented edge. '
-                'If a credible sourced opponent across the quote is available, check its economic case is '
-                'answered rather than replaced by a target or inaccessible-model caveat. Check material '
-                'nonrecurring gross-profit benefits/refunds and reported-versus-normalized baselines, plus '
-                'inventory/procurement and trade-cash links to margins and reinvestment without counting '
-                'working capital or operating purchases twice. '
-                'Reconcile market and DCF-exit multiples using consistent earnings periods and show how '
-                'original-exit versus unchanged-entry-multiple returns differ under one fixed ownership '
-                'convention. Check a meaningful computed entry policy becomes a numeric conditional research '
-                'threshold with its disclosed basis and justification, not an invented default discount. '
-                'Test repurchase prices against current house value, distinct from EPS accretion; match '
-                'historical dollars/shares/periods and distinguish retrospective conditional comparisons '
-                'from observed historical losses or future buyback forecasts. No cash may be counted twice. '
-                'A disclosed house assumption is not automatically well justified. Identify a material unsupported '
-                'load-bearing assumption or missing contrary evidence when it changes the conclusion, while avoiding '
-                'optional stylistic preferences or demands for unavailable proprietary data. '
-                'a correct base valuation does not make surrounding sensitivity prose correct. '
-                'Treat invented source assertions or unsupported valuation inputs as major; distinguish legitimate '
-                'disclosed forecasts from factual errors. If primary reports conflict with a secondary series, '
-                'require reconciliation rather than silently selecting a convenient number. '
-                'Return only actionable unresolved findings. Omit withdrawn accusations, correct calculations, '
-                'and optional stylistic preferences. Check whether the allegedly missing disclosure already '
-                'appears elsewhere in the full memo before flagging it. Reserve blocker/major for errors '
-                'that materially change valuation, factual understanding, or the conclusion. '
-                'Every finding must quote the actual CURRENT draft wording or name the precise current omission. '
-                'Earlier notes can be stale; never report an accusation that the current draft already resolves. '
-                'Use at most 12 prioritized findings per review, issue <=100 words and fix <=70 words each; '
-                'combine related issues. If further material issues remain, keep verdict revise and state '
-                'that in a finding rather than issuing a false pass.\n'+REVIEW_SCHEMA+
-                '\nEvidence:\n'+context+'\nValuation:\n'+valuation_context+'\nDraft:\n'+visible+
+        earlier=state['review_history'][-1] if iteration and state.get('review_history') else None
+        ledger=('\nFindings from the previous review. Verify whether each is resolved in this draft; do not re-raise a '
+                'resolved one, and raise a new material finding only for a defect present in this draft:\n'+
+                json.dumps([{key:finding.get(key) for key in ('id','severity','issue')} for finding in earlier.get('findings',[])])
+                if earlier else '')
+        prompt=('Review this equity memo against its supplied evidence and the Python valuation, using the shared quality '
+                'standard below, and classify each defect as blocker, major or minor by that standard. Rounding within '
+                'the last displayed digit is never material; an unverified excerpt used only as attributed outside view '
+                'or context is not material, but a company fact or number resting only on one is (rule M1); style '
+                'preferences are not findings. Check: (1) every figure in the prose against the computed summary, the computed tables, the '
+                'valuation output or the cited source, and every comparison with the price by arithmetic; (2) that the '
+                'memo does not contradict the computed account of which inputs alone can and cannot bring value to the '
+                'price (explaining why the house forecast differs from what the price requires is the variant view, not '
+                'a contradiction; the conclusion need not restate the account); (3) that company facts rest on primary sources and unverified '
+                'excerpts are labelled context; (4) that the strongest sourced opposing case is answered with evidence; '
+                '(5) that no trading-layer language appears; (6) that convention rows are never added together; (7) that '
+                'repurchase, multiple and monitoring statements use the computed diagnostics and their fixed inputs. A '
+                'disclosed house forecast is a judgment, not a defect, unless primary evidence contradicts it or it is '
+                'unexplained. Never write a fix that asks the author to compute a value the engine has not computed. '
+                'Before flagging an omission, check the whole memo. Report every material defect you find and at most '
+                'three minor ones; there is no target number of findings. '
+                'Every finding must quote one contiguous passage of the CURRENT draft (between the draft markers) verbatim, without added quotation '
+                'marks or ellipses; for an omission, quote the heading or sentence where the missing content belongs and '
+                'name the omission in issue. Earlier notes can be stale; never report an accusation that the current '
+                'draft already resolves. Keep each issue under 100 words and each fix under 70.\n'+
+                EVIDENCE_TIER_RULE+'\n'+RUBRIC+ledger+'\n'+REVIEW_SCHEMA+
+                '\nThe evidence, the valuation and the draft are in the blocks above.'+
                 '\nDeterministic diagnostics (not semantic proof):\n'+json.dumps(deterministic)+
                 '\nNew external notes for this draft only; verify against the CURRENT wording and omit resolved allegations:\n'+fresh_notes+
                 ('\nArtifact integrity recheck record: '+state['artifact_review_record']+
@@ -1530,10 +3321,16 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             record=prior_review
             combined=record['findings']
         else:
-            raw=call(f'review_{iteration}',reviewer,prompt,tokens=12000)
+            review_prefix=_review_prefix(context,valuation_context,visible)
+            raw=call(f'review_{iteration}',reviewer,prompt,tokens=12000,prefix=review_prefix)
             try:
                 review_value,normalized=_response_json(raw)
-                review=parse_review(json.dumps(review_value),memo=visible)
+                # Live GPT-5.4 reviews (2026-11-14) wrapped quotes in quotation
+                # marks or joined fragments, and each paid a format repair whose
+                # result was then anchored to its longest exact span anyway. The
+                # same anchoring applies to the first response; the reviewer's
+                # wording stays on record beside the anchored excerpt.
+                review=parse_review(json.dumps(review_value),memo=visible,anchor_embellished=True)
             except ValueError as exc:
                 (reviews/f'review-{iteration}-unparsed.txt').write_text(raw,encoding='utf-8')
                 # This call repairs presentation only. Repeating the full source
@@ -1550,8 +3347,21 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                         '\nRECORDED REVIEW:\n'+raw)
                 raw=call(f'review_format_{iteration}',reviewer,repair,tokens=12000)
                 (reviews/f'review-{iteration}-reformatted.txt').write_text(raw,encoding='utf-8')
-                review_value,normalized=_response_json(raw)
-                review=parse_review(json.dumps(review_value),memo=visible)
+                try:
+                    review_value,normalized=_response_json(raw)
+                    review=parse_review(json.dumps(review_value),memo=visible,anchor_embellished=True)
+                except ValueError as failed:
+                    # A saved response is replayed on resume. Keeping a review
+                    # that cannot be validated would stop every later attempt
+                    # here, so it is discarded (both raw texts stay on disk and
+                    # the spending stays in the ledger) and the next attempt
+                    # requests a fresh review.
+                    for name in [name for name in state['stages']
+                                 if name.split(':')[0] in (f'review_{iteration}',f'review_format_{iteration}')]:
+                        state['stages'].pop(name)
+                    checkpoint()
+                    raise ValueError(str(failed)+'. The rejected review was discarded; run the same command again '
+                                     'for a fresh review') from None
             if normalized:
                 recovery={'stage':f'review_{iteration}','method':'one_explicit_complete_json_fence'}
                 if recovery not in state.setdefault('response_normalizations',[]):
@@ -1560,10 +3370,71 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             for finding in review['findings']:
                 if not set(finding['source_refs']).issubset(known):
                     raise RuntimeError('Reviewer cited a source outside the research snapshot')
-            combined=review['findings']+deterministic
-            effective='revise' if any(f.get('severity') in {'blocker','major'} for f in combined) else review['verdict']
-            record={'iteration':iteration,'verdict':effective,'model_verdict':review['verdict'],'findings':combined,'manifest':manifest,
-                    'diagnostic_scope':DIAGNOSTIC_SCOPE,'review_model':reviewer}
+            # A reviewer ID equal to one Python assigns (the assessment finding, a
+            # deterministic check) is renamed so records and the check stay distinct.
+            reserved={'central-weakness-unhandled','review-assessment-missing'}|{f.get('id') for f in deterministic}
+            for finding in review['findings']:
+                if finding['id'] in reserved:
+                    finding['id']=finding['id']+'-reviewer'
+            # The reviewer's assessment finding is checked with its majors. It is
+            # kept only when no checked reviewer major survives, as before the
+            # check existed; its minor form (assessment missing) is always kept.
+            assessment=assessment_findings({**review,'findings':[]})
+            material=[f for f in review['findings']+assessment if f.get('severity') in {'blocker','major'}]
+            refuted,check_note={},None
+            # Python settles "this number is in no source" itself: a replay review
+            # (2026-11-15) called a figure from the reported-history table absent,
+            # and the model check upheld it.
+            pools=trace_pools(state['sources'],computed_inputs)
+            # A finding the check refuted earlier on the same text under the same
+            # rule is not paid for again (the check flip-flopped between reviews).
+            earlier_refuted=_carried_refutations(state,iteration,manifest)
+            for index,finding in enumerate(material):
+                rule,excerpt=finding.get('rule'),finding.get('current_excerpt') or ''
+                if rule=='M3':
+                    missing=untraced_figures(excerpt,pools)
+                    if missing==[]:
+                        refuted[index]=('Python traced every figure in the quoted text to the computed output, the reported '
+                                        'tables or a primary source.')
+                elif rule=='B2' and excerpt and not TRADING_TERMS.search(excerpt):
+                    refuted[index]='The quoted text contains none of the trading-layer terms the standard names.'
+                elif rule=='M6' and HOUSE_ATTRIBUTION.search(excerpt):
+                    refuted[index]='The quoted text names the figure as a house, computed or forecast figure.'
+                if index not in refuted and (rule,excerpt) in earlier_refuted:
+                    refuted[index]=earlier_refuted[(rule,excerpt)]
+            pending=[f for index,f in enumerate(material) if index not in refuted]
+            if pending:
+                try:
+                    check=call(f'finding_check_{iteration}',reviewer,FINDING_CHECK+'\n'+EVIDENCE_TIER_RULE+'\n'+RUBRIC+
+                        '\nFindings:\n'+json.dumps([dict({key:f.get(key) for key in ('severity','rule','issue','current_excerpt','fix','source_refs')},id=check_id)
+                                                    for f,check_id in zip(pending,_check_ids(pending))])+
+                        '\nThe evidence, the valuation and the draft are in the blocks above.',tokens=FINDING_CHECK_TOKENS,
+                        prefix=review_prefix)
+                    for index,reason in _refuted_findings(check,pending).items():
+                        refuted[material.index(pending[index])]=reason
+                except core.IncompleteResponse as exc:
+                    # Charged and recorded; every remaining finding stands, as if the check upheld it.
+                    check_note='The check response was incomplete; every finding it was asked about was kept.'
+                    progress(f'Finding check not used: {exc}'.split(', so it')[0])
+            removed={id(material[index]) for index in refuted}
+            kept=[f for f in review['findings'] if id(f) not in removed]
+            if any(f.get('severity') in {'blocker','major'} for f in kept):
+                assessment=[f for f in assessment if f.get('severity') not in {'blocker','major'}]
+            else:
+                assessment=[f for f in assessment if id(f) not in removed]
+            combined=kept+deterministic+assessment
+            effective='revise' if any(f.get('severity') in {'blocker','major'} for f in combined) else 'pass'
+            record={'iteration':iteration,'verdict':effective,'model_verdict':review.get('verdict_as_reviewed',review['verdict']),
+                    'findings':combined,'manifest':manifest,
+                    'diagnostic_scope':DIAGNOSTIC_SCOPE,'review_model':reviewer,'author_model':strong}
+            if material:
+                record['finding_check']={'model':reviewer,'checked':[f['id'] for f in material],
+                                         'refuted':[dict(material[index],check_reason=reason) for index,reason in sorted(refuted.items())]}
+                if check_note:
+                    record['finding_check']['note']=check_note
+            for key in ('central_weakness','gap_explained'):
+                if key in review:
+                    record[key]=review[key]
             state['review_history']=[r for r in state['review_history'] if r['iteration']!=iteration]+[record]
             core.save(reviews/f'review-{iteration}.json',record)
             (reviews/f'review-{iteration}.txt').write_text(raw,encoding='utf-8')
@@ -1580,14 +3451,15 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             if not result:
                 state['quality_status']='missing_valuation'
             break
-        if iteration==max_revisions:
+        if _revisions_used(state)==max_revisions:
             state['complete']=False
             state['quality_status']='unresolved_findings'
             break
         call(f'targeted_research_{iteration+1}',easy,
              f'Investigate {ticker} primary evidence needed to resolve these specific findings. '
-             'Find exact dated source passages; do not repeat unverified assertions. Findings:\n'+json.dumps(major),
-             tokens=3500,web=True)
+             'Find exact dated source passages; do not repeat unverified assertions. '
+             'Answer in at most about 900 words. Findings:\n'+json.dumps(major),
+             tokens=WEB_RESEARCH_TOKENS,web=True)
         research_row=next(r for r in reversed(state['ledger'])
                           if r['stage']==f'targeted_research_{iteration+1}' and r.get('status')=='complete')
         for annotation in research_row.get('annotations',[]):
@@ -1600,6 +3472,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         # Review may identify economic or evidentiary defects in the model.
         # Correct the editable plan first and independently recompute it, rather
         # than letting prose quietly contradict an unchanged spreadsheet.
+        apply=not state.get('provided_forecast_digest')
+        rate_text=_correction_rate_text(state['sources'],plan,apply)
         model_response=call(f'model_response_{iteration+1}',strong,
             'Address these review findings. Return ONLY JSON {"unchanged":true,"reason":"..."} '
             'if the existing valuation plan is still appropriate, otherwise return the COMPLETE corrected '
@@ -1608,58 +3482,131 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'accusations or suggested fixes instead of replacing one unsupported story with another. A valid '
             'prose-only finding may leave forecasts unchanged; label it memo_only rather than rejecting it. Include compact '
             'finding_dispositions mapping finding IDs to accepted/rejected/clarified with source-backed reasons. '
-            'Preserve or explicitly rejustify the entry policy and repurchase illustrations when forecasts change; '
+            'Preserve or explicitly rejustify the repurchase illustrations when forecasts change; '
             'do not silently drop their scope or invent a discount to satisfy a review. '
             'Forecast changes must be explicit house assumptions and economically justified. '
-            +FORECAST_SCHEMA+UNDERWRITING_GUIDANCE+'\nEvidence:\n'+context+'\nCurrent memo (verify allegations against this exact text):\n'+memo+'\nCurrent forecast proposal:\n'+json.dumps({k:plan[k] for k in
+            +FORECAST_SCHEMA+rate_text+UNDERWRITING_GUIDANCE+PLAN_FIELD_RULES+PLAN_SOURCE_RULE+
+            EVIDENCE_ABOVE+'\nCurrent memo (verify allegations against this exact text):\n'+memo+'\nCurrent forecast proposal:\n'+json.dumps({k:plan[k] for k in
                 ('assumptions_label','scenario_rationales','scenarios','operating_model','discount_rate','monitoring',
-                 'counterfactuals','calibration_comparisons','forecast_periods','entry_policy','repurchase_tests') if k in plan})+
+                 'counterfactuals','calibration_comparisons','forecast_periods','repurchase_tests',
+                 'margin_continuity_basis','capital_efficiency_basis','cost_path_basis','weights_basis','valuation_timing') if k in plan})+
             '\nLocked actuals (reference only; omit from your proposal):\n'+json.dumps(plan.get('actuals',{}))+
+            '\nReported operating lines (reference for year-1 continuity):\n'+
+            json.dumps((plan.get('reported_inputs') or {}).get('operating_reference'))+
+            ('\nReported reinvestment (reference for year-1 reinvestment):\n'+json.dumps(plan['reinvestment_reference'])
+             if plan.get('reinvestment_reference') else '')+
+            ('\nReported cost path (reference for expense growth and final-year margins):\n'+json.dumps(plan['cost_path_reference'])
+             if plan.get('cost_path_reference') else '')+
             '\nComputed diagnostics for verification:\n'+json.dumps((result or {}).get('computed_diagnostics',{}))+
             '\nComputed counterfactuals:\n'+json.dumps((result or {}).get('counterfactuals',{}))+
             '\nComputed reverse-DCF projections:\n'+json.dumps((result or {}).get('reverse_dcf',{}).get('solution_projections',[]))+
-            '\nFindings:\n'+json.dumps(combined),tokens=12000)
-        try:
-            candidate,normalized=_response_json(model_response)
-        except ValueError:
+            '\nFindings:\n'+json.dumps(combined),tokens=12000,prefix=_evidence_prefix(context))
+        def parsed(text, stage):
+            try:
+                value,normalized=_response_json(text)
+            except ValueError as error:
+                return None,str(error)
+            if normalized:
+                recovery={'stage':stage,'method':'one_explicit_complete_json_fence'}
+                if recovery not in state.setdefault('response_normalizations',[]):
+                    state['response_normalizations'].append(recovery)
+            return value,None
+        candidate,parse_error=parsed(model_response,f'model_response_{iteration+1}')
+        if parse_error:
             model_response=call(f'model_response_format_{iteration+1}',easy,
                 'Reformat this existing model response as exactly ONE compact JSON value. Remove analysis and '
                 'Markdown outside the proposal. Preserve every field, number, forecast and finding disposition; '
                 'do not add facts or change the proposal. Return JSON only.\nResponse:\n'+model_response,tokens=12000)
-            candidate,normalized=_response_json(model_response)
-        if normalized:
-            recovery={'stage':f'model_response_{iteration+1}','method':'one_explicit_complete_json_fence'}
-            if recovery not in state.setdefault('response_normalizations',[]):
-                state['response_normalizations'].append(recovery)
-        if not isinstance(candidate,dict):
-            raise ValueError('Model correction must return an object')
-        if candidate.get('unchanged') is not None and not isinstance(candidate['unchanged'],bool):
-            raise ValueError('The unchanged flag must be boolean')
-        adjudication=copy.deepcopy(candidate)
-        if candidate.get('unchanged') is not True:
-            prior=folder/'revisions'/f'model-before-{iteration+1}'
-            prior.mkdir(parents=True,exist_ok=True)
-            model_files=['assumptions.json','valuation.json','cashflows.csv','sensitivity.csv']
-            for name in model_files:
-                if (folder/name).exists() and not (prior/name).exists():
-                    shutil.copyfile(folder/name,prior/name)
-            if candidate.get('unavailable'):
+            candidate,parse_error=parsed(model_response,f'model_response_format_{iteration+1}')
+        # Every malformed or invalid correction goes through the same bounded
+        # repair as the first plan. If none validates, the prior valuation
+        # stands and the run says so, rather than ending after a paid draft
+        # and review, or replaying the same failure on every resume.
+        original=copy.deepcopy(candidate) if isinstance(candidate,dict) else model_response
+        prior_valuation=(plan,result) if result is not None else None
+        correction,failures,decision,locked,omitted=model_response,[],'rejected',None,{}
+        for repair in range(PLAN_REPAIRS+1):
+            try:
+                if parse_error:
+                    raise ValueError(parse_error)
+                if not isinstance(candidate,dict):
+                    raise ValueError('The model correction must be one JSON object')
+                if candidate.get('unchanged') is not None and not isinstance(candidate['unchanged'],bool):
+                    raise ValueError('The unchanged flag must be true or false')
+                if candidate.get('unchanged') is True:
+                    decision='unchanged'
+                    break
+                if candidate.get('unavailable'):
+                    decision='unavailable'
+                    break
+                proposal={k:v for k,v in candidate.items() if k not in ('finding_dispositions','unchanged','reason')}
+                (locked,changes,corrected),omitted=_omit_invalid_optional_sections(
+                    proposal,lambda value:_lock_and_value(value,state,apply_conventions=apply,prior=prior_valuation))
+                decision='corrected'
+                break
+            except (ValueError,KeyError,TypeError,AttributeError) as exc:
+                failures.append(str(exc))
+                if repair==PLAN_REPAIRS:
+                    break
+                stage=f'model_response_repair_{iteration+1}'+('' if repair==0 else f'_{repair+1}')
+                correction=call(stage,strong,
+                    'Repair this corrected valuation plan. Return only the complete corrected JSON object, keeping '
+                    'finding_dispositions, or {"unchanged":true,"reason":"..."} with finding_dispositions to keep the '
+                    'current plan.'+FORECAST_SCHEMA+rate_text+CONTINUITY_RULE+PLAN_FIELD_RULES+
+                    '\nValid source IDs: '+'; '.join(f"{source['id']} {str(source.get('title',''))[:80]}" for source in state['sources'])+
+                    '\nRejected response:\n'+(correction if isinstance(correction,str) else json.dumps(correction))+
+                    '\nRepair this precise validation failure without inventing actuals: '+str(exc)+
+                    ('\nEarlier attempts were rejected for these reasons; do not reintroduce them: '+
+                     ' | '.join(failures[:-1]) if failures[:-1] else ''),tokens=12000)
+                candidate,parse_error=parsed(correction,stage)
+        dispositions=(candidate.get('finding_dispositions') if isinstance(candidate,dict) else None) or \
+                     (original.get('finding_dispositions') if isinstance(original,dict) else None)
+        if decision=='unchanged':
+            adjudication=copy.deepcopy(candidate)
+            if repair:
+                adjudication['correction_repairs']=repair
+        else:
+            if decision in ('unavailable','corrected'):
+                backup=folder/'revisions'/f'model-before-{iteration+1}'
+                backup.mkdir(parents=True,exist_ok=True)
+                model_files=['assumptions.json','valuation.json','cashflows.csv','sensitivity.csv']
+                for name in model_files:
+                    if (folder/name).exists() and not (backup/name).exists():
+                        shutil.copyfile(folder/name,backup/name)
+            if decision=='unavailable':
                 for name in model_files:
                     (folder/name).unlink(missing_ok=True)
                 plan,result={k:v for k,v in candidate.items() if k!='finding_dispositions'},None
                 state.pop('valuation',None)
-            else:
-                candidate,changes=_lock_plan(candidate,state['sources'])
-                if not candidate['reported_inputs']['coverage'].get('complete'):
-                    raise ValueError('Corrected model lacks complete reported-input coverage')
+                adjudication=copy.deepcopy(candidate)
+            elif decision=='corrected':
                 state.setdefault('actual_input_corrections',[]).extend(changes)
-                _validate_plan_sources(candidate,state['sources'])
-                if 'requested_counterfactuals' in state:
-                    candidate['counterfactuals']=copy.deepcopy(state['requested_counterfactuals'])
-                result=evaluate(candidate)
-                plan=candidate
+                _reset_plan_notes(state)
+                _record_omitted_sections(state,omitted,f'review {iteration+1} correction\'s')
+                plan,result=locked,corrected
                 save_valuation(folder,plan,result)
                 state['valuation']=result
+                if apply:
+                    state['plan_conventions']=PLAN_CONVENTIONS
+                # What the memo author receives is the plan that was valued.
+                adjudication={'finding_dispositions':dispositions,
+                              'accepted_proposal':{k:copy.deepcopy(plan[k]) for k in
+                                  ('assumptions_label','scenario_rationales','scenarios','operating_model','discount_rate',
+                                   'margin_continuity_basis','capital_efficiency_basis','cost_path_basis','weights_basis','valuation_timing','counterfactuals','calibration_comparisons',
+                                   'monitoring','repurchase_tests') if k in plan}}
+                if omitted:
+                    adjudication['omitted_sections']=omitted
+                if repair:
+                    adjudication.update(correction_repairs=repair,original_proposal=original)
+            else:
+                reason=failures[-1][:500] if failures else 'no valid correction'
+                _add_plan_note(state,f'The model correction after review {iteration+1} remained invalid after {PLAN_REPAIRS} '
+                                     f'repairs ({reason[:300]}); the prior valuation stands and the memo is revised against it.')
+                adjudication={'finding_dispositions':dispositions,
+                              'correction_rejected':{'reason':reason,'repairs':PLAN_REPAIRS},
+                              'note':'The forecast correction was rejected and the prior valuation stands. No forecast '
+                                     'change named in these dispositions took effect; treat them as findings the memo '
+                                     'must address in prose against the unchanged valuation.'}
             state['plan']=plan
             valuation_context=(render_valuation_context(plan,result) if result is not None else
                                json.dumps({'assumptions':plan,'computed':None},ensure_ascii=False))

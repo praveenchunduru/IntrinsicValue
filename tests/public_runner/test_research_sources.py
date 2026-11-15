@@ -6,24 +6,35 @@ from investmentideas import research
 
 DIRECTORY = {'0': {'ticker': 'TEST', 'title': 'Test Issuer', 'cik_str': 123}}
 BODY = '<html><head><title>Hidden title</title><script>not evidence</script></head><body><h1>Business</h1>' + '<p>Issuer sells industrial equipment and records revenue when control passes to customers.</p>' * 12 + '<table><tr><td>Revenue</td><td>100</td><td>USD millions</td></tr></table></body></html>'
-HISTORY = {'cik': '0000000123', 'name': 'Test Issuer', 'filings': {'recent': {
+HISTORY = {'cik': '0000000123', 'name': 'Test Issuer', 'sic': '3571', 'sicDescription': 'Electronic Computers',
+           'filings': {'recent': {
     'form': ['8-K', '10-Q', '10-K'], 'filingDate': ['2026-11-01', '2026-08-01', '2026-02-01'],
     'reportDate': ['2026-10-31', '2026-06-30', '2025-12-31'],
     'accessionNumber': ['0000000123-26-000003', '0000000123-26-000002', '0000000123-26-000001'],
-    'primaryDocument': ['event.htm', 'quarter.htm', 'annual.htm']}}}
-FEED = '''<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Apple reports fourth quarter results</title><published>2026-11-03T00:00:00Z</published><link href="https://www.apple.com/newsroom/2026/11/apple-reports-fourth-quarter-results/" /></entry><entry><title>Apple introduces new hardware</title><link href="https://www.apple.com/newsroom/2026/10/new-hardware/" /></entry></feed>'''
+    'primaryDocument': ['event.htm', 'quarter.htm', 'annual.htm'], 'items': ['2.02,9.01', '', '']}}}
+RELEASE_FOLDER = '/Archives/edgar/data/123/000000012326000003/'
+INDEX = ('<html><body><table class="tableFile"><tr><th>Seq</th><th>Description</th><th>Document</th><th>Type</th></tr>'
+         f'<tr><td>1</td><td>8-K</td><td><a href="/ix?doc={RELEASE_FOLDER}event.htm">event.htm</a></td><td>8-K</td></tr>'
+         f'<tr><td>2</td><td>PRESS RELEASE</td><td><a href="{RELEASE_FOLDER}ex991.htm">ex991.htm</a></td><td>EX-99.1</td></tr>'
+         '</table></body></html>')
+
+
+def fetch_with_index(url):
+    return INDEX if url.endswith('-index.htm') else BODY
 
 
 class PrimaryResearchTests(unittest.TestCase):
     def test_filings_use_official_history_and_archive_provenance(self):
         with patch.object(research, 'load_directory', return_value=(DIRECTORY, False)), patch.object(research.time, 'sleep'):
-            sources, gaps = research.gather_primary('TEST', lambda url: HISTORY, lambda url: BODY)
+            sources, gaps = research.gather_primary('TEST', lambda url: HISTORY, fetch_with_index)
         self.assertEqual(gaps, [])
-        self.assertEqual(len(sources), 2)
+        self.assertEqual(len(sources), 3)
         self.assertEqual(sources[0]['data']['metadata']['form'], '10-K')
         self.assertEqual(sources[1]['data']['metadata']['form'], '10-Q')
         self.assertEqual(sources[0]['url'], 'https://www.sec.gov/Archives/edgar/data/123/000000012326000001/annual.htm')
         self.assertEqual(sources[0]['source_tier'], 'regulatory_primary')
+        # The SEC industry code travels with each record for the operating-company gate.
+        self.assertEqual(sources[0]['data']['metadata']['sic'], '3571')
         self.assertEqual(sources[0]['raw_document'], BODY)
         self.assertEqual(sources[0]['data']['raw_decoded_text_sha256'], hashlib.sha256(BODY.encode()).hexdigest())
         self.assertNotIn('not evidence', sources[0]['data']['excerpts'][0]['text'])
@@ -37,17 +48,79 @@ class PrimaryResearchTests(unittest.TestCase):
             self.assertEqual(text[e['start_char']:e['end_char']], e['text'])
         self.assertGreater(len(excerpts), 1)
 
-    def test_apple_official_feed_is_discovered_when_sec_blocked(self):
+    def test_every_issuer_gets_its_latest_8k_earnings_release_as_issuer_primary(self):
+        # A live Microsoft run (2026-11-15) had its release only as an unverified web excerpt.
+        calls = []
         def text(url):
-            return FEED if url == research.APPLE_FEED else BODY
-        with patch.object(research, 'load_directory', side_effect=RuntimeError('blocked')):
-            sources, gaps = research.gather_primary('AAPL', lambda url: None, text)
-        self.assertEqual(len(sources), 2)
-        self.assertTrue(all(s['source_tier'] == 'issuer_primary' for s in sources))
-        self.assertIn('/2026/11/', sources[0]['url'])
-        self.assertEqual(sources[0]['data']['metadata']['published_at'], '2026-11-03T00:00:00Z')
-        self.assertTrue(any('filings were not reviewed' in gap for gap in gaps))
+            calls.append(url)
+            return fetch_with_index(url)
+        with patch.object(research, 'load_directory', return_value=(DIRECTORY, False)), patch.object(research.time, 'sleep'):
+            sources, gaps = research.gather_primary('TEST', lambda url: HISTORY, text)
+        release = sources[-1]
+        self.assertEqual(release['kind'], 'issuer_release')
+        self.assertEqual(release['source_tier'], 'issuer_primary')
+        self.assertEqual(release['url'], 'https://www.sec.gov' + RELEASE_FOLDER + 'ex991.htm')
+        self.assertIn('https://www.sec.gov' + RELEASE_FOLDER + '0000000123-26-000003-index.htm', calls)
+        metadata = release['data']['metadata']
+        self.assertEqual((metadata['form'], metadata['exhibit'], metadata['filingDate']), ('8-K', 'EX-99.1', '2026-11-01'))
+        self.assertIn('2.02', metadata['items'])
+        self.assertIn('filed 2026-11-01', release['title'])
+        self.assertLessEqual(release['data']['excerpt_chars'], research.MAX_EXCERPT_CHARS)
         self.assertTrue(all('raw_document' in s for s in sources))
+
+    def test_a_long_release_keeps_its_narrative_opening(self):
+        # Walmart's release kept 2,800 characters with the 1,200-character filing opening.
+        release = '<p>Walmart reports second quarter results with revenue growth and guidance.</p>' * 600
+        with patch.object(research, 'load_directory', return_value=(DIRECTORY, False)), patch.object(research.time, 'sleep'):
+            sources, _ = research.gather_primary(
+                'TEST', lambda url: HISTORY, lambda url: INDEX if url.endswith('-index.htm') else release if 'ex991' in url else BODY)
+        excerpts = sources[-1]['data']['excerpts']
+        self.assertEqual((excerpts[0]['label'], len(excerpts[0]['text'])), ('document opening', research.RELEASE_OPENING_CHARS))
+        self.assertLessEqual(sum(len(e['text']) for e in excerpts), research.MAX_EXCERPT_CHARS)
+
+    def test_releases_need_item_202_and_an_exhibit_inside_the_filing(self):
+        import copy
+        history = copy.deepcopy(HISTORY)
+        history['filings']['recent']['items'][0] = '5.07'
+        with patch.object(research, 'load_directory', return_value=(DIRECTORY, False)), patch.object(research.time, 'sleep'):
+            sources, gaps = research.gather_primary('TEST', lambda url: history, fetch_with_index)
+        self.assertEqual([s['kind'] for s in sources], ['sec_filing', 'sec_filing'])
+        self.assertTrue(any('Item 2.02' in gap for gap in gaps))
+        outside = INDEX.replace(RELEASE_FOLDER + 'ex991.htm', '/Archives/edgar/data/999/000000012326000009/ex991.htm')
+        with patch.object(research, 'load_directory', return_value=(DIRECTORY, False)), patch.object(research.time, 'sleep'):
+            sources, gaps = research.gather_primary(
+                'TEST', lambda url: HISTORY, lambda url: outside if url.endswith('-index.htm') else BODY)
+        self.assertEqual(len(sources), 2)
+        self.assertTrue(any('exhibit was unavailable' in gap for gap in gaps))
+        self.assertEqual(research._release_exhibit(INDEX.replace('EX-99.1', 'EX-99'), 123, '000000012326000003'),
+                         ('EX-99', 'ex991.htm'))
+
+    def test_a_quarterly_report_older_than_the_annual_report_is_skipped(self):
+        # Apple filed its fiscal 2026 10-K after its June 2026 10-Q.
+        import copy
+        history = copy.deepcopy(HISTORY)
+        history['filings']['recent']['reportDate'][2] = '2026-06-30'
+        records = research._filing_records(history)
+        self.assertEqual([record['form'] for record in records], ['10-K'])
+        self.assertEqual([record['form'] for record in research._filing_records(HISTORY)], ['10-K', '10-Q'])
+
+    def test_a_registrant_without_an_annual_report_names_its_successor_statement(self):
+        # ExxonMobil Holdings had filed only 10-Qs under its new CIK.
+        import copy
+        history = copy.deepcopy(HISTORY)
+        recent = history['filings']['recent']
+        for key in ('form', 'filingDate', 'reportDate', 'accessionNumber', 'primaryDocument', 'items'):
+            recent[key] = recent[key][:2]
+        body = BODY.replace('<h1>Business</h1>', '<p>The Company became the successor registrant of the predecessor\'s '
+                            'common stock pursuant to Rule 12g-3(a) under the Securities Exchange Act of 1934.</p>')
+        with patch.object(research, 'load_directory', return_value=(DIRECTORY, False)), patch.object(research.time, 'sleep'):
+            sources, gaps = research.gather_primary('TEST', lambda url: history,
+                                                    lambda url: INDEX if url.endswith('-index.htm') else body)
+        metadata = sources[0]['data']['metadata']
+        self.assertFalse(metadata['annual_report_on_file'])
+        self.assertIn('successor registrant', metadata['successor_registrant_statement'])
+        self.assertTrue(any('holds no annual report' in gap for gap in gaps))
+        self.assertTrue(any('different CIK' in gap for gap in gaps))
 
     def test_unavailable_filing_is_a_gap_not_a_reviewed_source(self):
         with patch.object(research, 'load_directory', return_value=(DIRECTORY, False)), patch.object(research.time, 'sleep'):
@@ -55,30 +128,12 @@ class PrimaryResearchTests(unittest.TestCase):
                 lambda url: (_ for _ in ()).throw(RuntimeError('blocked')))
         self.assertEqual(sources, [])
         self.assertEqual(len(gaps), 3)
-        self.assertTrue(all('not reviewed' in g or 'No additional' in g for g in gaps))
-
-    def test_results_discovery_keeps_prior_periods_without_inventing_urls(self):
-        extra=''.join(f'<entry><title>Apple reports {quarter} quarter results</title>'
-            f'<link href="https://www.apple.com/newsroom/2026/{month}/results/" /></entry>'
-            for quarter,month in [('third','07'),('second','05'),('first','01')])
-        feed=FEED.replace('</feed>',extra+'</feed>')
-        calls=[]
-        def text(url):
-            calls.append(url)
-            return feed if url==research.APPLE_FEED else BODY
-        with patch.object(research,'load_directory',side_effect=RuntimeError('blocked')):
-            sources,_=research.gather_primary('AAPL',lambda url:None,text)
-        urls=[s['url'] for s in sources]
-        self.assertEqual(len(sources),4)
-        self.assertTrue(any('/07/' in url for url in urls))
-        self.assertTrue(any('/05/' in url for url in urls))
-        self.assertFalse(any('/01/' in url for url in urls))
-        self.assertTrue(all(url in calls for url in urls))
+        self.assertTrue(all('not reviewed' in g for g in gaps))
 
     def test_malicious_or_malformed_filing_paths_are_not_fetched(self):
         import copy
         history = copy.deepcopy(HISTORY)
-        history['filings']['recent']['primaryDocument'][1:] = ['../../outside', 'https://evil.invalid/']
+        history['filings']['recent']['primaryDocument'][:] = ['../event', '../../outside', 'https://evil.invalid/']
         calls = []
         with patch.object(research, 'load_directory', return_value=(DIRECTORY, False)):
             sources, gaps = research.gather_primary('TEST', lambda url: history, lambda url: calls.append(url))
@@ -123,11 +178,9 @@ class PrimaryResearchTests(unittest.TestCase):
             research._source('Filing', 'https://www.sec.gov/a', blocked,
                              kind='sec_filing', source_tier='regulatory_primary', metadata={})
 
-    def test_feed_does_not_accept_external_or_insecure_links(self):
-        feed = FEED.replace('https://www.apple.com/newsroom/2026/11/apple-reports-fourth-quarter-results/', 'http://127.0.0.1/private')
-        entries = research._apple_feed_entries(feed)
-        self.assertEqual(len(entries), 1)
-        for unsafe in ['http://www.sec.gov/a', 'https://localhost/a', 'https://user:password@www.sec.gov/a']:
+    def test_official_text_fetch_rejects_external_or_insecure_links(self):
+        for unsafe in ['http://www.sec.gov/a', 'https://localhost/a', 'https://user:password@www.sec.gov/a',
+                       'https://www.apple.com/newsroom/']:
             with self.assertRaises(ValueError):
                 research.fetch_official_text(unsafe)
 
@@ -220,6 +273,71 @@ class InlineFactsTests(unittest.TestCase):
         self.assertEqual(rows[0]['normalized_value'],700000000)
         spoofed=doc.replace('http://fasb.org/us-gaap/2026','https://evil.example/fasb.org/us-gaap/2026')
         self.assertEqual(research.inline_facts(spoofed),[])
+
+
+    def test_cover_shares_by_share_class_are_kept_with_their_dimension(self):
+        # Meta reports outstanding shares only by class on its cover.
+        contexts = '''<xbrli:context id="classA"><xbrli:entity><xbrli:identifier>123</xbrli:identifier><xbrli:segment><xbrldi:explicitMember dimension="us-gaap:StatementClassOfStockAxis">us-gaap:CommonClassAMember</xbrldi:explicitMember></xbrli:segment></xbrli:entity><xbrli:period><xbrli:instant>2026-10-16</xbrli:instant></xbrli:period></xbrli:context>
+<xbrli:context id="classB_cash"><xbrli:entity><xbrli:identifier>123</xbrli:identifier><xbrli:segment><xbrldi:explicitMember dimension="us-gaap:StatementClassOfStockAxis">us-gaap:CommonClassBMember</xbrldi:explicitMember></xbrli:segment></xbrli:entity><xbrli:period><xbrli:instant>2026-09-30</xbrli:instant></xbrli:period></xbrli:context>'''
+        doc = self.document(self.fact('dei:EntityCommonStockSharesOutstanding', '2214472367', context='classA', unit='shares') +
+                            self.fact('us-gaap:CommonStockSharesOutstanding', '342', context='classB_cash', unit='shares', scale='6'),
+                            contexts)
+        rows = research.inline_facts(doc)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['dimensions'], {'us-gaap:StatementClassOfStockAxis': 'us-gaap:CommonClassAMember'})
+        self.assertEqual(rows[0]['dimension_filter'], 'class_of_stock_cover_shares')
+
+
+class CombinedAxisBreakdownTests(unittest.TestCase):
+    def context(self, name, **axes):
+        members = ''.join(f'<xbrldi:explicitMember dimension="{axis.replace("__", ":")}">{member}</xbrldi:explicitMember>'
+                          for axis, member in axes.items())
+        return (f'<xbrli:context id="{name}"><xbrli:entity><xbrli:identifier>104169</xbrli:identifier><xbrli:segment>'
+                f'{members}</xbrli:segment></xbrli:entity><xbrli:period><xbrli:startDate>2025-02-01</xbrli:startDate>'
+                '<xbrli:endDate>2026-01-31</xbrli:endDate></xbrli:period></xbrli:context>')
+
+    def test_a_product_within_one_segment_is_tabled_under_its_product_keyed_by_segment(self):
+        # Walmart reports grocery revenue within Walmart U.S. and within Sam's Club.
+        segment, product = 'us-gaap__StatementBusinessSegmentsAxis', 'srt__ProductOrServiceAxis'
+        contexts = (self.context('us_grocery', **{segment: 'wmt:WalmartUSMember', product: 'wmt:GroceryMember'}) +
+                    self.context('club_grocery', **{segment: 'wmt:SamsClubUSMember', product: 'wmt:GroceryMember'}) +
+                    self.context('three', **{segment: 'wmt:WalmartUSMember', product: 'wmt:GroceryMember',
+                                            'srt__StatementGeographicalAxis': 'country:US'}) +
+                    self.context('other', **{segment: 'wmt:WalmartUSMember', 'us-gaap__FairValueByFairValueHierarchyLevelAxis': 'x:L1'}))
+        def fact(context, value):
+            return (f'<ix:nonFraction name="us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax" contextRef="{context}" '
+                    f'unitRef="usd" scale="9">{value}</ix:nonFraction>')
+        doc = ('<html xmlns:us-gaap="http://fasb.org/us-gaap/2026">' + contexts +
+               '<xbrli:unit id="usd"><xbrli:measure>iso4217:USD</xbrli:measure></xbrli:unit>' +
+               fact('us_grocery', '285.5') + fact('club_grocery', '64.7') + fact('three', '1') + fact('other', '2') + '</html>')
+        facts = research.inline_breakdown_facts(doc)
+        self.assertEqual({(fact['axis'], fact['member']) for fact in facts},
+                         {('product_or_service', 'wmt:GroceryMember within wmt:WalmartUSMember'),
+                          ('product_or_service', 'wmt:GroceryMember within wmt:SamsClubUSMember')})
+        from investmentideas.evidence_tables import breakdown_tables, render_breakdowns
+        text = render_breakdowns(breakdown_tables(facts))
+        self.assertIn('Grocery in Walmart US: revenue 285.5', text)
+        self.assertIn('Grocery in Sams Club US: revenue 64.7', text)
+        self.assertIn('not summed', text)
+
+
+class LeaseFocusTests(unittest.TestCase):
+    def test_lease_commitment_and_fixed_asset_notes_are_selected(self):
+        prose = ' The amounts below compare with the prior year and are described in the following paragraphs.'
+        document = ('<h2>Note 14 \u2014 Leases</h2><p>Finance lease cost was $5.1 billion and lease liabilities were '
+                    '$66.6 billion compared with the prior year.' + prose + '</p>' + '<p>Maturity table row 2027 6,082.</p>' * 80 +
+                    '<p>As of June 30, 2026, we had additional leases, primarily for datacenters, that had not yet commenced '
+                    'of $329.1 billion, with some arrangements subject to certain contractual conditions being met.</p>' +
+                    '<h2>Commitments and Contingencies</h2><p>We have committed $12.0 billion for construction compared '
+                    'with $9.0 billion a year earlier.' + prose + '</p>' +
+                    '<h2>Property and Equipment, Net</h2><p>Depreciation expense was $34.3 billion, primarily due to '
+                    'servers and network equipment.' + prose + '</p>')
+        from investmentideas.research import archive_focus_excerpts
+        excerpts = archive_focus_excerpts(document)
+        labels = '; '.join(excerpt['label'] for excerpt in excerpts)
+        for label in ('leases', 'commitments', 'property and equipment', 'leases signed but not yet commenced'):
+            self.assertIn(label, labels)
+        self.assertTrue(any('$329.1 billion' in excerpt['text'] for excerpt in excerpts))
 
 
 if __name__ == '__main__':

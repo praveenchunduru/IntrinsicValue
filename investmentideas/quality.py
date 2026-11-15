@@ -13,6 +13,7 @@ reported alongside ``pass``. A passing review remains a model's assessment.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import bisect
 import json
 import math
 import re
@@ -21,6 +22,10 @@ SOURCE_ID = re.compile(r'S[1-9][0-9]*\Z')
 CITATION = re.compile(r'\[([^\]\n]{1,250})\]')
 SOURCE_IN_CITATION = re.compile(r'\bS[1-9][0-9]*\b')
 MAX_REVIEW_EXCERPT = 1200
+# Shortest exact run of memo wording that can anchor a finding whose quotation
+# also contains words the memo does not (an inserted parenthetical, two passages
+# joined with an ellipsis). The repair prompt asks for 50 to 300 characters.
+MIN_EXCERPT_ANCHOR = 50
 WITHDRAWN_MATERIAL_FINDING = re.compile(
     r'\bno\s+(?:(?:additional|further|other)\s+)?(?:corrections?|actions?|changes?|revisions?)\s+'
     r'(?:is\s+)?(?:needed|required|necessary)\b'
@@ -175,12 +180,45 @@ def _quote_typography(text):
     return text.translate(str.maketrans({'‘': "'", '’': "'", '“': '"', '”': '"'}))
 
 
-def parse_review(text, memo=None):
+def _longest_exact_span(memo, excerpt):
+    """Longest run of ``excerpt`` that is verbatim in ``memo``, cut to whole words.
+
+    Reviewers often embellish an otherwise accurate quotation. The finding is
+    then anchored to the part that is exactly the memo's wording. Nothing is
+    matched approximately and no memo text the reviewer did not quote is added.
+    Returns ``None`` when no exact run of at least ``MIN_EXCERPT_ANCHOR``
+    characters exists.
+    """
+    if len(excerpt) < MIN_EXCERPT_ANCHOR:
+        return None
+    from difflib import SequenceMatcher
+    match = SequenceMatcher(None, memo, excerpt, autojunk=False).find_longest_match(0, len(memo), 0, len(excerpt))
+    start, end = match.a, match.a + match.size
+    # A run that begins or ends inside a word is cut back to the word boundary.
+    if start > 0 and not memo[start - 1].isspace() and not memo[start].isspace():
+        while start < end and not memo[start].isspace():
+            start += 1
+    if end < len(memo) and not memo[end].isspace() and not memo[end - 1].isspace():
+        while end > start and not memo[end - 1].isspace():
+            end -= 1
+    span = memo[start:end].strip()
+    return span if len(span) >= MIN_EXCERPT_ANCHOR else None
+
+
+def parse_review(text, memo=None, *, anchor_embellished=False):
     """Validate unresolved findings and their logically matching verdict.
 
     When a frozen memo is supplied, material findings must quote bounded wording
     from that version, allowing only Markdown emphasis/backticks and whitespace
     differences, or explicitly recorded smart/straight quote substitutions.
+    Changed words or numbers and joined passages are rejected.
+
+    ``anchor_embellished`` is for a review that has already had its one format
+    repair. A quotation that still contains words absent from the memo is then
+    anchored to its longest exact run of at least ``MIN_EXCERPT_ANCHOR``
+    characters, with the reviewer's own wording kept beside it, instead of
+    discarding an entire review for one inexact quotation. The inexact words
+    are never treated as the memo's. A quotation with no such run is rejected.
     Match provenance is retained; unmatched optional minor excerpts
     remain explicitly unverified. Location does not establish an allegation's
     truth. Explicitly withdrawn material findings invalidate the review rather
@@ -216,7 +254,7 @@ def parse_review(text, memo=None):
             raise ValueError('Review findings must describe current unresolved issues, not archived dispositions')
         excerpt = finding.get('current_excerpt')
         material = severity in {'blocker', 'major'}
-        excerpt_match = None
+        excerpt_match, reviewer_excerpt = None, None
         if excerpt is not None or (memo is not None and material):
             if not isinstance(excerpt, str) or (material and not excerpt.strip()) or len(excerpt) > MAX_REVIEW_EXCERPT:
                 raise ValueError(f'Review current_excerpt must be nonempty text of at most {MAX_REVIEW_EXCERPT} characters')
@@ -230,7 +268,12 @@ def parse_review(text, memo=None):
             elif normalized_excerpt and _quote_typography(normalized_excerpt) in typography_memo:
                 excerpt_match = 'typography-normalized'
             else:
-                excerpt_match = 'not_matched'
+                anchor = (_longest_exact_span(typography_memo, _quote_typography(normalized_excerpt))
+                          if anchor_embellished else None)
+                if anchor is None:
+                    excerpt_match = 'not_matched'
+                else:
+                    excerpt_match, reviewer_excerpt, excerpt = 'longest-exact-span', excerpt, anchor
             if material and excerpt_match == 'not_matched':
                 raise ValueError('Review current_excerpt must quote contiguous wording from the frozen current memo')
         if material:
@@ -243,17 +286,340 @@ def parse_review(text, memo=None):
                         disposition = disposition.replace(opening + excerpt + closing, '')
                 if WITHDRAWN_MATERIAL_FINDING.search(disposition):
                     raise ValueError('Material review finding explicitly withdraws or requests no correction; return only unresolved findings')
+        rule = finding.get('rule')
+        rule = str(rule).strip().upper() if rule is not None and str(rule).strip() else None
+        if rule is not None:
+            if rule not in RULE_SEVERITY:
+                raise ValueError('Finding rule must be one of ' + ', '.join(RULE_SEVERITY))
         identifiers.add(identifier)
         parsed = {'id': identifier, 'severity': severity, 'issue': finding['issue'].strip(),
                   'source_refs': list(dict.fromkeys(refs)), 'fix': finding['fix'].strip()}
+        if rule:
+            parsed['rule'] = rule
         if excerpt is not None:
             parsed['current_excerpt'] = excerpt
             parsed['current_excerpt_match'] = excerpt_match
+            if reviewer_excerpt is not None:
+                parsed['reviewer_excerpt'] = reviewer_excerpt
         findings.append(parsed)
     expected = 'revise' if any(item['severity'] in {'blocker', 'major'} for item in findings) else 'pass'
     if verdict != expected:
         raise ValueError('Review verdict contradicts its unresolved blocker/major findings')
-    return {'verdict': verdict, 'findings': findings}
+    # A finding is graded no higher than the rule it names; the verdict follows.
+    for item in findings:
+        cap = RULE_SEVERITY.get(item.get('rule'))
+        if cap and _SEVERITY_RANK[item['severity']] > _SEVERITY_RANK[cap]:
+            item['severity_as_reviewed'], item['severity'] = item['severity'], cap
+    as_reviewed = verdict
+    verdict = 'revise' if any(item['severity'] in {'blocker', 'major'} for item in findings) else 'pass'
+    parsed = {'verdict': verdict, 'findings': findings}
+    if verdict != as_reviewed:
+        parsed['verdict_as_reviewed'] = as_reviewed
+    # The reviewer's statement of the conclusion's central weakness is kept when
+    # well formed. It is reported to the reader; it is not a finding by itself.
+    weakness = review.get('central_weakness')
+    if (isinstance(weakness, dict) and all(isinstance(weakness.get(key), str) and weakness[key].strip()
+                                           for key in ('claim', 'computed_effect', 'memo_handles_it'))):
+        parsed['central_weakness'] = {'claim': weakness['claim'].strip()[:1200],
+                                      'computed_effect': weakness['computed_effect'].strip()[:600],
+                                      'memo_handles_it': _assessment_answer(weakness['memo_handles_it'])}
+    explained = review.get('gap_explained')
+    if isinstance(explained, str) and explained.strip():
+        parsed['gap_explained'] = _assessment_answer(explained)
+    return parsed
+
+
+def _assessment_answer(text):
+    """Map a reviewer's yes/partly/no answer; anything short of a plain yes counts against the memo."""
+    word = re.sub(r'[^a-z ]', '', text.strip().lower()).strip()
+    if word == 'yes':
+        return 'yes'
+    if word.startswith(('partly', 'partial', 'partially', 'somewhat')):
+        return 'partly'
+    return 'no'
+
+
+# One quality standard, shared by the writer prompt, the deterministic checks and
+# the reviewer. Live reviews (2026-11-14) applied a private, moving standard and
+# never converged; the writer could not see what would be judged.
+# Each rule has an ID; a review finding names the rule it breaks and cannot be
+# graded above that rule's class. Live reviews (2026-11-14) graded wording
+# choices as major and drew different majors from the same draft.
+RUBRIC_RULES = (
+    ('B1', 'blocker', 'a quote or fact not in its cited source'),
+    ('B2', 'blocker', 'a trading-layer term (rating, target price, entry level, margin of safety, upside or downside, '
+                      'position size)'),
+    ('B3', 'blocker', 'a valuation figure that differs from the computed output'),
+    ('M1', 'major', 'a company fact or a number supported only by an unverified web excerpt, or an unverified excerpt '
+                    'used without an inline "unverified" label'),
+    ('M2', 'major', 'one-at-a-time rows added together or called cumulative'),
+    ('M3', 'major', 'a number that is neither in the evidence, nor in the computed output, nor a shown calculation '
+                    'from cited figures'),
+    ('M4', 'major', 'a statement that contradicts the computed account of which inputs alone can and cannot bring '
+                    'value to the price'),
+    ('M5', 'major', 'a material claim contradicted by primary evidence in the run'),
+    ('M6', 'major', 'a model output cited to a filing or source as if reported'),
+    ('N1', 'minor', 'rounding within the last displayed digit'),
+    ('N2', 'minor', 'wording, emphasis or structure'),
+    ('N3', 'minor', 'an omission that does not change the conclusion'),
+)
+RULE_SEVERITY = {rule: severity for rule, severity, _ in RUBRIC_RULES}
+# The trading-layer terms rule B2 names. A B2 finding whose quoted text has none
+# of them is refuted by Python ("accretive" was graded a blocker, 2026-11-15).
+TRADING_TERMS = re.compile(r'\b(?:ratings?|rated|buy|sell|overweight|underweight|outperform|underperform|target price|'
+                           r'price target|entry (?:price|level|point)|margin of safety|upside|downside|position siz\w*)\b', re.I)
+HOUSE_ATTRIBUTION = re.compile(r'\b(?:house|computed)\b', re.I)
+_SEVERITY_RANK = {'minor': 0, 'major': 1, 'blocker': 2}
+
+
+def _rules(severity):
+    return '; '.join(f'{rule} {text}' for rule, level, text in RUBRIC_RULES if level == severity)
+
+
+RUBRIC = (
+    'Quality standard (shared by the writer, the automatic checks and the reviewer). Each review finding names the '
+    'rule it breaks. Blocker: ' + _rules('blocker') + '. Major: ' + _rules('major') + '. Minor: ' + _rules('minor') +
+    '. A house or computed figure that the prose names as such is attributed, even when the sentence also cites the '
+    'reported figure it is compared with. Naming the convention step the value is most sensitive to is required and '
+    'is not an attribution of the gap to price. Rounding is never material; unverified excerpts used only for attributed '
+    'outside views, consensus or guidance context are not material, but a company fact or number supported only by '
+    'an unverified excerpt is, whatever its label.')
+
+
+# Free checks run on a draft before the paid review. They trace every figure in
+# the prose to the computed output, the reported inputs or a primary source, and
+# catch the defects a live review spent three paid rounds on (2026-11-14).
+UNVERIFIED_SOURCE_TIERS = {'search_excerpt_unverified'}
+PROSE_WORD_LIMIT = 3600
+_NUMBER = re.compile(r'(?<![\w.\[/-])(-?\$?\d[\d,]*(?:\.\d+)?)(\s*(?:%|bps|bp|x|×|billion|bn|B|million|mm|M|trillion|percentage points?|points?|pts|pp)\b|%)?', re.I)
+_SCALES = {'%': (1e-2, 1), 'points': (1e-2, 1), 'point': (1e-2, 1), 'pts': (1e-2, 1), 'pp': (1e-2, 1),
+           'percentage points': (1e-2, 1), 'percentage point': (1e-2, 1), 'bps': (1e-4, 1), 'bp': (1e-4, 1), 'billion': (1e9, 1e3, 1), 'bn': (1e9, 1e3, 1),
+           'b': (1e9, 1e3, 1), 'million': (1e6, 1), 'mm': (1e6, 1), 'm': (1e6, 1), 'trillion': (1e12, 1e6, 1e3, 1),
+           'x': (1,), '×': (1,)}
+# Prose that assigns the gap to price a cause; Python states which inputs can close it.
+_CAUSE = re.compile(r'\b(?:(?:gap|difference|disagreement|divergence)\b[^.;]{0,40}?\b(?:value and (?:the )?price|'
+                    r'price and (?:the )?value|(?:to|from) (?:the )?(?:market )?price|value[- ]to[- ]price)|discount to the price|'
+                    r'premium to the price)\b[^.;]{0,90}?\b(?:primarily|principally|almost entirely|mainly|largely|'
+                    r'rests? (?:on|in)|lies? in|sits? in|is driven by|driven by|explained by|attributable to)\b', re.I)
+# A rising word with a falling pair, or the reverse ("a further increase" from
+# USD 678 billion to USD 677 billion, 2026-11-15).
+_UNIT = r'\s*(?P<{0}>%|percent|points?|bps|billion|bn|million|mm|thousand|trillion)?'
+_DIRECTION = re.compile(r'\b(?P<word>increas\w*|rose|rise[sn]?|grew|grow(?:s|n)?|higher|expand\w*|climb\w*|'
+                        r'decreas\w*|declin\w*|fell|fall(?:s|en)?|lower|contract\w*|shrank|drop\w*)\b[^.;]{0,80}?'
+                        r'\bfrom\s+(?:USD\s*|\$)?(?P<a>-?[\d,]+(?:\.\d+)?)' + _UNIT.format('ua') +
+                        r'[^.;]{0,40}?\bto\s+(?:USD\s*|\$)?(?P<b>-?[\d,]+(?:\.\d+)?)' + _UNIT.format('ub'), re.I)
+_YEAR = re.compile(r'(?:19|20)\d\d')
+_FREQUENCY = re.compile(r'\b(?:historical(?:ly)? frequenc\w*|in (?:most|many) (?:past )?cycles)\b', re.I)
+_META = re.compile(r'\b(?:Python|the prompt|as instructed|the instructions)\b')
+_ADDITIVE = re.compile(r'\b(?:together|combined|in total|cumulative(?:ly)?|add up|sum of|more than the entire|account for (?:all|the entire|more than))\b', re.I)
+_PANEL = re.compile(r'\b(?:convention|panel|step|one[- ]at[- ]a[- ]time|terminal return|rate path)\b', re.I)
+
+
+def _numeric_leaves(value, out):
+    if isinstance(value, dict):
+        for item in value.values():
+            _numeric_leaves(item, out)
+    elif isinstance(value, list):
+        for item in value:
+            _numeric_leaves(item, out)
+    elif isinstance(value, bool) or value is None:
+        return
+    elif isinstance(value, (int, float)):
+        if value == value and abs(value) < 1e16:
+            out.add(abs(float(value)))
+    elif isinstance(value, str):
+        for match in re.finditer(r'\d[\d,]*(?:\.\d+)?', value[:200000]):
+            try:
+                out.add(float(match.group().replace(',', '')))
+            except ValueError:
+                pass
+    return out
+
+
+def _traced(number, decimals, unit, pool):
+    """True when a pool value displays as this number at its own precision."""
+    tolerance = 0.5 * 10 ** -decimals + 1e-9
+    for scale in _SCALES.get((unit or '').strip().lower(), (1, 1e3, 1e6, 1e9)):
+        low, high = (number - tolerance) * scale, (number + tolerance) * scale
+        index = bisect.bisect_left(pool, low)
+        if index < len(pool) and pool[index] <= high:
+            return True
+    return False
+
+
+def prose_words(memo):
+    """Words of the writer's prose: no computed summary, no Python-rendered valuation section."""
+    body = memo.split('\n## Executable valuation')[0]
+    # The summary has no headings of its own: it ends at the next heading of any level.
+    summary = re.search(r'(?ms)^## Valuation summary \(computed by Python\)\n.*?(?=^#|\Z)', body)
+    if summary:
+        body = body.replace(summary.group(0), '')
+    return len(re.findall(r"[A-Za-z][A-Za-z'\-]*", body))
+
+
+def trace_pools(sources, computed=()):
+    """Sorted numeric pools: (primary sources and computed output, unverified excerpts, computed output)."""
+    primary, unverified, house = set(), set(), set()
+    for source in sources:
+        if isinstance(source, dict):
+            target = unverified if source.get('source_tier') in UNVERIFIED_SOURCE_TIERS else primary
+            for part in (source.get('data'), source.get('primary_focus_excerpts'), source.get('breakdown_tables'),
+                         source.get('historical_baseline')):
+                _numeric_leaves(part, target)
+    for item in computed:
+        _numeric_leaves(item, house)
+    return sorted(primary | house), sorted(unverified), sorted(house)
+
+
+def _figures(text):
+    """(display, number, decimals, unit) for each checkable figure: no citations, years, dates or small whole numbers."""
+    clean = re.sub(r'\[[^\]]*S\d[^\]]*\]', '', text)
+    clean = re.sub(r'\b(?:S&P|Nasdaq|Russell|FTSE|Stoxx|Nikkei|MSCI)\s*\d+\b', '', clean, flags=re.I)
+    clean = re.sub(r'\b(?:19|20)\d\d(?:-\d\d-\d\d)?\b|\bFY\s?\d+|\bQ[1-4]\b|\b\d+(?:st|nd|rd|th)\b|\(\d\)|\b\d+\.\s', '', clean)
+    for match in _NUMBER.finditer(clean):
+        raw = match.group(1).replace('$', '').replace(',', '')
+        try:
+            number = abs(float(raw))
+        except ValueError:
+            continue
+        decimals = len(raw.split('.')[1]) if '.' in raw else 0
+        digits = len(raw.replace('-', '').replace('.', '').lstrip('0'))
+        # Whole numbers under three digits match some pool value by chance.
+        if decimals == 0 and digits < 3:
+            continue
+        yield match.group(0).strip(), number, decimals, match.group(2)
+
+
+def untraced_figures(text, pools):
+    """Checkable figures in ``text`` that match no primary source or computed value, or None if it has none."""
+    figures = list(_figures(text or ''))
+    if not figures:
+        return None
+    return [display for display, number, decimals, unit in figures if not _traced(number, decimals, unit, pools[0])]
+
+
+def prereview_checks(memo, sources, computed=()):
+    """Deterministic defects in a draft's prose, before any paid review.
+
+    ``computed`` holds the valuation output, the locked plan and any rendered
+    tables. Returns findings in the review shape (severity, issue, excerpt).
+    The memo body ends at the Python-rendered "## Executable valuation".
+    """
+    body = memo.split('\n## Executable valuation')[0]
+    # Python marks every unverified citation inline; judge the writer's own text.
+    body = re.sub(r'\b(S\d+) unverified\b', r'\1', body)
+    # The summary has no headings of its own: it ends at the next heading of any level.
+    summary = re.search(r'(?ms)^## Valuation summary \(computed by Python\)\n.*?(?=^#|\Z)', body)
+    if summary:
+        body = body.replace(summary.group(0), '')
+    tiers = {source.get('id'): source.get('source_tier') for source in sources if isinstance(source, dict)}
+    primary_pool, unverified_pool, house_pool = trace_pools(sources, computed)
+    untraced, unlabelled, additive, unlabelled_claims, cite_primary, causes = [], [], [], [], [], []
+    tables, directions, frequencies, meta = [], [], [], []
+    for raw_line in body.split('\n'):
+        if raw_line.lstrip().startswith('|'):
+            tables.append(raw_line.strip()[:200])
+    for sentence in re.split(r'(?<=[.!?])\s+|\n+', body):
+        line = sentence.strip()
+        if not line or line.startswith('#'):
+            continue
+        cited = set(re.findall(r'S\d+', ' '.join(re.findall(r'\[([^\]]*S\d[^\]]*)\]', line))))
+        if _ADDITIVE.search(line) and _PANEL.search(line):
+            additive.append(line[:300])
+        if _CAUSE.search(line):
+            causes.append(line[:300])
+        for match in _DIRECTION.finditer(line):
+            if _YEAR.fullmatch(match.group('a')) and _YEAR.fullmatch(match.group('b')):
+                continue  # "declined from 2021 to 2023" is a span of years
+            if (match.group('ua') or '').lower().rstrip('s') != (match.group('ub') or '').lower().rstrip('s'):
+                continue  # mixed units cannot be compared here
+            try:
+                a, b = float(match.group('a').replace(',', '')), float(match.group('b').replace(',', ''))
+            except ValueError:
+                continue
+            rising = re.match(r'(?i)increas|rose|rise|grew|grow|higher|expand|climb', match.group('word'))
+            if (rising and b < a) or (not rising and b > a):
+                directions.append(line[:300])
+        if _FREQUENCY.search(line) and not cited:
+            frequencies.append(line[:300])
+        if _META.search(line):
+            meta.append(line[:300])
+        for display, number, decimals, unit in _figures(line):
+            if _traced(number, decimals, unit, primary_pool):
+                if (cited and all(tiers.get(ref) in UNVERIFIED_SOURCE_TIERS for ref in cited) and
+                        not _traced(number, decimals, unit, house_pool)):
+                    cite_primary.append((display, line[:300]))
+                continue
+            if _traced(number, decimals, unit, unverified_pool):
+                if not re.search(r'unverified', line, re.I):
+                    unlabelled.append((display, line[:300]))
+                continue
+            untraced.append((display, line[:300]))
+    findings = []
+    def add(identifier, severity, issue, fix, items):
+        findings.append({'id': identifier, 'severity': severity, 'issue': issue, 'fix': fix, 'source_refs': [],
+                         'items': [{'figure': figure, 'sentence': text} for figure, text in items][:25]})
+    if untraced:
+        add('number-untraced', 'minor', f'{len(untraced)} figures in the prose match nothing in the computed output, '
+            'the reported inputs or any primary source within display rounding.',
+            'Replace each with the exact figure from the computed tables or a primary source, or remove it.', untraced)
+    if unlabelled:
+        add('number-unverified-only', 'minor', f'{len(unlabelled)} figures appear only in unverified web excerpts and the '
+            'sentence does not present them as unverified outside views or consensus context.',
+            'Use the primary figure if one exists; otherwise attribute it as unverified outside context in words, or remove it.',
+            unlabelled)
+    if cite_primary:
+        add('cite-primary-source', 'minor', f'{len(cite_primary)} figures are cited only to unverified excerpts although '
+            'a primary source or the computed tables contain them.',
+            'Cite the primary source or computed table that contains each figure.', cite_primary)
+    if tables:
+        add('table-in-prose', 'minor', 'The prose contains table rows; Python prints the computed and reported tables.',
+            'Delete the table rows and refer to the computed or reported table by name.', [('', text) for text in tables])
+    if directions:
+        add('comparison-direction', 'minor', 'A sentence describes a change in the opposite direction to its own figures.',
+            'Correct the direction word to match the figures, or the figures to match the sources.',
+            [('', text) for text in directions])
+    if frequencies:
+        add('uncited-frequency', 'minor', 'A frequency or base rate is stated without a citation.',
+            'Remove the frequency claim or cite the source that contains it.', [('', text) for text in frequencies])
+    if meta:
+        add('meta-reference', 'minor', 'The prose mentions Python, prompts or instructions.',
+            'Rewrite to refer to the computed summary, exhibits or reported tables by name.', [('', text) for text in meta])
+    if causes:
+        add('gap-cause-wording', 'minor', 'The prose assigns the difference between value and price a cause; Python '
+            'states which inputs alone can and cannot close it.',
+            'Remove the attribution or replace it with a reference to the computed account in the summary.',
+            [('', text) for text in causes])
+    if additive:
+        add('convention-rows-added', 'minor', 'Convention or one-at-a-time rows are described as adding up or combining.',
+            'State each row separately; rows are alternatives and are never added together.', [('', text) for text in additive])
+    words = prose_words(memo)
+    if words > PROSE_WORD_LIMIT:
+        add('length', 'minor', f'The prose is {words} words; the budget is about 3,000.',
+            'Cut repetition and secondary detail, keeping every section.', [])
+    return findings
+
+
+def assessment_findings(review):
+    """Findings implied by the reviewer's own assessment of the conclusion.
+
+    The review schema asks for a major finding whenever the reviewer says the
+    memo does not fully handle the central weakness or explain the difference
+    between value and price. That instruction alone did not bind: a reviewer
+    could answer "no" and still pass the draft. This makes the statement count.
+    """
+    weakness = review.get('central_weakness') if isinstance(review.get('central_weakness'), dict) else None
+    explained = review.get('gap_explained')
+    if weakness is None and explained is None:
+        return [_finding('review-assessment-missing', 'minor',
+                         'The reviewer did not state the central weakness of the conclusion and whether the memo '
+                         'explains the difference between value and price in the required form.',
+                         'Request a review that states both.')]
+    # Both answers are recorded for the reader and no longer become a major
+    # finding: Python states which inputs can close the gap, and every
+    # assessment major in the 2026-11-14/15 runs was refuted or induced by
+    # the attribution wording (investigation, 2026-11-15).
+    return []
 
 
 def _body(memo):
@@ -403,8 +769,10 @@ def inspect_memo(memo, sources, valuation=None):
         'valuation': (r'valuation|intrinsic value|discounted cash flow|\bdcf\b|what is priced|\bmodel\b', 'major'),
         'scenarios': (r'scenario|\bbear\b|\bbull\b|stress', 'major'),
         'risks': (r'\brisk|downside', 'major'),
-        'disconfirming-evidence': (r'disconfirm|counter.?thesis|what would change|falsif|why we might be wrong|alternative explanation|kill criteria|contrary', 'minor'),
-        'catalysts': (r'catalyst|monitor|watch|milestone|signpost', 'minor'),
+        # The memo structure names these "Risks, including evidence that the
+        # framework is wrong" and "Observations that would change the value".
+        'disconfirming-evidence': (r'disconfirm|counter.?thesis|what would change|would change the value|framework.{0,40}wrong|falsif|why we might be wrong|alternative explanation|kill criteria|contrary', 'minor'),
+        'catalysts': (r'catalyst|monitor|watch|milestone|signpost|observations? that would change', 'minor'),
         'diligence-questions': (r'question|diligence|unknown|missing evidence|limitation|unresolved', 'minor')
     }
     if not headings:
@@ -438,9 +806,14 @@ def inspect_memo(memo, sources, valuation=None):
     if observed:
         dates = set(re.findall(r'<!--\s*quote_as_of:\s*(\d{4}-\d{2}-\d{2})\s*-->', memo, re.I))
         for paragraph in claim_ledger(memo):
-            text = paragraph['text']
-            if re.search(r'\b(?:quote|market price|closing price|share price|stock price)\b', text, re.I):
-                dates.update(re.findall(r'\b(?:as of|on|observed(?: at)?|dated)\s+(\d{4}-\d{2}-\d{2})\b', text, re.I))
+            # Clause by clause: a live draft (2026-11-15) wrote "a quote observed at the
+            # 2026-11-13 close; the valuation is dated 2026-11-15" and the valuation date
+            # was read as a quote date.
+            for clause in re.split(r'(?<=[.;])\s+', paragraph['text']):
+                if (re.search(r'\b(?:quote|market price|closing price|share price|stock price)\b', clause, re.I)
+                        and not re.search(r'\bvaluation\b', clause, re.I)):
+                    dates.update(re.findall(r'\b(?:as of|on|observed(?: at)?|dated)\s+(?:the\s+)?(\d{4}-\d{2}-\d{2})\b',
+                                            clause, re.I))
         analysis = re.search(r'\b(?:analysis|research|memo) date\s*:\s*(\d{4}-\d{2}-\d{2})', memo, re.I)
         if analysis:
             for paragraph in claim_ledger(memo):
