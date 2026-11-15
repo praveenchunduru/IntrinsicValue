@@ -682,7 +682,7 @@ class HouseConventionPinTests(unittest.TestCase):
 class CauseWordingTests(unittest.TestCase):
     def test_prose_that_assigns_the_gap_a_cause_is_flagged(self):
         from investmentideas import quality
-        memo = '# T\n\n## (1) Conclusion\nThe gap to price rests principally on the operating forecast.\n'
+        memo = '# T\n\n## (1) Conclusion\nThe gap to the price rests principally on the operating forecast.\n'
         self.assertIn('gap-cause-wording', [f['id'] for f in quality.prereview_checks(memo, [], ())])
         calm = '# T\n\n## (1) Conclusion\nThe house concludes the value is below the price.\n'
         self.assertNotIn('gap-cause-wording', [f['id'] for f in quality.prereview_checks(calm, [], ())])
@@ -717,12 +717,14 @@ class CachedPrefixRouterTests(unittest.TestCase):
 
     def test_claude_and_gpt_get_a_marked_prefix_and_others_a_plain_prompt(self):
         claude = self.send('anthropic/claude-opus-5.5', 'Evidence:\nlong text\n')
-        self.assertEqual(claude['messages'][1]['content'][0]['cache_control'], {'type': 'ephemeral', 'ttl': '1h'})
-        self.assertEqual(claude['messages'][1]['content'][1]['text'], 'Instructions.')
+        # The prefix is a second system block: thinking changes drop message-level caches only.
+        self.assertEqual(claude['messages'][0]['content'][1]['cache_control'], {'type': 'ephemeral', 'ttl': '1h'})
+        self.assertEqual(claude['messages'][0]['content'][1]['text'], 'Evidence:\nlong text\n')
+        self.assertEqual(claude['messages'][1]['content'], 'Instructions.')
         self.assertEqual(claude['session_id'], 'iv-test-session')
         gpt = self.send('openai/gpt-5.6-sol', 'Evidence:\nlong text\n')
         self.assertEqual(gpt['prompt_cache_options'], {'mode': 'explicit'})
-        self.assertIn('cache_control', gpt['messages'][1]['content'][0])
+        self.assertIn('cache_control', gpt['messages'][0]['content'][1])
         plain = self.send('deepseek/deepseek-v4-pro-0813', 'Evidence:\nlong text\n')
         self.assertEqual(plain['messages'][1]['content'], 'Evidence:\nlong text\nInstructions.')
 
@@ -803,3 +805,43 @@ class MonitoringDirectionTests(unittest.TestCase):
         value['monitoring'][0]['direction'] = 'raises_value'
         with self.assertRaisesRegex(ValueError, 'linked case'):
             valuation.evaluate(value)
+
+
+class OpusChangeSetFixTests(unittest.TestCase):
+    def record(self, iteration, valuation, refuted):
+        return {'iteration': iteration, 'manifest': {'valuation_sha256': valuation},
+                'finding_check': {'refuted': refuted}}
+
+    def test_only_model_refutations_of_the_same_valuation_and_cycle_carry(self):
+        model = {'rule': 'M3', 'current_excerpt': 'Revenue was USD 10 billion.', 'check_reason': 'The source states it.'}
+        python = {'rule': 'M3', 'current_excerpt': 'Margin was 40%.', 'check_reason': 'Python traced every figure.'}
+        heading = {'rule': 'M5', 'current_excerpt': '### 3. Business', 'check_reason': 'Covered elsewhere.'}
+        state = {'revision_base': 1, 'review_history': [self.record(0, 'v', [model]), self.record(1, 'v', [model, python, heading]),
+                                                         self.record(2, 'other', [model])]}
+        carried = pipeline._carried_refutations(state, 3, {'valuation_sha256': 'v'})
+        self.assertEqual(list(carried), [('M3', 'Revenue was USD 10 billion.')])
+        self.assertIn('Refuted in review 1', carried[('M3', 'Revenue was USD 10 billion.')])
+        self.assertEqual(pipeline._carried_refutations(state, 3, {'valuation_sha256': 'new'}), {})
+
+    def test_cost_path_compares_the_same_lines_and_needs_a_material_share_fall(self):
+        lines = ['research_and_development', 'selling_general_administrative']
+        arrays = pipeline._cost_lines({'research_and_development': [1], 'sales_and_marketing': [2],
+                                       'amortization_of_intangibles': [3]}, lines)
+        self.assertEqual(arrays, [[1], [2]])
+        self.assertEqual(pipeline._cost_lines({'research_and_development': [1], 'selling_general_administrative': [2]},
+                                              ['research_and_development']), [[1]])
+
+    def test_prose_checks_skip_years_mixed_units_and_policy_rates(self):
+        from investmentideas import quality
+        def ids(text):
+            return [f['id'] for f in quality.prereview_checks('# T\n\n## (1) Conclusion\n' + text + '\n', [], ())]
+        self.assertNotIn('comparison-direction', ids('Gross margin declined from 2021 to 2023 as costs rose.'))
+        self.assertNotIn('comparison-direction', ids('Shares fell from 7.5 billion to 7,430 million.'))
+        self.assertIn('comparison-direction', ids('Shares fell from 7,430 million to 7,500 million.'))
+        self.assertNotIn('uncited-frequency', ids('The base rate set by the Federal Reserve rose.'))
+        self.assertNotIn('gap-cause-wording', ids('The difference between gross and operating margin is mainly R&D.'))
+
+    def test_house_attribution_needs_house_or_computed(self):
+        from investmentideas import quality
+        self.assertIsNone(quality.HOUSE_ATTRIBUTION.search('The subscription business model is forecast to reach USD 612 billion [S2].'))
+        self.assertIsNotNone(quality.HOUSE_ATTRIBUTION.search('The house tax rate is 17.5%.'))

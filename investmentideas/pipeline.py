@@ -38,7 +38,11 @@ from .valuation import _timing as _valuation_timing, evaluate, materialize, save
 from .companyfacts import CONCEPT_SELECTION_SHA256
 
 VERSION = 'full-2'
-DEFAULT_BUDGET = 10.0
+# The allowance is a ceiling, not the expected bill. Each call reserves its prompt
+# bytes at the model's highest price tier before it is sent; with GPT-5.6 Sol a
+# review reserves about $5, so a run with one revision needs about $15 of headroom
+# although it is expected to cost about $4.50 (Opus review, 2026-11-15).
+DEFAULT_BUDGET = 20.0
 SECTIONS = '''Write these sections, in this order, as prose around the computed valuation summary that
 Python places above your text (do not re-type its tables; refer to its rows by name):
 (1) Valuation conclusion (about 150 words). The summary above already states the values, what the
@@ -67,7 +71,7 @@ MEMO_TOKENS = 18000
 MEMO_WORDS = 'about 3,000 words of prose in total; Python adds the tables, and a revision replaces text rather than adding to it'
 FORECAST_SCHEMA = """Return ONLY compact JSON for house forecasts:
 {"assumptions_label":"House forecasts, not reported facts or guidance",
- "scenario_rationales":{"bear":"Evidence, economic mechanism and the basis for this probability [S#]","base":"...","bull":"..."},
+ "scenario_rationales":{"bear":"Evidence and economic mechanism for this scenario [S#]","base":"...","bull":"..."},
  "scenarios":{"bear":{"probability":<decimal>,"tax_rate":<decimal>,"sales_to_capital":<number>,
  "terminal_roic":0.15},"base":{<same fields>},"bull":{<same fields>}}}
 plus EITHER an operating_model (preferred when the evidence reports revenue by product, service or
@@ -90,8 +94,8 @@ locks reported inputs and independently computes the outputs.
 The unlevered operating-company model uses GAAP EBIT less operating taxes and
 incremental revenue / sales-to-capital reinvestment. Maintenance investment offsets
 D&A; GAAP EBIT already expenses SBC, R&D and operating rent. Do not deduct those
-again. Explicitly justify growth/margin fade, capital efficiency, tax, WACC,
-terminal growth and terminal ROIC. Terminal reinvestment is g/ROIC of NOPAT;
+again. Explicitly justify growth/margin fade, capital efficiency, tax and WACC.
+Terminal reinvestment is g/ROIC of NOPAT;
 explain a material forecast-to-terminal capital-intensity transition. Terminal return on new
 capital is a house convention that Python sets (15%, about the market's long-run return on new
 capital); the memo shows the value at the terminal discount rate and at 25% beside it.
@@ -170,7 +174,7 @@ and exactly one of counterfactual(name) or calibration_comparison(name); the lin
 value in that direction.
 Python supplies each conditional value and change.
 These are analyst-selected decision thresholds, not company guidance or automatic forecasts.
-Justify reinvestment and terminal returns; avoid a hidden terminal cash discontinuity.
+Justify reinvestment; avoid a hidden terminal cash discontinuity.
 This is valuation research only: do not supply entry thresholds, margins of safety or other
 trading rules.
 Optional "repurchase_tests":[{"name":"historical_price_comparison","amount":<whole currency units>,
@@ -233,6 +237,30 @@ def _review_prefix(context, valuation_context, visible):
     """Evidence, valuation and the fenced draft: identical for the review and its finding check."""
     return (_evidence_prefix(context)+'Valuation:\n'+valuation_context+
             '\nDraft (quote only text between the markers):\n<<<DRAFT\n'+visible+'\nDRAFT>>>\n')
+
+
+def _carried_refutations(state, iteration, manifest):
+    """(rule, excerpt) -> reason for model-check refutations that still apply to this review.
+
+    Only the model check's refutations carry (Python's are recomputed), only from
+    earlier reviews of the same valuation in the same review cycle, and never for
+    a heading quoted for an omission: a later, different finding on the same text
+    was otherwise refuted without a check and the draft passed (Opus review, 2026-11-15).
+    """
+    carried={}
+    for record in state.get('review_history',[]):
+        if not (state.get('revision_base',0)<=record['iteration']<iteration):
+            continue
+        if (record.get('manifest') or {}).get('valuation_sha256')!=manifest.get('valuation_sha256'):
+            continue
+        for finding in (record.get('finding_check') or {}).get('refuted',[]):
+            excerpt=finding.get('current_excerpt')
+            reason=str(finding.get('check_reason',''))
+            if (not excerpt or excerpt.lstrip().startswith('#') or
+                    reason.startswith(('Python traced','The quoted text','Refuted in review'))):
+                continue
+            carried[(finding.get('rule'),excerpt)]=f'Refuted in review {record["iteration"]}: {reason}'
+    return carried
 
 
 def _check_ids(material):
@@ -464,6 +492,22 @@ def reinvestment_continuity(plan, result):
 # of costs outgrowing revenue (Apple R&D) does not force margin compression.
 COST_ELASTICITY_TOLERANCE = .25
 MARGIN_PEAK_ALLOWANCE = .05
+# A break also needs the cost share of revenue to fall this much; the ratio of two
+# small growth rates is unstable (a bear case at +1.5% revenue, +1.0% costs).
+COST_SHARE_FALL = .02
+COST_LINE_WORDS = {'research_and_development': ('research', 'r_and_d', 'rd'),
+                   'selling_general_administrative': ('selling', 'general', 'administrative', 'marketing', 'sga', 'sg_a')}
+
+
+def _cost_lines(expenses, lines):
+    """Plan expense arrays that correspond to the reported lines the reference uses."""
+    chosen=[]
+    for name,values in expenses.items():
+        words=str(name).lower()
+        if isinstance(values,list) and values and any(any(word in words for word in COST_LINE_WORDS.get(line,()))
+                                                      for line in lines):
+            chosen.append(values)
+    return chosen
 
 
 def cost_path_reference(sources):
@@ -514,7 +558,7 @@ def cost_path_continuity(plan, result):
         expenses=(((model.get('scenarios') or {}).get(name) or {}).get('expenses')
                   if model.get('earnings_mode')=='gross_profit_less_expenses' else None)
         if isinstance(expenses,dict) and expenses and floor is not None:
-            arrays=[values for values in expenses.values() if isinstance(values,list) and values]
+            arrays=_cost_lines(expenses,reference.get('lines') or [])
             horizon=min([len(values) for values in arrays]+[explicit]) if arrays else 0
             if horizon>=2:
                 totals=[sum(values[index] for values in arrays) for index in range(horizon)]
@@ -525,7 +569,7 @@ def cost_path_continuity(plan, result):
                     if revenue_growth>.01:
                         elasticity=((totals[-1]/totals[0])**(1/steps)-1)/revenue_growth
                         row.update(plan_opex_elasticity=elasticity,final_opex_share=totals[-1]/revenues[-1])
-                        if elasticity<floor:
+                        if elasticity<floor and totals[0]/revenues[0]-totals[-1]/revenues[-1]>=COST_SHARE_FALL:
                             row['reasons'].append(f'costs grow {elasticity:.2f} times as fast as revenue against the reported '
                                                   f'{reference["opex_elasticity"]:.2f}, falling to {totals[-1]/revenues[-1]:.1%} of revenue')
         if final['ebit_margin']>reference['max_operating_margin']+MARGIN_PEAK_ALLOWANCE:
@@ -631,8 +675,8 @@ def _reinvestment_breaks(locked, result, known, prior):
         return []
     return [f'Year-1 net reinvestment is below two thirds of the reported {check["net_reinvestment"]/1e9:,.1f} billion '
             f'(fiscal year ending {check["fiscal_year_end"]}: capital expenditure {check["capital_expenditure"]/1e9:,.1f} billion '
-            f'less depreciation and amortization {check["depreciation_amortization"]/1e9:,.1f} billion plus acquisitions and '
-            f'finance-lease additions), '
+            f'less depreciation and amortization {check["depreciation_amortization"]/1e9:,.1f} billion plus acquisitions'+
+            (' and finance-lease additions' if check.get('finance_lease_additions') else '')+'), '
             f'with sales-to-capital above {REINVESTMENT_RATIO:g} times the reported {check["years"]}-year incremental rate of '
             f'{check["incremental_sales_to_capital"]:.2f} [{", ".join(check["source_refs"])}], in: '+', '.join(breaks)+
             '. Set sales_to_capital from the reported rate, or, if falling reinvestment is the forecast, state its evidence '
@@ -1805,7 +1849,8 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
                locked['discount_rate'].get('term_structure')=='glide_to_market_v1') or 'valuation_timing' in locked)
     if apply_conventions or opted_in:
         convention_notes=_pin_market_conventions(locked,sources,reported,valuation_day,changes)
-        convention_notes=[*convention_notes,*_pin_house_conventions(locked,sources,changes)]
+        if apply_conventions:
+            convention_notes=[*convention_notes,*_pin_house_conventions(locked,sources,changes)]
     else:
         convention_notes=['This supplied plan keeps its own rate and timing conventions; the market-consistent rate path '
                           'and valuation-date stub apply only when a plan opts in with discount_rate.term_structure or valuation_timing.']
@@ -2989,7 +3034,10 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                   json.dumps(reinvestment_reference(state['sources']))) if reinvestment_reference(state['sources']) else '')+
                 (('\nReported cost path (reference for expense growth and final-year margins):\n'+
                   json.dumps(cost_path_reference(state['sources']))) if cost_path_reference(state['sources']) else '')+
-                EVIDENCE_ABOVE+'\nDiligence synthesis:\n'+thesis+'\nRetrieval gaps:\n'+gaps)
+                EVIDENCE_ABOVE+'\nDiligence synthesis:\n'+thesis+'\nRetrieval gaps:\n'+gaps+
+                # A rerun after a discarded plan would otherwise resend the identical request.
+                ('\nAn earlier attempt at this plan was rejected for these reasons; avoid them: '+
+                 ' | '.join(state['plan_repair_reasons']) if state.get('plan_repair_reasons') else ''))
         text=call('valuation_plan',strong,prompt,tokens=12000,prefix=_evidence_prefix(context))
         failures=[]
         for repair in range(PLAN_REPAIRS+1):
@@ -3329,9 +3377,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             pools=trace_pools(state['sources'],computed_inputs)
             # A finding the check refuted earlier on the same text under the same
             # rule is not paid for again (the check flip-flopped between reviews).
-            earlier_refuted={(f.get('rule'),f.get('current_excerpt')):f'Refuted in review {r["iteration"]}: {f.get("check_reason","")}'
-                             for r in state.get('review_history',[]) if r['iteration']<iteration
-                             for f in (r.get('finding_check') or {}).get('refuted',[]) if f.get('current_excerpt')}
+            earlier_refuted=_carried_refutations(state,iteration,manifest)
             for index,finding in enumerate(material):
                 rule,excerpt=finding.get('rule'),finding.get('current_excerpt') or ''
                 if rule=='M3':

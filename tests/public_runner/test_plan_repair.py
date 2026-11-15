@@ -126,10 +126,12 @@ class PlanRepairTests(unittest.TestCase):
             # Spending on the rejected attempts stays in the ledger.
             self.assertEqual(sum(row['stage'].startswith('valuation_plan') for row in state['ledger']), 4)
             research = [stage for stage in ScriptedRouter.calls if not stage.startswith('valuation_plan')]
-            ScriptedRouter.calls, ScriptedRouter.responses = [], [plan()]
+            ScriptedRouter.calls, ScriptedRouter.prompts, ScriptedRouter.responses = [], [], [plan()]
             folder = pipeline.run('AAPL', 'synthetic', directory=directory)
             self.assertTrue(json.loads((folder / 'state.json').read_text())['complete'])
             self.assertEqual(self.plan_calls(), ['valuation_plan'])
+            # The fresh attempt carries the earlier rejection reasons, so it is not a byte-identical resend.
+            self.assertIn('An earlier attempt at this plan was rejected', ScriptedRouter.prompts[0])
             # Completed research is reused, not bought again.
             self.assertFalse(set(research) & set(ScriptedRouter.calls))
 

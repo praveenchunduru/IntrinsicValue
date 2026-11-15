@@ -29,9 +29,15 @@ def instructions(payload):
     return content[-1]['text'] if isinstance(content, list) else content
 
 
+def prefix_text(payload):
+    """The cached prefix: a second system block for models that take cache markers."""
+    system = payload['messages'][0]['content']
+    return ''.join(part['text'] for part in system[1:]) if isinstance(system, list) else ''
+
+
 def full_text(payload):
     content = payload['messages'][1]['content']
-    return ''.join(part['text'] for part in content) if isinstance(content, list) else content
+    return prefix_text(payload) + (''.join(part['text'] for part in content) if isinstance(content, list) else content)
 
 
 class FullContractTransport:
@@ -151,7 +157,7 @@ class BudgetWorkflowTests(unittest.TestCase):
             self.assertEqual(state['quality_status'],'budget_paused')
             self.assertGreater(preflight['known_context_reservation_floor_usd'],2)
             self.assertIn('not a completion guarantee',preflight['basis'])
-            self.assertIn('--budget 10',str(stopped.exception))
+            self.assertIn('--budget 20',str(stopped.exception))
 
     def test_default_allowance_completes_fresh_ticker_draft_review_and_bounded_revision(self):
         # The default is one draft, the free checks and their fix call, one review
@@ -463,8 +469,7 @@ class SharedPrefixTests(unittest.TestCase):
             pipeline.run('AAPL', 'synthetic-key', directory=directory)
         def prefix_of(start):
             payload = next(p for p in fixture.requests if instructions(p).startswith(start))
-            content = payload['messages'][1]['content']
-            return content[0]['text'] if isinstance(content, list) else None
+            return prefix_text(payload) or None
         review, check = prefix_of('Review this equity memo'), prefix_of('Check each review finding')
         self.assertIsNotNone(review)
         self.assertEqual(review, check)

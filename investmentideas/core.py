@@ -342,13 +342,16 @@ class Router:
         self.ledger.append(row)
         self.checkpoint()  # Persist reservation before any potentially billed request.
         if prefix and cache_markers_supported(model):
-            content = [{'type': 'text', 'text': prefix, 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}},
-                       {'type': 'text', 'text': prompt}]
+            # A second system block: Anthropic drops message-level cache entries when the
+            # thinking settings change (only the draft thinks) but keeps system ones.
+            system = [{'type': 'text', 'text': SYSTEM},
+                      {'type': 'text', 'text': prefix, 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}}]
+            content = prompt
             row['cached_prefix_utf8_bytes'] = len(prefix.encode())
         else:
-            content = (prefix or '') + prompt
+            system, content = SYSTEM, (prefix or '') + prompt
         payload = {
-            'model': model, 'messages': [{'role':'system','content':SYSTEM}, {'role':'user','content':content}],
+            'model': model, 'messages': [{'role':'system','content':system}, {'role':'user','content':content}],
             'max_tokens': max_tokens,
             'provider': {'allow_fallbacks': True, 'max_price': {'prompt': pin * 1e6, 'completion': pout * 1e6}},
             'usage': {'include': True}}

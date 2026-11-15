@@ -368,7 +368,7 @@ RULE_SEVERITY = {rule: severity for rule, severity, _ in RUBRIC_RULES}
 # of them is refuted by Python ("accretive" was graded a blocker, 2026-11-15).
 TRADING_TERMS = re.compile(r'\b(?:ratings?|rated|buy|sell|overweight|underweight|outperform|underperform|target price|'
                            r'price target|entry (?:price|level|point)|margin of safety|upside|downside|position siz\w*)\b', re.I)
-HOUSE_ATTRIBUTION = re.compile(r'\b(?:house|computed|model(?:led)?|forecast|assum\w+)\b', re.I)
+HOUSE_ATTRIBUTION = re.compile(r'\b(?:house|computed)\b', re.I)
 _SEVERITY_RANK = {'minor': 0, 'major': 1, 'blocker': 2}
 
 
@@ -397,15 +397,19 @@ _SCALES = {'%': (1e-2, 1), 'points': (1e-2, 1), 'point': (1e-2, 1), 'pts': (1e-2
            'b': (1e9, 1e3, 1), 'million': (1e6, 1), 'mm': (1e6, 1), 'm': (1e6, 1), 'trillion': (1e12, 1e6, 1e3, 1),
            'x': (1,), '×': (1,)}
 # Prose that assigns the gap to price a cause; Python states which inputs can close it.
-_CAUSE = re.compile(r'\b(?:gap|difference|disagreement|divergence|discount to the price|premium to the price)\b'
-                    r'[^.;]{0,90}?\b(?:primarily|principally|almost entirely|mainly|largely|rests? (?:on|in)|lies? in|'
-                    r'sits? in|is driven by|driven by|explained by|attributable to)\b', re.I)
+_CAUSE = re.compile(r'\b(?:(?:gap|difference|disagreement|divergence)\b[^.;]{0,40}?\b(?:value and (?:the )?price|'
+                    r'price and (?:the )?value|(?:to|from) (?:the )?(?:market )?price|value[- ]to[- ]price)|discount to the price|'
+                    r'premium to the price)\b[^.;]{0,90}?\b(?:primarily|principally|almost entirely|mainly|largely|'
+                    r'rests? (?:on|in)|lies? in|sits? in|is driven by|driven by|explained by|attributable to)\b', re.I)
 # A rising word with a falling pair, or the reverse ("a further increase" from
 # USD 678 billion to USD 677 billion, 2026-11-15).
+_UNIT = r'\s*(?P<{0}>%|percent|points?|bps|billion|bn|million|mm|thousand|trillion)?'
 _DIRECTION = re.compile(r'\b(?P<word>increas\w*|rose|rise[sn]?|grew|grow(?:s|n)?|higher|expand\w*|climb\w*|'
                         r'decreas\w*|declin\w*|fell|fall(?:s|en)?|lower|contract\w*|shrank|drop\w*)\b[^.;]{0,80}?'
-                        r'\bfrom\s+(?:USD\s*|\$)?(?P<a>-?[\d,]+(?:\.\d+)?)[^.;]{0,40}?\bto\s+(?:USD\s*|\$)?(?P<b>-?[\d,]+(?:\.\d+)?)', re.I)
-_FREQUENCY = re.compile(r'\b(?:historical(?:ly)? frequenc\w*|base rates?|in (?:most|many) (?:past )?cycles)\b', re.I)
+                        r'\bfrom\s+(?:USD\s*|\$)?(?P<a>-?[\d,]+(?:\.\d+)?)' + _UNIT.format('ua') +
+                        r'[^.;]{0,40}?\bto\s+(?:USD\s*|\$)?(?P<b>-?[\d,]+(?:\.\d+)?)' + _UNIT.format('ub'), re.I)
+_YEAR = re.compile(r'(?:19|20)\d\d')
+_FREQUENCY = re.compile(r'\b(?:historical(?:ly)? frequenc\w*|in (?:most|many) (?:past )?cycles)\b', re.I)
 _META = re.compile(r'\b(?:Python|the prompt|as instructed|the instructions)\b')
 _ADDITIVE = re.compile(r'\b(?:together|combined|in total|cumulative(?:ly)?|add up|sum of|more than the entire|account for (?:all|the entire|more than))\b', re.I)
 _PANEL = re.compile(r'\b(?:convention|panel|step|one[- ]at[- ]a[- ]time|terminal return|rate path)\b', re.I)
@@ -525,6 +529,10 @@ def prereview_checks(memo, sources, computed=()):
         if _CAUSE.search(line):
             causes.append(line[:300])
         for match in _DIRECTION.finditer(line):
+            if _YEAR.fullmatch(match.group('a')) and _YEAR.fullmatch(match.group('b')):
+                continue  # "declined from 2021 to 2023" is a span of years
+            if (match.group('ua') or '').lower().rstrip('s') != (match.group('ub') or '').lower().rstrip('s'):
+                continue  # mixed units cannot be compared here
             try:
                 a, b = float(match.group('a').replace(',', '')), float(match.group('b').replace(',', ''))
             except ValueError:

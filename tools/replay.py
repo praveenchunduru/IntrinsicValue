@@ -2,7 +2,7 @@
 
 Usage:
   python tools/replay.py SAVED_RUN_FOLDER OUTPUT_DIR [--from plan|draft] [--max-revisions 1]
-                         [--budget 4] [--profile balanced] [--strong-model ID] [--review-model ID]
+                         [--budget 20] [--profile balanced] [--strong-model ID] [--review-model ID]
 
 The saved folder's sources (cut to those that existed when its first draft was
 written), archived documents and paid web-research answers are copied into a

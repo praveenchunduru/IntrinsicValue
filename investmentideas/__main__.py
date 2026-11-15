@@ -15,7 +15,7 @@ def main():
     parser.add_argument('ticker', nargs='?')
     parser.add_argument('--quick', action='store_true', help='Use the four-call financial overview instead of the full research pipeline')
     parser.add_argument('--profile', choices=MODELS, default='balanced')
-    parser.add_argument('--budget', type=float, help='Total cumulative USD allowance, including prior uncertain charges (default: full 10, quick 2; not a promised cost)')
+    parser.add_argument('--budget', type=float, help='Total cumulative USD allowance, including prior uncertain charges (default: full 20, quick 2; a ceiling with conservative per-call reservations, not a promised cost)')
     parser.add_argument('--sec-contact',help='Requester contact email for SEC access (memory only; alternatively set SEC_CONTACT_EMAIL)')
     parser.add_argument('--output', default='research-output')
     parser.add_argument('--evidence', type=Path, help='Optional UTF-8 filing or research text (up to 100 KB)')
@@ -33,7 +33,7 @@ def main():
     parser.add_argument('--port', type=int, default=8765)
     args = parser.parse_args()
     if args.budget is None:
-        args.budget = 2.0 if args.quick else 10.0
+        args.budget = 2.0 if args.quick else 20.0  # pipeline.DEFAULT_BUDGET: a ceiling, not the expected bill
     try:
         if args.revalue:
             if args.ticker or args.quick or args.evidence or args.counterfactuals or args.draft or args.snapshot or args.forecast_plan:
