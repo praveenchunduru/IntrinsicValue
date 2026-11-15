@@ -387,6 +387,25 @@ Microsoft live and replay), surviving majors were 4, 5, 1, 1 and 3. Most of the
 remaining ones are single factual slips by the writer that a revision usually corrects.
 The suite has 552 offline tests.
 
+### Writer comparison on Microsoft (2026-11-15)
+
+Three replays ran in parallel from the same saved Microsoft plan and evidence, so only
+the writing model and the revision differed ($6.17 in total). OpenRouter now lists
+Claude Sonnet 5.5 at $2/$10 per million tokens and Opus 5.5 at $4/$20, against $3/$15
+for the configured Sonnet 4.6.
+
+| Arm | Cost | First draft, surviving findings | After one revision | Prose words |
+|---|---:|---|---|---:|
+| Sonnet 4.6, one revision | $2.68 | 1 blocker ("accretive" read as trading language), 1 major (gap attribution); gap "partly" | 2 majors, both gap attribution; weakness and gap "partly" | 3,733 |
+| Opus 5.5, first draft | $1.96 | 1 major (a segment margin written as "not shown"), 1 Python false positive; weakness and gap "yes" | not run | 2,865 |
+| Sonnet 5.5, first draft | $1.53 | 3 majors, all gap attribution; "partly" | not run | 2,755 |
+
+The Python quote-date check read "the valuation is dated 2026-11-15" as a quote date when
+the draft had kept the two apart; it now reads clause by clause. The shared standard now
+says naming the most sensitive convention step is not an attribution of the gap. The gap
+attribution findings (rule M4) recur in every Sonnet draft and in the revision, and the
+revision did not resolve them. One draft per arm is a small sample.
+
 ### Still open after 2026-11-14
 
 - No live run has produced an approved memo. The final run's first draft drew 4 major
@@ -399,6 +418,9 @@ The suite has 552 offline tests.
   and Microsoft) and the largest single sensitivity in both memos.
 - The reinvestment check has run live once; the value it produced for Microsoft rests
   on judgments the review accepted.
+- Gap-attribution findings (M4) recur in every Sonnet draft and did not converge in a
+  revision. The configured writer, Sonnet 4.6, costs more than Sonnet 5.5 and wrote longer,
+  weaker drafts than Opus 5.5 in one comparison.
 - The writer still occasionally does arithmetic the computed tables do not supply (a
   net share reduction stated a thousand times too small, then corrected to a wrong
   figure). The reported-history table carries no net share change.
