@@ -879,6 +879,16 @@ def _monitoring(plan, counterfactuals, baseline, calibration_comparisons=()):
             case = next((case for case in calibration_comparisons if case['name']==item['calibration_comparison']),None)
         if case is None or case.get('per_share_value') is None:
             raise ValueError('Monitoring counterfactual must name a computed conditional case')
+        # A stated direction must match the linked case (an adverse Apple R&D trigger
+        # was linked to a case that raised value by USD 5.29, 2026-11-15).
+        direction = item.get('direction')
+        if direction is not None:
+            if direction not in ('lowers_value', 'raises_value'):
+                raise ValueError('Monitoring direction must be lowers_value or raises_value')
+            delta = case['per_share_value'] - baseline
+            if (direction == 'lowers_value') != (delta < 0):
+                raise ValueError(f'Monitoring {item["name"]} says it {direction.replace("_", " ")}, but its linked case '
+                                 f'changes base value by {delta:+.2f} per share; link a case with that effect or correct the direction')
         rows.append({**copy.deepcopy(item), 'base_per_share_value': baseline,
                      'conditional_per_share_value': case['per_share_value'],
                      'value_change': _value_change(case['per_share_value'], baseline),

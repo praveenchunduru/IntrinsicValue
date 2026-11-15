@@ -787,3 +787,19 @@ class ProseCheckTests(unittest.TestCase):
         text = '\n'.join(pipeline.reported_tables_section([source]))
         self.assertIn('| Measure | 2025-06-30 |', text)
         self.assertIn('| revenue | 100.0 |', text)
+
+
+class MonitoringDirectionTests(unittest.TestCase):
+    def test_a_direction_that_contradicts_the_linked_case_is_rejected(self):
+        value = plan()
+        margins = valuation.evaluate(value)['scenarios']['base']['cashflows']
+        lower = [max(row['ebit_margin'] - .05, .01) for row in margins]
+        value['counterfactuals'] = {'lower_margin': {'ebit_margins': lower[:len(value['scenarios']['base'].get('ebit_margins', lower))]}}
+        value['monitoring'] = [{'name': 'margin_watch', 'observation': 'Operating margin', 'review_by': '2027-06-30',
+                                'threshold': 'below the reported margin for two quarters', 'source_refs': ['S1'],
+                                'counterfactual': 'lower_margin', 'direction': 'lowers_value'}]
+        result = valuation.evaluate(value)
+        self.assertLess(result['monitoring'][0]['value_change']['dollar_delta'], 0)
+        value['monitoring'][0]['direction'] = 'raises_value'
+        with self.assertRaisesRegex(ValueError, 'linked case'):
+            valuation.evaluate(value)

@@ -162,7 +162,9 @@ Without supported category/rate data retain an explicit consolidated house model
 Optional counterfactuals may use operating_overrides with existing component growth_rates/gross_margins
 or existing expense arrays. Never mix these with aggregate growth/EBIT overrides. Maximum eight cases.
 Optional monitoring is a list of name, observation, review_by(YYYY-MM-DD), threshold,
-source_refs and exactly one of counterfactual(name) or calibration_comparison(name).
+source_refs, direction ("lowers_value" or "raises_value": what crossing the threshold does to value)
+and exactly one of counterfactual(name) or calibration_comparison(name); the linked case must move
+value in that direction.
 Python supplies each conditional value and change.
 These are analyst-selected decision thresholds, not company guidance or automatic forecasts.
 Justify reinvestment and terminal returns; avoid a hidden terminal cash discontinuity.
