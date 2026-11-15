@@ -430,40 +430,53 @@ class SweepShapeTests(unittest.TestCase):
 
 
 class OperatingCompanyGateTests(unittest.TestCase):
-    def sources(self, sic, operating_income=True):
+    def sources(self, sic, operating_income=True, form='10-K'):
         revenue = {'RevenueFromContractWithCustomerExcludingAssessedTax': 1000}
         if operating_income:
             revenue['OperatingIncomeLoss'] = 300
-        source = normalize_companyfacts(issuer({**TERM, **LEASES}, revenue=revenue), identity=IDENTITY, as_of='2026-11-06')
+        data = issuer({**TERM, **LEASES}, revenue=revenue)
+        for tag in [*data['facts']['us-gaap'].values(), *data['facts']['dei'].values()]:
+            for rows in tag['units'].values():
+                for item in rows:
+                    item['form'] = form
+        source = normalize_companyfacts(data, identity=IDENTITY, as_of='2026-11-06')
         filing = {'id': 'S4', 'kind': 'sec_filing', 'source_tier': 'regulatory_primary',
-                  'data': {'metadata': {'cik': 123456, 'form': '10-K', 'sic': sic, 'sicDescription': 'Description'},
+                  'data': {'metadata': {'cik': 123456, 'form': form, 'sic': sic, 'sicDescription': 'Description'},
                            'inline_facts': []}}
         return [source, filing]
 
+    def gate(self, sources):
+        return operating_company_gate(sources, canonical_reported_inputs(sources, as_of='2026-11-06'))
+
     def test_banks_and_insurers_are_refused_by_industry_code(self):
-        # JPMorgan: SIC 6021, national commercial banks.
-        bank = operating_company_gate(self.sources('6021', operating_income=False))
+        # JPMorgan: SIC 6021, national commercial banks, and no operating income line.
+        bank = self.gate(self.sources('6021', operating_income=False))
         self.assertTrue(bank['refuse'])
         self.assertEqual((bank['financial_institution'], bank['sic']), ('bank', '6021'))
         self.assertIn('bank by SEC industry code 6021', bank['message'])
-        self.assertIn('no annual operating income', bank['message'])
-        insurer = operating_company_gate(self.sources('6331'))
+        self.assertIn('no operating income line', bank['message'])
+        insurer = self.gate(self.sources('6331'))
         self.assertEqual(insurer['financial_institution'], 'insurer')
         self.assertTrue(insurer['refuse'])
+        # The canonical inputs are computed when not supplied.
+        self.assertTrue(operating_company_gate(self.sources('6021'))['refuse'])
 
-    def test_operating_companies_pass_and_missing_operating_income_is_named(self):
-        operating = operating_company_gate(self.sources('3571'))
+    def test_operating_companies_pass_and_a_missing_operating_income_line_is_named(self):
+        operating = self.gate(self.sources('3571'))
         self.assertFalse(operating['refuse'])
         self.assertIsNone(operating['message'])
         # Health plans report operating income and are left to that test.
-        self.assertFalse(operating_company_gate(self.sources('6324'))['refuse'])
-        # ExxonMobil reports no operating income line.
-        missing = operating_company_gate(self.sources('2911', operating_income=False))
+        self.assertFalse(self.gate(self.sources('6324'))['refuse'])
+        missing = self.gate(self.sources('2911', operating_income=False))
         self.assertTrue(missing['refuse'])
         self.assertIsNone(missing['financial_institution'])
         self.assertIn('OperatingIncomeLoss', missing['message'])
         # Without an industry code only the operating-income test applies.
-        self.assertFalse(operating_company_gate(self.sources(None))['refuse'])
+        self.assertFalse(self.gate(self.sources(None))['refuse'])
+        # Without an annual revenue anchor the reported-input preflight speaks, not the gate.
+        quarterly = self.gate(self.sources('2911', operating_income=False, form='10-Q'))
+        self.assertFalse(quarterly['refuse'])
+        self.assertIsNone(quarterly['operating_income_reported'])
 
 
 if __name__ == '__main__':

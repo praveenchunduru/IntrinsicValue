@@ -1226,46 +1226,46 @@ INSURER_SIC = range(6300, 6400)
 OPERATING_SIC_EXCEPTIONS = frozenset({'6324'})
 
 
-def operating_company_gate(sources):
+def operating_company_gate(sources, reported=None):
     """Whether the operating-company model applies, from free primary data only.
 
     Reads the SEC industry code that research.gather_primary keeps in filing
-    metadata, and looks for an annual us-gaap:OperatingIncomeLoss in the primary
-    facts. ``refuse`` is True for a bank or insurer by industry code, or when no
-    annual operating income is reported (JPMorgan reports neither an operating
-    income line nor capital expenditure; ExxonMobil reports no operating income).
-    A run should check it before any paid stage; nothing here makes a request.
+    metadata. ``refuse`` is True for a bank or insurer by industry code, or when
+    the anchor fiscal year has reported revenue but no operating income line
+    (JPMorgan reports neither operating income nor capital expenditure).
+    ``reported`` is this module's canonical_reported_inputs result for the same
+    sources, computed here when omitted. Without an annual revenue anchor the
+    operating-income test is not made: the reported-input preflight already
+    stops such a run and names its cause (ExxonMobil Holdings, a successor
+    registrant with no annual report). Nothing here makes a request; a run
+    should check it before any paid stage.
     """
     sic = description = None
-    operating_income = False
     for source in sources if isinstance(sources, list) else []:
         if not isinstance(source, dict) or source.get('source_tier') != 'regulatory_primary':
             continue
         data = source.get('data') if isinstance(source.get('data'), dict) else {}
         metadata = data.get('metadata') if isinstance(data.get('metadata'), dict) else {}
-        if sic is None and isinstance(metadata.get('sic'), str) and re.fullmatch(r'\d{4}', metadata['sic']):
+        if isinstance(metadata.get('sic'), str) and re.fullmatch(r'\d{4}', metadata['sic']):
             sic = metadata['sic']
             description = metadata.get('sicDescription') if isinstance(metadata.get('sicDescription'), str) else None
-        for fact in [*(data.get('inline_facts') or []), *(data.get('reported_facts') or [])]:
-            if not isinstance(fact, dict) or fact.get('concept') != 'us-gaap:OperatingIncomeLoss' or fact.get('dimensions') != {}:
-                continue
-            start, end = _day(fact.get('start_date')), _day(fact.get('end_date'))
-            if (start and end and 320 <= (end - start).days <= 400 and
-                    (fact.get('fact_origin') != 'sec_companyfacts' or fact.get('form') in ANNUAL_REPORT_FORMS)):
-                operating_income = True
-    financial = bool(sic and sic not in OPERATING_SIC_EXCEPTIONS and
-                     (int(sic) in BANK_SIC or int(sic) in INSURER_SIC))
+            break
+    if reported is None:
+        reported = canonical_reported_inputs(sources)
+    anchored = 'revenue' in (reported.get('actuals') or {})
+    lines = (reported.get('operating_reference') or {}).get('lines') or {}
+    operating_income = ('operating_income' in lines) if anchored else None
     kind = None
-    if financial:
-        kind = 'bank' if int(sic) in BANK_SIC else 'insurer'
+    if sic and sic not in OPERATING_SIC_EXCEPTIONS:
+        kind = 'bank' if int(sic) in BANK_SIC else 'insurer' if int(sic) in INSURER_SIC else None
     reasons = []
-    if financial:
+    if kind:
         reasons.append(f'the issuer is a {kind} by SEC industry code {sic}' + (f' ({description})' if description else '') +
                        '; deposits or policyholder funds are operating liabilities, so a free cash flow to the firm '
                        'less net debt does not value its equity')
-    if not operating_income:
-        reasons.append('no annual operating income (us-gaap:OperatingIncomeLoss) is reported in the primary record, and '
-                       'the operating model anchors its margins to it')
+    if operating_income is False:
+        reasons.append('its latest annual report has revenue but no operating income line (us-gaap:OperatingIncomeLoss), '
+                       'to which the operating model anchors its margins')
     return {'refuse': bool(reasons), 'financial_institution': kind, 'sic': sic, 'sic_description': description,
             'operating_income_reported': operating_income, 'reasons': reasons,
             'message': ('The operating-company valuation model does not apply: ' + '; and '.join(reasons) + '.')
