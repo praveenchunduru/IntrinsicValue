@@ -231,7 +231,7 @@ or a promised full-run price. Full-memo cost depends on evidence and revisions.
 
 Local budgets use conservative input-byte and maximum-output estimates before each
 request. They are **not provider-enforced total spending caps**. Limit a dedicated
-OpenRouter key too. Full research defaults to a **$10 total planning allowance** in
+OpenRouter key too. Full research defaults to a **$20 total planning allowance** in
 the CLI and local app; quick research retains $2. This is not a promised charge or
 guaranteed completion. An explicit allowance is never raised automatically; prior
 charges and uncertain reservations still count when resuming the same settings.
