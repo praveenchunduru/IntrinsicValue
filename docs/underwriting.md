@@ -592,8 +592,8 @@ difference between value and price. An answer other than a plain yes counts as n
 partly. Either answer short of yes, with no other material finding, becomes a major
 finding, so the draft goes back for revision. A review that gives neither answer gets
 a minor finding and can pass; the memo then shows the assessment as not stated. The
-default reviewer is a different model from the author: GPT-5.4 for `balanced` and
-Kimi K2.5 for `economy`. When `--strong-model` names the default reviewer, the
+default reviewer is a different model from the author: GPT-5.6 Sol for `balanced`
+and Kimi K3.1 Pro for `economy`. When `--strong-model` names the default reviewer, the
 profile's default author reviews instead. `--review-model` can name any model,
 including the author, and is saved with the run; a run folder saved before the
 cross-model default keeps its saved reviewer.

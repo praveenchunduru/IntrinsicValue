@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from investmentideas import core
 
-MODEL = 'openai/gpt-5.4'
+MODEL = 'openai/gpt-5.6-sol'
 PRICING = {
     'prompt': '0.0000025',
     'completion': '0.000015',

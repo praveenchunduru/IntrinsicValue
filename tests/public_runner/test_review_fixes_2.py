@@ -314,10 +314,10 @@ class ReasoningRequestTests(unittest.TestCase):
     def test_reasoning_is_sent_only_where_the_catalog_lists_it(self):
         from investmentideas import core
         listed = {'supported_parameters': ['reasoning', 'temperature']}
-        self.assertEqual(core.reasoning_request(listed, 'anthropic/claude-sonnet-4.6', 8000), {'max_tokens': 8000, 'exclude': True})
-        self.assertEqual(core.reasoning_request(listed, 'openai/gpt-5.4', 6000), {'effort': 'high', 'exclude': True})
-        self.assertIsNone(core.reasoning_request({'supported_parameters': ['temperature']}, 'anthropic/claude-sonnet-4.6', 8000))
-        self.assertIsNone(core.reasoning_request(listed, 'anthropic/claude-sonnet-4.6', 0))
+        self.assertEqual(core.reasoning_request(listed, 'anthropic/claude-opus-5.5', 8000), {'max_tokens': 8000, 'exclude': True})
+        self.assertEqual(core.reasoning_request(listed, 'openai/gpt-5.6-sol', 6000), {'effort': 'high', 'exclude': True})
+        self.assertIsNone(core.reasoning_request({'supported_parameters': ['temperature']}, 'anthropic/claude-opus-5.5', 8000))
+        self.assertIsNone(core.reasoning_request(listed, 'anthropic/claude-opus-5.5', 0))
         self.assertEqual(core.reasoning_budget('valuation_plan_repair_2'), 0)
         self.assertEqual(core.reasoning_budget('full_draft'), 8000)
         self.assertEqual(core.reasoning_budget('full_draft_without_reasoning'), 0)
@@ -331,10 +331,10 @@ class ReasoningRequestTests(unittest.TestCase):
             return {'choices': [{'finish_reason': 'stop', 'message': {'content': 'ok'}}], 'usage': {'cost': 0.01}}
         router = core.Router.__new__(core.Router)
         router.key, router.budget, router.ledger, router.checkpoint = 'k', 10.0, [], lambda: None
-        router.catalog = {'anthropic/claude-sonnet-4.6': {'pricing': {'prompt': '0.000003', 'completion': '0.000015'},
+        router.catalog = {'anthropic/claude-opus-5.5': {'pricing': {'prompt': '0.000003', 'completion': '0.000015'},
                                                           'supported_parameters': ['reasoning', 'temperature', 'max_tokens']}}
         with patch.object(core, 'request_json', transport):
-            router.complete('full_draft', 'anthropic/claude-sonnet-4.6', 'prompt', max_tokens=18000)
+            router.complete('full_draft', 'anthropic/claude-opus-5.5', 'prompt', max_tokens=18000)
         self.assertEqual(sent['max_tokens'], 26000)
         self.assertEqual(sent['reasoning'], {'max_tokens': 8000, 'exclude': True})
         self.assertNotIn('temperature', sent)
@@ -478,12 +478,12 @@ class ReasoningExhaustedTests(unittest.TestCase):
             return {'choices': [{'finish_reason': 'stop', 'message': {'content': 'memo'}}], 'usage': {'cost': 0.4}}
         router = core.Router.__new__(core.Router)
         router.key, router.budget, router.ledger, router.checkpoint = 'k', 10.0, [], lambda: None
-        router.catalog = {'anthropic/claude-sonnet-4.6': {'pricing': {'prompt': '0.000003', 'completion': '0.000015'},
+        router.catalog = {'anthropic/claude-opus-5.5': {'pricing': {'prompt': '0.000003', 'completion': '0.000015'},
                                                           'supported_parameters': ['reasoning', 'temperature']}}
         with patch.object(core, 'request_json', transport):
             with self.assertRaises(core.ReasoningExhausted):
-                router.complete('full_draft', 'anthropic/claude-sonnet-4.6', 'prompt', max_tokens=18000)
-            self.assertEqual(router.complete('full_draft_without_reasoning', 'anthropic/claude-sonnet-4.6', 'prompt',
+                router.complete('full_draft', 'anthropic/claude-opus-5.5', 'prompt', max_tokens=18000)
+            self.assertEqual(router.complete('full_draft_without_reasoning', 'anthropic/claude-opus-5.5', 'prompt',
                                              max_tokens=18000), 'memo')
         self.assertNotIn('reasoning', sent[-1])
         self.assertEqual(sent[-1]['max_tokens'], 18000)

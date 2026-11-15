@@ -44,9 +44,11 @@ GPT-5.4 reviews with cached evidence cost about $0.07 instead of $0.40.
 These simulations support the tested $10 default path, not a general price or
 completion promise. They are not observed provider bills or research-quality evidence.
 
-The economy profile uses open-weight Qwen for extraction/search, DeepSeek for
-analysis and Kimi K2.5 for review. Balanced uses the same Qwen easy-work routing,
-Claude Sonnet for analysis and GPT-5.4 for review. The default reviewer differs from
+The economy profile uses open-weight DeepSeek V4.1 Flash for extraction/search,
+DeepSeek V4 Pro for analysis and Kimi K3.1 Pro for review. Balanced uses Claude Haiku
+5.5 for easy work, Claude Opus 5.5 for analysis and GPT-5.6 Sol for review (newest
+generation in each slot, checked 2026-11-15). The runs recorded above used the earlier
+Qwen, Claude Sonnet 4.6 and GPT-5.4 routing. The default reviewer differs from
 the author model. An explicit review-model override can name any model and is saved
 with the run. Prices and availability are checked
 against the live catalog; there are no silent model substitutions or client retries.

@@ -419,8 +419,11 @@ revision did not resolve them. One draft per arm is a small sample.
 - The reinvestment check has run live once; the value it produced for Microsoft rests
   on judgments the review accepted.
 - Gap-attribution findings (M4) recur in every Sonnet draft and did not converge in a
-  revision. The configured writer, Sonnet 4.6, costs more than Sonnet 5.5 and wrote longer,
-  weaker drafts than Opus 5.5 in one comparison.
+  revision.
+- Defaults moved to the newest generation in every slot (2026-11-15): balanced uses
+  Claude Haiku 5.5, Claude Opus 5.5 and GPT-5.6 Sol; economy uses DeepSeek V4.1 Flash,
+  DeepSeek V4 Pro and Kimi K3.1 Pro. Only Opus 5.5 as writer has been run; GPT-5.6 Sol as
+  reviewer and the whole economy profile have not.
 - The writer still occasionally does arithmetic the computed tables do not supply (a
   net share reduction stated a thousand times too small, then corrected to a wrong
   figure). The reported-history table carries no net share change.

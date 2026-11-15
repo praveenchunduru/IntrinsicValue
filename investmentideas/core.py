@@ -19,11 +19,15 @@ from .sec_http import MAX_SOURCE_BYTES, SECContactRequired, open_http as urlopen
 from .companyfacts import normalize_companyfacts
 
 BASE = 'https://openrouter.ai/api/v1'
-MODELS = {'economy': ('qwen/qwen3-30b-a3b-instruct-2507', 'deepseek/deepseek-v3.2'),
-          'balanced': ('qwen/qwen3-30b-a3b-instruct-2507', 'anthropic/claude-sonnet-4.6')}
+# The newest generation in each slot, checked against the OpenRouter catalog on
+# 2026-11-15; the tier follows the job. Check the catalog again before changing a
+# slot: a same-evidence Microsoft test (2026-11-15) found the then-default Sonnet 4.6
+# writer both dearer and weaker than the newer Claude models.
+MODELS = {'economy': ('deepseek/deepseek-v4.1-flash-1017', 'deepseek/deepseek-v4-pro-0813'),
+          'balanced': ('anthropic/claude-haiku-5.5', 'anthropic/claude-opus-5.5')}
 # Full-memo reviewers come from a different model family than the author, so a
 # review is not the author's own judgment returned to it. --review-model overrides.
-REVIEWERS = {'economy': 'moonshotai/kimi-k2.5', 'balanced': 'openai/gpt-5.4'}
+REVIEWERS = {'economy': 'moonshotai/kimi-k3.1-pro', 'balanced': 'openai/gpt-5.6-sol'}
 # Extended thinking for the draft. OpenRouter counts reasoning inside the
 # output limit, so the budget is added on top of the stage's output tokens.
 # The budget is a target, not a cap: a live plan call (2026-11-14) spent all

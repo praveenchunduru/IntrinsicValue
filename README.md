@@ -126,7 +126,7 @@ export OPENROUTER_API_KEY
 # Replace with your real requester email for SEC access; this is not a paid key
 export SEC_CONTACT_EMAIL='your-real-email@example.com'
 
-# Full memo: open-weight extraction/research; Claude analysis; GPT-5.4 review
+# Full memo: Claude Haiku research, Claude Opus analysis, GPT-5.6 Sol review
 python -m investmentideas AAPL --profile balanced --budget 10
 
 # Cheaper full analysis, or a four-call financial overview
@@ -143,7 +143,7 @@ python -m investmentideas AAPL --review-notes findings.txt --max-revisions 3 --b
 python tools/replay.py research-output/AAPL/full-RUN_HASH replay-output --from draft
 
 # Choose a different final reviewer without repeating completed research
-python -m investmentideas AAPL --review-model moonshotai/kimi-k2.5 --budget 10
+python -m investmentideas AAPL --review-model moonshotai/kimi-k3.1-pro --budget 10
 
 ```
 
@@ -192,8 +192,12 @@ reapprove a previous memo. Generate/review a revised memo when inputs change.
 
 | Profile | Extraction and web research | Forecast, author and correction | Review |
 |---|---|---|---|
-| `balanced` (default) | Qwen3 30B A3B Instruct, open-weight | Claude Sonnet 4.6 | GPT-5.4 |
-| `economy` | Qwen3 30B A3B Instruct, open-weight | DeepSeek V3.2, open-weight | Kimi K2.5, open-weight |
+| `balanced` (default) | Claude Haiku 5.5 | Claude Opus 5.5 | GPT-5.6 Sol |
+| `economy` | DeepSeek V4.1 Flash, open-weight | DeepSeek V4 Pro, open-weight | Kimi K3.1 Pro, open-weight |
+
+Each slot uses the newest model generation in the OpenRouter catalog (checked
+2026-11-15); the tier follows the job. On the same Microsoft plan and evidence, Claude
+Opus 5.5 wrote a shorter draft with fewer review findings than Claude Sonnet 4.6 or 5.5.
 
 All selected models and their supported token pricing are checked against the live
 OpenRouter catalog before paid work.
@@ -213,8 +217,10 @@ The cost summary separates provider-reported cost from retained estimates.
 These measurements do not establish token savings, optimal routing or a quality/cost
 frontier; see the [measurement limits](docs/underwriting.md#costs-and-context-size).
 
-As observed on 2026-11-06, Qwen cost $0.10/$0.30, DeepSeek $0.26/$0.38, and Sonnet
-$3/$15 per million input/output tokens; Exa Auto search cost $0.007 per request.
+As listed on 2026-11-15, Claude Haiku 5.5 cost $0.10/$0.50, Claude Opus 5.5 $4/$20 and
+GPT-5.6 Sol $4.40/$22 per million input/output tokens; Exa Auto search cost $0.007 per
+request. At those prices a balanced first draft through review costs about $3.50 and a
+run with one revision about $7, estimated from measured token counts.
 Prices change. A four-call AAPL economy overview reported **$0.00757138** but had
 factual/date errors. It establishes transport/cost functionality, not memo quality
 or a promised full-run price. Full-memo cost depends on evidence and revisions.
