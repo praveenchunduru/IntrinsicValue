@@ -48,7 +48,7 @@ single cause of the difference only when the computed sentence says one input al
 Convention rows are one change at a time and are never added together.
 (2) Variant view (about 400 words): on the inputs that can close the difference, why the house view
 differs from what the price requires, with primary evidence. Keep the conclusion's account of what
-can close the difference; no section restates it differently. Answer the strongest sourced
+can close the difference; no section contradicts it. Answer the strongest sourced
 opposing case with operating evidence (demand, pricing, margins, capital needs), not with scenario
 values. If the operating forecast is close to consensus, say so.
 (3) Business economics, industry and competition (about 450 words), from primary sources and the
@@ -2923,7 +2923,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'not findings. Check: (1) every figure in the prose against the computed summary, the computed tables, the '
                 'valuation output or the cited source, and every comparison with the price by arithmetic; (2) that the '
                 'conclusion states which inputs alone can and cannot bring value to the price as the computed sentence '
-                'does, with the implied return, and that no section attributes the difference otherwise; (3) that company facts rest on primary sources and unverified '
+                'does, with the implied return, and that no section contradicts that account (explaining why the house '
+                'forecast differs from what the price requires is the variant view, not a different attribution); (3) that company facts rest on primary sources and unverified '
                 'excerpts are labelled context; (4) that the strongest sourced opposing case is answered with evidence; '
                 '(5) that no trading-layer language appears; (6) that convention rows are never added together; (7) that '
                 'repurchase, multiple and monitoring statements use the computed diagnostics and their fixed inputs. A '
