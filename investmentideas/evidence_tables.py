@@ -247,7 +247,7 @@ def historical_baseline(payload, years=5, as_of=None):
                                           'stock_compensation', 'repurchases', 'average_repurchase_price', 'dividends',
                                           'diluted_shares', 'diluted_eps', 'inventory', 'research_and_development',
                                           'selling_general_administrative', 'gross_profit', 'shares_outstanding',
-                                          'shares_repurchased')}
+                                          'shares_repurchased', 'acquisitions')}
         def change(key):
             return row[key] - prior[key] if prior and row[key] is not None and prior[key] is not None else None
         def growth(key):

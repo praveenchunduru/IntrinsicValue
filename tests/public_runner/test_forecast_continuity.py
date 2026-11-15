@@ -88,3 +88,59 @@ class ContinuityCheckTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+SOURCES = [{"id": "S1", "source_tier": "regulatory_primary", "data": {}}]
+
+
+class ReinvestmentContinuityTests(unittest.TestCase):
+    def history(self, capex, depreciation, revenue=(200e9, 210e9, 245e9, 280e9, 330e9)):
+        rows = [{'fiscal_year_end': f'202{index}-06-30', 'revenue': value, 'capital_expenditure': c, 'depreciation_amortization': d,
+                 'acquisitions': None} for index, (value, c, d) in enumerate(zip(revenue, capex, depreciation), 2)]
+        return [{'id': 'S2', 'source_tier': 'regulatory_primary', 'data': {}, 'historical_baseline': {'rows': rows}}]
+
+    def test_the_reference_is_net_reinvestment_and_its_incremental_rate(self):
+        sources = self.history(capex=(24e9, 28e9, 44e9, 65e9, 116e9), depreciation=(13e9, 11e9, 15e9, 22e9, 34e9))
+        reference = pipeline.reinvestment_reference(sources)
+        self.assertEqual(reference['net_reinvestment'], 82e9)
+        self.assertAlmostEqual(reference['incremental_sales_to_capital'], (330e9 - 210e9) / (29e9 + 43e9 + 82e9))
+        self.assertEqual(reference['years'], 3)
+
+    def test_capital_light_or_shrinking_businesses_are_not_checked(self):
+        light = self.history(capex=(9e9,) * 5, depreciation=(12e9,) * 5)
+        self.assertIsNone(pipeline.reinvestment_reference(light))
+        shrinking = self.history(capex=(30e9,) * 5, depreciation=(10e9,) * 5, revenue=(300e9, 290e9, 280e9, 270e9, 260e9))
+        self.assertIsNone(pipeline.reinvestment_reference(shrinking))
+
+    def locked(self, basis=None):
+        value = plan()
+        first = evaluate(value)['scenarios']['base']['cashflows'][0]
+        reinvested = first['net_reinvestment']
+        change = first['revenue'] - first['revenue'] / (1 + first['revenue_growth'])
+        # Reported reinvestment twice the plan's year 1, at a third of its capital efficiency.
+        value['reinvestment_reference'] = {'fiscal_year_end': '2026-06-30', 'net_reinvestment': 2 * reinvested,
+            'capital_expenditure': 3 * reinvested, 'depreciation_amortization': reinvested, 'acquisitions': None,
+            'incremental_sales_to_capital': change / reinvested / 3, 'years': 3, 'source_refs': ['S1'], 'basis': 'test'}
+        if basis is not None:
+            value['capital_efficiency_basis'] = basis
+        return value
+
+    def test_a_large_fall_in_reinvestment_needs_a_cited_basis(self):
+        value = self.locked()
+        with self.assertRaisesRegex(ValueError, 'Year-1 net reinvestment is below two thirds'):
+            pipeline._check_continuity(value, pipeline._evaluate(value), SOURCES)
+
+    def test_a_cited_basis_explains_the_fall(self):
+        basis = {name: 'Management guided capital spending to fall as data-center construction completes [S1].'
+                 for name in ('bear', 'base', 'bull')}
+        value = self.locked(basis)
+        result = pipeline._evaluate(value)
+        pipeline._check_continuity(value, result, SOURCES)
+        self.assertIn('stated basis', '\n'.join(pipeline._reinvestment_lines(result)))
+        self.assertIn('Year-1 net reinvestment against the reported', pipeline.computed_summary(value, result))
+
+    def test_a_basis_citing_an_unknown_source_is_rejected(self):
+        value = self.locked({name: 'Management guided capital spending to fall as construction completes [S999].'
+                             for name in ('bear', 'base', 'bull')})
+        with self.assertRaisesRegex(ValueError, 'capital_efficiency_basis.bear cites S999'):
+            pipeline._check_continuity(value, pipeline._evaluate(value), SOURCES)

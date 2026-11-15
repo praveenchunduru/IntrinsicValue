@@ -120,7 +120,11 @@ income, and the year to date of the first forecast year where reported. Start ye
 and expense amounts from the most recent reported run-rate. A year-1 EBIT margin more than 5 points
 (less for low-margin businesses) from both the reported annual and year-to-date operating margins is
 rejected unless margin_continuity_basis (an object keyed by bear, base, bull) explains that
-scenario's step with evidence [S#] from the sources.
+scenario's step with evidence [S#] from the sources. Reinvestment starts from the reported run-rate
+too: a scenario whose year-1 net reinvestment (year-1 revenue change / sales_to_capital) is below
+two thirds of the last reported net reinvestment, with sales_to_capital above 1.5 times the reported
+incremental rate, is rejected unless capital_efficiency_basis (keyed by bear, base, bull) explains
+it with evidence [S#].
 Use aggregate_ebit_margins mode without gross margins/expenses if only category revenues are supported.
 Omit main scenario growth_rates and, in gross mode, ebit_margins: Python derives them.
 When the evidence includes the matched risk-free rate and implied equity risk premium, a dated
@@ -308,6 +312,8 @@ def _lock_and_value(candidate, state, *, apply_conventions=True, prior=None):
     _check_continuity(locked,result,state['sources'],prior)
     if prior and 'forecast_continuity' in result:
         result['forecast_continuity']=forecast_continuity(locked,result)
+    if prior and 'reinvestment_continuity' in result:
+        result['reinvestment_continuity']=reinvestment_continuity(locked,result)
     return locked,changes,result
 
 
@@ -365,13 +371,124 @@ def forecast_continuity(plan, result):
     return output
 
 
+# Year-1 reinvestment needs a stated basis when it falls below this share of the
+# last reported net reinvestment while sales-to-capital exceeds this multiple of
+# the reported incremental rate. A live Microsoft plan (2026-11-15) reinvested
+# USD 43.6 billion in year 1 against USD 81.6 billion reported, at twice the
+# reported capital efficiency, and was valued at 1.49 times the price.
+REINVESTMENT_YEARS = 3
+REINVESTMENT_SHARE = 2 / 3
+REINVESTMENT_RATIO = 1.5
+
+
+def reinvestment_reference(sources):
+    """Last reported net reinvestment and the incremental sales-to-capital behind it, or None.
+
+    Net reinvestment is capital expenditure less depreciation and amortization plus
+    acquisitions. A business whose depreciation exceeds its capital spending, or
+    whose revenue fell, has no meaningful rate and is not checked.
+    """
+    grouped={}
+    for sid,row in _history_rows(sources):
+        grouped.setdefault(sid,[]).append(row)
+    for sid,rows in grouped.items():
+        usable=[row for row in rows if all(isinstance(row.get(key),(int,float)) and not isinstance(row.get(key),bool)
+                                           for key in ('revenue','capital_expenditure','depreciation_amortization'))]
+        if len(usable)<2:
+            continue
+        recent=usable[-(REINVESTMENT_YEARS+1):]
+        nets=[row['capital_expenditure']-row['depreciation_amortization']+(row.get('acquisitions') or 0) for row in recent[1:]]
+        growth=recent[-1]['revenue']-recent[0]['revenue']
+        if sum(nets)<=0 or nets[-1]<=0 or growth<=0:
+            return None
+        last=recent[-1]
+        return {'fiscal_year_end':last.get('fiscal_year_end'),'net_reinvestment':nets[-1],
+                'capital_expenditure':last['capital_expenditure'],'depreciation_amortization':last['depreciation_amortization'],
+                'acquisitions':last.get('acquisitions'),'incremental_sales_to_capital':growth/sum(nets),'years':len(nets),
+                'source_refs':[sid],
+                'basis':'Net reinvestment is reported capital expenditure less depreciation and amortization plus '
+                        'acquisitions; incremental sales-to-capital is the revenue increase over those years divided by '
+                        'their net reinvestment. Working capital and finance-lease additions are not included.'}
+    return None
+
+
+def reinvestment_continuity(plan, result):
+    """Year-1 net reinvestment and sales-to-capital in each scenario against the reported reference."""
+    reference=(plan or {}).get('reinvestment_reference')
+    if not isinstance(reference,dict) or not result or not result.get('scenarios'):
+        return None
+    bases=(plan or {}).get('capital_efficiency_basis') if isinstance((plan or {}).get('capital_efficiency_basis'),dict) else {}
+    rows={}
+    for name,scenario in result['scenarios'].items():
+        first=(scenario.get('cashflows') or [{}])[0]
+        reinvested,growth,revenue=first.get('net_reinvestment'),first.get('revenue_growth'),first.get('revenue')
+        if not all(isinstance(x,(int,float)) for x in (reinvested,growth,revenue)) or growth<=-1:
+            continue
+        change=revenue-revenue/(1+growth)
+        efficiency=change/reinvested if reinvested>0 else None
+        low=growth>0 and reinvested<REINVESTMENT_SHARE*reference['net_reinvestment'] and (
+            efficiency is None or efficiency>REINVESTMENT_RATIO*reference['incremental_sales_to_capital'])
+        row={'year_one_net_reinvestment':reinvested,'year_one_sales_to_capital':efficiency,'within_band':not low}
+        if isinstance(bases.get(name),str):
+            row['stated_basis']=bases[name]
+        rows[name]=row
+    return dict(reference,scenarios=rows,share=REINVESTMENT_SHARE,ratio=REINVESTMENT_RATIO)
+
+
 def _evaluate(plan):
-    """Value a locked plan and attach the forecast-continuity diagnostic."""
+    """Value a locked plan and attach the forecast-continuity diagnostics."""
     result=evaluate(plan)
     continuity=forecast_continuity(plan,result)
     if continuity:
         result['forecast_continuity']=continuity
+    reinvestment=reinvestment_continuity(plan,result)
+    if reinvestment:
+        result['reinvestment_continuity']=reinvestment
     return result
+
+
+def _reinvestment_breaks(locked, result, known, prior):
+    """Scenario labels whose year-1 reinvestment breaks from the reported run-rate without a cited basis."""
+    check=result.get('reinvestment_continuity')
+    if not check:
+        return []
+    bases=locked.get('capital_efficiency_basis')
+    if bases is not None and (not isinstance(bases,dict) or set(bases)-set(SCENARIO_NAMES)):
+        raise ValueError('capital_efficiency_basis must be an object keyed by bear, base or bull')
+    bases=dict(bases or {})
+    if prior:
+        prior_plan,prior_result=prior
+        prior_rows=((prior_result or {}).get('reinvestment_continuity') or {}).get('scenarios') or {}
+        prior_bases=(prior_plan or {}).get('capital_efficiency_basis') or {}
+        for name,row in check['scenarios'].items():
+            before=prior_rows.get(name)
+            if (name not in bases and before and isinstance(prior_bases.get(name),str) and
+                    before.get('year_one_net_reinvestment') and
+                    abs(row['year_one_net_reinvestment']/before['year_one_net_reinvestment']-1)<=.02):
+                bases[name]=prior_bases[name]
+                row['stated_basis']=bases[name]
+        if bases:
+            locked['capital_efficiency_basis']=bases
+    breaks=[]
+    for name,row in check['scenarios'].items():
+        basis=bases.get(name)
+        cited=re.findall(r'\[(S\d+)\]',basis) if isinstance(basis,str) else []
+        unknown=[ref for ref in cited if known and ref not in known]
+        if unknown:
+            raise ValueError(f'capital_efficiency_basis.{name} cites {", ".join(unknown)}, which is not in the evidence')
+        if not row['within_band'] and not (isinstance(basis,str) and len(basis.strip())>=40 and cited):
+            efficiency=row['year_one_sales_to_capital']
+            breaks.append(f'{name} {row["year_one_net_reinvestment"]/1e9:,.1f} billion'+
+                          (f' at sales-to-capital {efficiency:.2f}' if efficiency is not None else ''))
+    if not breaks:
+        return []
+    return [f'Year-1 net reinvestment is below two thirds of the reported {check["net_reinvestment"]/1e9:,.1f} billion '
+            f'(fiscal year ending {check["fiscal_year_end"]}: capital expenditure {check["capital_expenditure"]/1e9:,.1f} billion '
+            f'less depreciation and amortization {check["depreciation_amortization"]/1e9:,.1f} billion plus acquisitions), '
+            f'with sales-to-capital above {REINVESTMENT_RATIO:g} times the reported {check["years"]}-year incremental rate of '
+            f'{check["incremental_sales_to_capital"]:.2f} [{", ".join(check["source_refs"])}], in: '+', '.join(breaks)+
+            '. Set sales_to_capital from the reported rate, or, if falling reinvestment is the forecast, state its evidence '
+            'in capital_efficiency_basis.<scenario> with [S#] citations to sources in the evidence']
 
 
 def _check_continuity(locked, result, sources=(), prior=None):
@@ -380,8 +497,12 @@ def _check_continuity(locked, result, sources=(), prior=None):
     ``prior`` is the (plan, result) a review correction replaces: a scenario whose
     year-1 margin the correction leaves unchanged keeps the prior plan's basis.
     """
+    known_sources={source.get('id') for source in sources if isinstance(source,dict)}
+    reinvestment=_reinvestment_breaks(locked,result,known_sources,prior)
     continuity=result.get('forecast_continuity')
     if not continuity:
+        if reinvestment:
+            raise ValueError(reinvestment[0])
         return
     bases=locked.get('margin_continuity_basis')
     if bases is not None and (not isinstance(bases,dict) or set(bases)-set(SCENARIO_NAMES)):
@@ -415,6 +536,8 @@ def _check_continuity(locked, result, sources=(), prior=None):
         if not row['within_band'] and not explained:
             breaks.append(f'{name} {row["year_one_ebit_margin"]:.1%}')
     if not breaks:
+        if reinvestment:
+            raise ValueError(reinvestment[0])
         return
     lines=continuity['reported_lines']
     def billions(key):
@@ -444,12 +567,14 @@ def _check_continuity(locked, result, sources=(), prior=None):
         f'{billions("operating_expenses")}, operating income {billions("operating_income")} [{", ".join(continuity["source_refs"])}].'+
         expenses+' Start year-1 gross margins and expenses from the most recent reported run-rate (annual or year to date), '
         'or, if a step of this size is the forecast, state its evidence in margin_continuity_basis.<scenario> with [S#] '
-        'citations to sources in the evidence')
+        'citations to sources in the evidence'+(('. '+reinvestment[0]) if reinvestment else ''))
 
 
 CONTINUITY_RULE = ('\nYear-1 continuity: start year-1 gross margins and expenses from the most recent reported run-rate '
                    'in reported_inputs.operating_reference (annual or year to date). A larger step needs '
-                   'margin_continuity_basis.<bear|base|bull> with [S#] citations to sources in the evidence.')
+                   'margin_continuity_basis.<bear|base|bull> with [S#] citations to sources in the evidence. Start '
+                   'reinvestment from the reported net reinvestment and incremental sales-to-capital; a large fall needs '
+                   'capital_efficiency_basis.<bear|base|bull> with [S#] citations.')
 LEGACY_PLAN_NOTE = ('This forecast plan was saved before the market-consistent rate and terminal-growth conventions and is '
                     'valued under its own conventions. Run in a new --output folder to build a plan under the current '
                     'conventions.')
@@ -1535,6 +1660,11 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
     if derived_note:
         convention_notes=[*convention_notes,derived_note]
     convention_notes=[*convention_notes,*_pin_repurchase_history(locked,sources,changes)]
+    reference=reinvestment_reference(sources)
+    if reference:
+        locked['reinvestment_reference']=reference
+    else:
+        locked.pop('reinvestment_reference',None)
     if 'entry_policy' in locked:
         # Valuation research only (settled owner decision): no entry thresholds.
         changes.append({'field':'entry_policy','previous':locked.pop('entry_policy'),'pinned':None,'source_refs':[],
@@ -1876,6 +2006,26 @@ def _continuity_exhibit(result):
     for name,row in continuity['scenarios'].items():
         if row.get('stated_basis') and not row.get('within_band'):
             lines.append(f'- {name.title()} year-1 step, stated basis: {row["stated_basis"]}')
+    return lines+_reinvestment_lines(result)
+
+
+def _reinvestment_text(check):
+    cells='; '.join(f'{name} {row["year_one_net_reinvestment"]/1e9:,.1f} billion'+
+                    (f' ({row["year_one_sales_to_capital"]:.2f})' if row.get('year_one_sales_to_capital') is not None else '')
+                    for name,row in check['scenarios'].items())
+    return (f'Year-1 net reinvestment against the reported {check["net_reinvestment"]/1e9:,.1f} billion (fiscal year ending '
+            f'{check["fiscal_year_end"]}; {check["years"]}-year incremental sales-to-capital {check["incremental_sales_to_capital"]:.2f}) '
+            f'[{", ".join(check["source_refs"])}]: {cells}.')
+
+
+def _reinvestment_lines(result):
+    check=result.get('reinvestment_continuity')
+    if not check or not check.get('scenarios'):
+        return []
+    lines=['', '### Year-1 reinvestment against the last reported results', '', _reinvestment_text(check)+' '+check['basis']]
+    for name,row in check['scenarios'].items():
+        if row.get('stated_basis') and not row.get('within_band'):
+            lines.append(f'- {name.title()} year-1 reinvestment, stated basis: {row["stated_basis"]}')
     return lines
 
 
@@ -2023,6 +2173,9 @@ def computed_summary(plan, result):
     if continuity:
         lines+=['',f'Year-1 EBIT margin against the reported {continuity["reported_operating_margin"]:.1%}: '+
                 '; '.join(f'{name} {row["year_one_ebit_margin"]:.1%}' for name,row in continuity['scenarios'].items())+'.']
+    check=result.get('reinvestment_continuity')
+    if check and check.get('scenarios'):
+        lines+=['',_reinvestment_text(check)]
     return '\n'.join(lines)+'\n'
 
 
@@ -2546,7 +2699,10 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
     if 'plan' not in state:
         prompt=('Build an investment valuation plan for '+ticker+'. Ground actuals in supplied evidence; '
                 'use primary reports where accessible, and reconcile secondary-series dates and definitions.\n'+
-                FORECAST_SCHEMA+_rate_convention(state['sources'],reported.get('currency'))+UNDERWRITING_GUIDANCE+PLAN_FIELD_RULES+PLAN_SOURCE_RULE+'\nIMMUTABLE reported inputs (copy these values exactly; forecast judgments only):\n'+json.dumps(reported)+'\nEvidence:\n'+context+'\nDiligence synthesis:\n'+thesis+'\nRetrieval gaps:\n'+gaps)
+                FORECAST_SCHEMA+_rate_convention(state['sources'],reported.get('currency'))+UNDERWRITING_GUIDANCE+PLAN_FIELD_RULES+PLAN_SOURCE_RULE+'\nIMMUTABLE reported inputs (copy these values exactly; forecast judgments only):\n'+json.dumps(reported)+
+                (('\nReported reinvestment (reference for year-1 reinvestment and sales_to_capital):\n'+
+                  json.dumps(reinvestment_reference(state['sources']))) if reinvestment_reference(state['sources']) else '')+
+                '\nEvidence:\n'+context+'\nDiligence synthesis:\n'+thesis+'\nRetrieval gaps:\n'+gaps)
         text=call('valuation_plan',strong,prompt,tokens=12000)
         failures=[]
         for repair in range(PLAN_REPAIRS+1):
@@ -2954,10 +3110,12 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             '\nEvidence:\n'+context+'\nCurrent memo (verify allegations against this exact text):\n'+memo+'\nCurrent forecast proposal:\n'+json.dumps({k:plan[k] for k in
                 ('assumptions_label','scenario_rationales','scenarios','operating_model','discount_rate','monitoring',
                  'counterfactuals','calibration_comparisons','forecast_periods','repurchase_tests',
-                 'margin_continuity_basis','valuation_timing') if k in plan})+
+                 'margin_continuity_basis','capital_efficiency_basis','valuation_timing') if k in plan})+
             '\nLocked actuals (reference only; omit from your proposal):\n'+json.dumps(plan.get('actuals',{}))+
             '\nReported operating lines (reference for year-1 continuity):\n'+
             json.dumps((plan.get('reported_inputs') or {}).get('operating_reference'))+
+            ('\nReported reinvestment (reference for year-1 reinvestment):\n'+json.dumps(plan['reinvestment_reference'])
+             if plan.get('reinvestment_reference') else '')+
             '\nComputed diagnostics for verification:\n'+json.dumps((result or {}).get('computed_diagnostics',{}))+
             '\nComputed counterfactuals:\n'+json.dumps((result or {}).get('counterfactuals',{}))+
             '\nComputed reverse-DCF projections:\n'+json.dumps((result or {}).get('reverse_dcf',{}).get('solution_projections',[]))+
@@ -3053,7 +3211,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 adjudication={'finding_dispositions':dispositions,
                               'accepted_proposal':{k:copy.deepcopy(plan[k]) for k in
                                   ('assumptions_label','scenario_rationales','scenarios','operating_model','discount_rate',
-                                   'margin_continuity_basis','valuation_timing','counterfactuals','calibration_comparisons',
+                                   'margin_continuity_basis','capital_efficiency_basis','valuation_timing','counterfactuals','calibration_comparisons',
                                    'monitoring','repurchase_tests') if k in plan}}
                 if omitted:
                     adjudication['omitted_sections']=omitted
