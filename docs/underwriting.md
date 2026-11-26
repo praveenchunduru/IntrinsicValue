@@ -111,8 +111,12 @@ share a 1–15 year horizon. There are two supported earnings conventions:
 In the full pipeline the plan gives gross-profit-mode costs as `expense_shares`
 instead of dollar arrays: for each line a share of revenue (held), or `year1`,
 `target` and `target_year` (a straight line to the target, then held), or one share
-per forecast year. Python builds the dollar arrays from each scenario's own revenue
-before validation. An R&D or SG&A line left out holds its reported share; a scenario
+per forecast year. Shares may exceed 1 (R&D above revenue). Python builds the dollar
+arrays from each scenario's own revenue before validation. SG&A is one line: separate
+`selling_and_marketing` and `general_and_administrative` shares are added into it, and
+other selling or administrative line names without it are refused, so no cost is
+counted twice. An R&D or SG&A line left out holds its reported share, and R&D is zero
+when the company reports none (Costco); a scenario
 with neither shares nor expenses holds every reported operating cost share, with SG&A
 as selling and marketing plus general and administrative where those are reported
 instead and the rest of reported operating expenses as `other_operating_expenses`.
@@ -194,7 +198,10 @@ the reported history, shown to the plan author and printed in the exhibits:
   terminal discount rate. Return on invested capital is operating income after tax
   (effective rate, else 25%) over the prior year's equity plus debt and finance leases
   less cash and marketable securities; a year whose capital is at or below zero counts
-  as unbounded. The convention panel shows the value at the terminal discount rate (no
+  as unbounded, and a median that is unbounded leaves the 15% ceiling in place. Python
+  computes each scenario's terminal discount rate from the rate inputs (the glide
+  target, or the constant WACC) before valuing the plan, so the floor holds when a
+  locked plan is locked again. The convention panel shows the value at the terminal discount rate (no
   excess return), 4 points above it, at 15% and at 25%.
 - **The base case is the headline value.** Bear and bull are stress cases without
   probabilities; Python sets the probabilities to 0, 1 and 0 and drops any

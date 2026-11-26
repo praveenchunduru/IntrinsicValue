@@ -1187,6 +1187,22 @@ def _calibration_reconciliations(plan, spec):
     return checks
 
 
+def terminal_rates(plan):
+    """Terminal discount rate of each scenario: the glide target, or the constant WACC.
+
+    The rates do not depend on terminal_roic, so the plan is validated with a
+    placeholder return that every return check accepts. Raises what evaluate
+    would raise for any other invalid input.
+    """
+    trial = copy.deepcopy(plan)
+    for scenario in (trial.get('scenarios') or {}).values():
+        if isinstance(scenario, dict):
+            scenario['terminal_roic'] = 1.0
+    materialized, _, _ = materialize(trial)
+    _, definitions, _ = _validated(materialized)
+    return {name: _rate_path(definitions[name])[1] for name in SCENARIOS}
+
+
 def materialize(plan):
     """Derive optional operating schedules and sourced discount rates explicitly.
 

@@ -60,6 +60,34 @@ class ExpenseShareTests(unittest.TestCase):
         self.assertEqual(expenses['selling_general_administrative'][0], pipeline._figure(.05 * 1070))
         self.assertNotIn('other_operating_expenses', expenses)
 
+    def test_a_company_without_reported_rnd_holds_zero_rnd(self):
+        value = locked()
+        lines = value['reported_inputs']['operating_reference']['lines']
+        lines.pop('research_and_development')
+        pipeline._expenses_from_shares(value, [])
+        expenses = value['operating_model']['scenarios']['base']['expenses']
+        self.assertEqual(expenses['research_and_development'], [0.0] * 5)
+        # The remainder of reported operating expenses (here 150 of 200) is still held.
+        self.assertEqual(expenses['other_operating_expenses'][0], pipeline._figure(.15 * 1070))
+
+    def test_split_selling_and_administrative_lines_are_combined_once(self):
+        value = locked(expense_shares={'research_and_development': .12, 'selling_and_marketing': .03,
+                                       'general_and_administrative': {'year1': .02, 'target': .01, 'target_year': 2}})
+        pipeline._expenses_from_shares(value, [])
+        expenses = value['operating_model']['scenarios']['base']['expenses']
+        self.assertEqual(set(expenses), {'research_and_development', 'selling_general_administrative'})
+        self.assertEqual(expenses['selling_general_administrative'][:2], [pipeline._figure(.05 * 1070),
+                                                                           pipeline._figure(.04 * (700 * 1.1 ** 2 + 300))])
+        evaluate(value)
+        with self.assertRaisesRegex(ValueError, 'one selling_general_administrative line'):
+            pipeline._expenses_from_shares(locked(expense_shares={'research_and_development': .12, 'sales_and_marketing': .03}), [])
+
+    def test_a_share_above_revenue_is_allowed(self):
+        value = locked(expense_shares={'research_and_development': 2.5, 'selling_general_administrative': .4})
+        pipeline._expenses_from_shares(value, [])
+        self.assertEqual(value['operating_model']['scenarios']['base']['expenses']['research_and_development'][0],
+                         pipeline._figure(2.5 * 1070))
+
     def test_dollar_expenses_without_shares_are_kept(self):
         value = inputs()
         before = copy.deepcopy(value['operating_model'])
@@ -67,7 +95,7 @@ class ExpenseShareTests(unittest.TestCase):
         self.assertEqual(value['operating_model'], before)
 
     def test_invalid_shares_are_rejected(self):
-        for spec, message in (({'research_and_development': 1.2, 'selling_general_administrative': .05}, 'decimals from 0 to 1'),
+        for spec, message in (({'research_and_development': -.1, 'selling_general_administrative': .05}, 'zero or more'),
                               ({'research_and_development': {'year1': .1, 'target': .1, 'target_year': 9},
                                 'selling_general_administrative': .05}, 'target_year must be 1 to 5'),
                               ({'research_and_development': [.1, .1], 'selling_general_administrative': .05}, 'needs 5 shares')):

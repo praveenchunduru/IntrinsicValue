@@ -488,7 +488,14 @@ incremental sales-to-capital of 0.57, so a Microsoft plan growing revenue in the
 teens must hold sales-to-capital near 0.7 over years 1-3 or cite evidence that capital
 spending will slow.
 
-Not run against a paid model. The suite has 626 offline tests.
+An independent Opus review of both commits reproduced six defects, all fixed: the
+terminal-rate floor was undone whenever a locked plan was locked again, a median return
+below the risk-free rate failed validation before the floor could run, an unbounded
+median could not be saved, constant-rate plans were never floored, a company with no
+reported R&D could not use the default shares, and separate selling and administrative
+shares were counted twice. The exhibit no longer calls the headline a weighted value.
+
+Not run against a paid model. The suite has 632 offline tests.
 
 ### Still open after 2026-11-14
 

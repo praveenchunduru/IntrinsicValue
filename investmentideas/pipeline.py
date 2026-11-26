@@ -34,7 +34,7 @@ from .market_beta import gather_weekly_beta
 from .prompt_context import valuation_context as render_valuation_context
 from .primary_debt import classify_primary_debt
 from .operating import derive as derive_operating
-from .valuation import _timing as _valuation_timing, evaluate, materialize, save_valuation
+from .valuation import _timing as _valuation_timing, evaluate, materialize, save_valuation, terminal_rates
 from .companyfacts import CONCEPT_SELECTION_SHA256
 
 VERSION = 'full-2'
@@ -124,8 +124,10 @@ R&D, selling_general_administrative, operating expenses (excluding cost of reven
 income, and the year to date of the first forecast year where reported. Start year-1 gross margins
 and expense shares from the most recent reported run-rate. Give each expense line as a share of revenue
 (expense_shares: year1, target and target_year when the target is reached, or one share per forecast
-year); Python builds the dollar amounts from the scenario's revenue. An R&D or SG&A line left out
-holds its reported share; without expense_shares every reported operating cost share is held. A year-1 EBIT margin more than 5 points
+year); Python builds the dollar amounts from the scenario's revenue. SG&A is one line,
+selling_general_administrative, including selling, marketing, general and administrative costs.
+An R&D or SG&A line left out holds its reported share (zero R&D when none is reported); without
+expense_shares every reported operating cost share is held. A year-1 EBIT margin more than 5 points
 (less for low-margin businesses) from both the reported annual and year-to-date operating margins is
 rejected unless margin_continuity_basis (an object keyed by bear, base, bull) explains that
 scenario's step with evidence [S#] from the sources. Reinvestment starts from the reported run-rate
@@ -360,8 +362,6 @@ def _lock_and_value(candidate, state, *, apply_conventions=True, prior=None):
     if 'requested_counterfactuals' in state:
         locked['counterfactuals']=copy.deepcopy(state['requested_counterfactuals'])
     result=_evaluate(locked)
-    if apply_conventions and _floor_terminal_return(locked,result,changes):
-        result=_evaluate(locked)
     _check_continuity(locked,result,state['sources'],prior)
     if prior and 'forecast_continuity' in result:
         result['forecast_continuity']=forecast_continuity(locked,result)
@@ -1702,7 +1702,8 @@ def _figure(value):
 
 
 def _share(value):
-    return isinstance(value,(int,float)) and not isinstance(value,bool) and 0<=value<1
+    # Above 1 is allowed: a company may spend more on R&D than it sells.
+    return isinstance(value,(int,float)) and not isinstance(value,bool) and math.isfinite(value) and 0<=value<=100
 
 
 def _scenario_revenue(bases, scenario):
@@ -1745,6 +1746,53 @@ def _proposal_view(proposal):
     return view
 
 
+SGA_PARTS = ('selling_and_marketing', 'general_and_administrative')
+SGA_WORDS = ('selling', 'marketing', 'general', 'administrative', 'sga', 'sg_a')
+
+
+def _share_path(item, horizon, field):
+    """Per-year shares of revenue from a held share, a straight line to a target, or one share per year."""
+    if isinstance(item,(int,float)) and not isinstance(item,bool):
+        item={'year1':item,'target':item}
+    if isinstance(item,list):
+        # Per-year shares: the form a revision sees for a plan already built.
+        if len(item)<horizon or not all(_share(x) for x in item[:horizon]):
+            raise ValueError(f'{field} needs {horizon} shares of revenue, zero or more')
+        return list(item[:horizon])
+    if not isinstance(item,dict) or not isinstance(item.get('year1'),(int,float)):
+        raise ValueError(f'{field} needs a year1 share of revenue')
+    first=item['year1']
+    target=item.get('target',first)
+    reach=item.get('target_year',horizon)
+    if not (_share(first) and _share(target)):
+        raise ValueError(f'{field} shares must be decimal shares of revenue, zero or more')
+    if not isinstance(reach,int) or isinstance(reach,bool) or not 1<=reach<=horizon:
+        raise ValueError(f'{field}.target_year must be 1 to {horizon}')
+    return [target if reach==1 else first+(target-first)*min(year,reach-1)/(reach-1) for year in range(horizon)]
+
+
+def _combined_sga(spec, name):
+    """SG&A as one line: the reported split (Microsoft) is combined; other split names are refused.
+
+    The operating model requires selling_general_administrative, and a line left
+    out holds its reported share, so separate selling or administrative lines
+    beside it would count those costs twice.
+    """
+    if 'selling_general_administrative' in spec:
+        return spec
+    if all(part in spec for part in SGA_PARTS):
+        spec=dict(spec)
+        parts=[spec.pop(part) for part in SGA_PARTS]
+        spec['selling_general_administrative']=[sum(year) for year in zip(*parts)]
+        return spec
+    split=[line for line in spec if any(word in str(line).lower() for word in SGA_WORDS)]
+    if split:
+        raise ValueError(f'operating_model.scenarios.{name}.expense_shares gives {", ".join(split)} without '
+                         'selling_general_administrative; give selling, marketing, general and administrative costs as one '
+                         'selling_general_administrative line')
+    return spec
+
+
 def _reported_expense_shares(locked):
     """Reported R&D, SG&A and other operating expenses as shares of anchor revenue.
 
@@ -1760,7 +1808,9 @@ def _reported_expense_shares(locked):
         return amount if isinstance(amount,(int,float)) and not isinstance(amount,bool) else None
     if not isinstance(anchor,(int,float)) or anchor<=0:
         return {}
-    amounts={'research_and_development':value('research_and_development')}
+    # A company that reports no R&D line (Costco) has none to hold; the remainder of
+    # reported operating expenses still carries any cost XBRL leaves untagged.
+    amounts={'research_and_development':value('research_and_development') or 0}
     split=[value('selling_and_marketing'),value('general_and_administrative')]
     amounts['selling_general_administrative']=(value('selling_general_administrative') if value('selling_general_administrative') is not None
                                                else sum(split) if all(x is not None for x in split) else None)
@@ -1800,30 +1850,12 @@ def _expenses_from_shares(locked, changes):
         if revenue is None:
             raise ValueError(f'operating_model.scenarios.{name} needs growth_rates for every component to build expenses')
         horizon=len(revenue)
-        expenses={}
-        for line,item in spec.items():
-            if isinstance(item,(int,float)) and not isinstance(item,bool):
-                item={'year1':item,'target':item}
-            if isinstance(item,list):
-                # Per-year shares: the form a revision sees for a plan already built.
-                if len(item)<horizon or not all(_share(x) for x in item[:horizon]):
-                    raise ValueError(f'operating_model.scenarios.{name}.expense_shares.{line} needs {horizon} shares from 0 to 1')
-                shares=item[:horizon]
-            else:
-                if not isinstance(item,dict) or not isinstance(item.get('year1'),(int,float)):
-                    raise ValueError(f'operating_model.scenarios.{name}.expense_shares.{line} needs a year1 share of revenue')
-                first=item['year1']
-                target=item.get('target',first)
-                reach=item.get('target_year',horizon)
-                if not (_share(first) and _share(target)):
-                    raise ValueError(f'operating_model.scenarios.{name}.expense_shares.{line} shares must be decimals from 0 to 1')
-                if not isinstance(reach,int) or isinstance(reach,bool) or not 1<=reach<=horizon:
-                    raise ValueError(f'operating_model.scenarios.{name}.expense_shares.{line}.target_year must be 1 to {horizon}')
-                shares=[target if reach==1 else first+(target-first)*min(year,reach-1)/(reach-1) for year in range(horizon)]
-            expenses[line]=[_figure(share*amount) for share,amount in zip(shares,revenue)]
+        paths=_combined_sga({line:_share_path(item,horizon,f'operating_model.scenarios.{name}.expense_shares.{line}')
+                             for line,item in spec.items()},name)
         for line in ('research_and_development','selling_general_administrative'):
-            if line not in expenses and line in reported:
-                expenses[line]=[_figure(reported[line]*amount) for amount in revenue]
+            if line not in paths and line in reported:
+                paths[line]=[reported[line]]*horizon
+        expenses={line:[_figure(share*amount) for share,amount in zip(shares,revenue)] for line,shares in paths.items()}
         missing=[line for line in ('research_and_development','selling_general_administrative') if line not in expenses]
         if missing:
             raise ValueError(f'operating_model.scenarios.{name}.expense_shares needs '+' and '.join(missing))
@@ -1942,6 +1974,7 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
     if derived_note:
         convention_notes=[*convention_notes,derived_note]
     convention_notes=[*convention_notes,*_pin_repurchase_history(locked,sources,changes)]
+    pin_terminal=apply_conventions
     reference=reinvestment_reference(sources)
     if reference:
         locked['reinvestment_reference']=reference
@@ -1971,6 +2004,9 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
                 record['observed_at']=stamp[:10]
                 changes.append({'field':f'discount_rate.{name}.observed_at','previous':stamp,'pinned':stamp[:10],
                     'source_refs':[],'reason':'timestamp shortened to its written calendar date'})
+    if pin_terminal:
+        # After the WACC duplicates are dropped: the rate inputs are final here.
+        convention_notes=[*convention_notes,*_pin_terminal_return(locked,sources,changes)]
     if 'market_price' not in locked['reported_inputs']:
         locked.pop('market_price',None)
         locked['source_refs'].pop('market_price',None)
@@ -1989,7 +2025,8 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
             'record reports no other short-term borrowing amount; an absent concept is not a reported zero, and undisclosed '
             'borrowings would lower equity value. ')
     locked['assumptions_label']=(
-        'Growth, margins, taxes, discount rates, capital efficiency, terminal returns and scenario weights '
+        'Growth, margins, taxes, discount rates, capital efficiency, terminal returns and '+
+        ('the bear and bull stress cases ' if apply_conventions else 'scenario weights ')+
         'are house forecasts, not reported facts or company guidance. Historical actuals use the '
         'reported-input snapshot. Only the cash and investment assets selected in the pinned bridge are '
         'classified as nonoperating under an explicit house policy. Omitted investment categories are '
@@ -2016,7 +2053,8 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
 #   15%: what the implied premium assumes the index earns; Damodaran's January 2026
 #   data shows 15.1% for the market excluding financials) as a ceiling, lowered to
 #   the company's five-year median reported return on capital where that is lower,
-#   and never below the terminal discount rate (set after the first valuation).
+#   and never below the terminal discount rate (computed from the rate inputs,
+#   which do not depend on the return).
 # - Headline: the base case. Bear and bull are unweighted stress cases; the engine
 #   receives probabilities 0 / 1 / 0, so every weighted figure equals the base case.
 HOUSE_TERMINAL_ROIC = .15
@@ -2033,7 +2071,10 @@ def terminal_return_reference(sources):
             ordered=sorted(values)
             middle=len(ordered)//2
             median=ordered[middle] if len(ordered)%2 else (ordered[middle-1]+ordered[middle])/2
-            return {'median_return_on_capital':median,'years':len(values),'source_refs':[sid],
+            # Capital at or below zero in most years: no finite median (saved JSON allows no infinity).
+            unbounded=not math.isfinite(median)
+            return {'median_return_on_capital':None if unbounded else median,'median_unbounded':unbounded,
+                    'years':len(values),'source_refs':[sid],
                     'basis':'Five-year median of operating income after tax over beginning invested capital, from the '
                             'reported history (an approximation from standard balance-sheet concepts).'}
     return None
@@ -2048,34 +2089,14 @@ def _grouped_history(sources):
 
 def _house_terminal_return(reference):
     median=(reference or {}).get('median_return_on_capital')
-    return min(HOUSE_TERMINAL_ROIC,median) if isinstance(median,(int,float)) and median>0 else HOUSE_TERMINAL_ROIC
+    return (min(HOUSE_TERMINAL_ROIC,median) if isinstance(median,(int,float)) and math.isfinite(median) and median>0
+            else HOUSE_TERMINAL_ROIC)
 
 
 def _pin_house_conventions(locked, sources, changes):
-    """Terminal return on new capital and the base-case headline follow the house rules."""
+    """The base-case headline follows the house rule; the terminal return is pinned at the end of the lock."""
     notes=[]
     scenarios=locked.get('scenarios') if isinstance(locked.get('scenarios'),dict) else {}
-    reference=terminal_return_reference(sources)
-    if reference:
-        locked['terminal_return_reference']=reference
-    else:
-        locked.pop('terminal_return_reference',None)
-    target=_house_terminal_return(reference)
-    moved=[]
-    for name,scenario in scenarios.items():
-        if isinstance(scenario,dict) and scenario.get('terminal_roic')!=target:
-            changes.append({'field':f'scenarios.{name}.terminal_roic','previous':scenario.get('terminal_roic'),
-                            'pinned':target,'source_refs':(reference or {}).get('source_refs',[]),
-                            'reason':'terminal return on new capital is the house convention'})
-            scenario['terminal_roic']=target
-            moved.append(name)
-    if moved:
-        lowered=(f', lowered to the reported median return on capital of {reference["median_return_on_capital"]:.1%}'
-                 if target<HOUSE_TERMINAL_ROIC else '')
-        notes.append(f'Terminal return on new capital is the house {HOUSE_TERMINAL_ROIC:.0%} ceiling{lowered}, never below '
-                     'the terminal discount rate; the convention panel shows the value at the terminal discount rate, '
-                     '4 points above it, and at 25%.')
-    weights={name:(scenarios.get(name) or {}).get('probability') for name in DEFAULT_WEIGHTS}
     # A convention, not a correction of the plan: recorded once in the notes.
     if set(scenarios)==set(DEFAULT_WEIGHTS):
         for name,weight in DEFAULT_WEIGHTS.items():
@@ -2087,17 +2108,53 @@ def _pin_house_conventions(locked, sources, changes):
     return notes
 
 
-def _floor_terminal_return(locked, result, changes):
-    """Raise a house terminal return below its scenario's terminal discount rate to that rate; True when changed."""
-    raised=False
-    for name,scenario in (locked.get('scenarios') or {}).items():
-        rate=((result.get('scenarios') or {}).get(name) or {}).get('terminal_rate')
-        if isinstance(rate,(int,float)) and isinstance(scenario.get('terminal_roic'),(int,float)) and scenario['terminal_roic']<rate:
-            changes.append({'field':f'scenarios.{name}.terminal_roic','previous':scenario['terminal_roic'],'pinned':rate,
-                            'source_refs':[],'reason':'the house terminal return is never below the terminal discount rate'})
-            scenario['terminal_roic']=rate
-            raised=True
-    return raised
+def _pin_terminal_return(locked, sources, changes):
+    """Terminal return on new capital: the house ceiling, lowered to the reported median, floored at the terminal rate.
+
+    Runs once all rate inputs are final. The terminal rates do not depend on the
+    return, so re-locking a locked plan reproduces the same value and records no
+    change (a floor applied after valuation was undone by every re-lock).
+    """
+    scenarios=locked.get('scenarios') if isinstance(locked.get('scenarios'),dict) else {}
+    if not scenarios:
+        return []
+    reference=terminal_return_reference(sources)
+    median=(reference or {}).get('median_return_on_capital')
+    if isinstance(median,float) and not math.isfinite(median):
+        # The locked plan is saved as strict JSON, which has no infinity.
+        reference=dict(reference,median_return_on_capital=None,median_unbounded=True)
+    if reference:
+        locked['terminal_return_reference']=reference
+    else:
+        locked.pop('terminal_return_reference',None)
+    target=_house_terminal_return(reference)
+    try:
+        rates=terminal_rates(locked)
+    except (ValueError,KeyError,TypeError,AttributeError,ArithmeticError):
+        # The valuation will raise the same error for the plan to repair.
+        rates={}
+    raised=[]
+    for name,scenario in scenarios.items():
+        if not isinstance(scenario,dict):
+            continue
+        rate=rates.get(name)
+        pinned=max(target,rate) if isinstance(rate,(int,float)) and math.isfinite(rate) else target
+        if pinned>target:
+            raised.append(name)
+        previous=scenario.get('terminal_roic')
+        if not (isinstance(previous,(int,float)) and not isinstance(previous,bool) and abs(previous-pinned)<=1e-12):
+            changes.append({'field':f'scenarios.{name}.terminal_roic','previous':previous,'pinned':pinned,
+                            'source_refs':(reference or {}).get('source_refs',[]) if pinned==target else [],
+                            'reason':'terminal return on new capital is the house convention'+
+                                     (', raised to the terminal discount rate' if pinned>target else '')})
+        scenario['terminal_roic']=pinned
+    median=(reference or {}).get('median_return_on_capital')
+    lowered=(f', lowered to the reported median return on capital of {median:.1%}'
+             if target<HOUSE_TERMINAL_ROIC and isinstance(median,(int,float)) else '')
+    floored=(' and raised to the terminal discount rate in '+', '.join(raised) if raised else '')
+    return [f'Terminal return on new capital is the house {HOUSE_TERMINAL_ROIC:.0%} ceiling{lowered}{floored}; it is never '
+            'below the terminal discount rate. The convention panel shows the value at the terminal discount rate, '
+            '4 points above it, and at 15% and 25%.']
 
 
 def _history_rows(sources):
@@ -2219,7 +2276,7 @@ def _computed_exhibits(result,currency):
         lines += ['', 'Entry earnings use the first explicit forecast year, not trailing earnings; exit earnings use the final explicit year. '
             'The return comparison holds operating cash flows, opening financing/claims and shares fixed and changes only the exit valuation. '
             f'All annual FCFF is distributed under the debt/claims-settled diagnostic {timing}; this is not a common-share payout, '
-            'ongoing buyback or stock-price-return forecast. Multiple/return alternatives do not change the house DCF or scenario weights.']
+            'ongoing buyback or stock-price-return forecast. Multiple/return alternatives do not change the house DCF or its cases.']
     repurchases=diagnostics.get('repurchase_tests')
     if isinstance(repurchases,list) and repurchases:
         lines += ['', '### Conditional repurchase economics', '',
@@ -2328,7 +2385,8 @@ def valuation_section(plan, result):
     if thin:
         lines += ['', 'Terminal rate within two points of terminal growth in '+', '.join(thin)+': the value is fragile to '
                       'small changes in either.']
-    lines += ['',f'Weighted intrinsic value per share: {currency} {result["weighted_per_share_value"]:,.2f}'+
+    lines += ['',('Headline (base case) intrinsic value per share' if _base_headline(result) else 'Weighted intrinsic value per share')+
+              f': {currency} {result["weighted_per_share_value"]:,.2f}'+
               (f'; value / price {result["weighted_value_to_price"]:.2f}' if 'weighted_value_to_price' in result else ''),
               '',f'Forecast basis: {plan["assumptions_label"]}',
               '', 'Amounts use whole currency units and actual share counts. Net debt includes the selected cash deduction once. '

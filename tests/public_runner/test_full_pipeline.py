@@ -463,7 +463,7 @@ class FullPipelineTests(unittest.TestCase):
             self.assertEqual(len(FakeRouter.calls),8)
             self.assertTrue((folder/'sources_raw'/'S2.html').exists())
             self.assertTrue((folder/'cashflows.csv').exists())
-            self.assertIn('Weighted intrinsic value per share',(folder/'memo.md').read_text())
+            self.assertIn('Headline (base case) intrinsic value per share',(folder/'memo.md').read_text())
             self.assertEqual(pipeline.run('AAPL','secret-synthetic-key',directory=directory),folder)
             self.assertEqual(len(FakeRouter.calls),8)
             for p in folder.rglob('*'):
@@ -508,7 +508,7 @@ class FullPipelineTests(unittest.TestCase):
             for line in state['current_memo'].strip().splitlines():
                 self.assertIn(line,visible)
             self.assertIn('## Valuation summary (computed by Python)',visible)
-            self.assertIn('Weighted intrinsic value per share',visible)
+            self.assertIn('Headline (base case) intrinsic value per share',visible)
             self.assertIn('needs_review',visible)
             self.assertIn('Review is incomplete',visible)
             self.assertFalse(state['complete'])

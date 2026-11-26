@@ -648,16 +648,21 @@ class TracedFigureRefutationTests(unittest.TestCase):
 
 
 class HouseConventionPinTests(unittest.TestCase):
-    def test_terminal_return_is_the_house_rule_and_weights_default_without_a_cited_basis(self):
+    def test_terminal_return_is_the_house_rule_and_weights_are_pinned(self):
         value = plan()
         value['scenarios']['base']['terminal_roic'] = .25
         value['scenarios']['bear']['probability'], value['scenarios']['bull']['probability'] = .2, .3
         changes = []
         notes = pipeline._pin_house_conventions(value, [{'id': 'S1'}], changes)
+        notes += pipeline._pin_terminal_return(value, [{'id': 'S1'}], changes)
         self.assertTrue(all(s['terminal_roic'] == pipeline.HOUSE_TERMINAL_ROIC for s in value['scenarios'].values()))
         self.assertEqual({n: s['probability'] for n, s in value['scenarios'].items()}, pipeline.DEFAULT_WEIGHTS)
         self.assertEqual(len(notes), 2)
         self.assertIn('scenarios.base.terminal_roic', [c['field'] for c in changes])
+        # A second lock of the locked plan changes nothing and records nothing.
+        again = []
+        pipeline._pin_terminal_return(value, [{'id': 'S1'}], again)
+        self.assertEqual(again, [])
 
     def test_the_base_case_is_the_headline_whatever_basis_the_plan_states(self):
         value = plan()
@@ -670,21 +675,51 @@ class HouseConventionPinTests(unittest.TestCase):
         result = valuation.evaluate(value)
         self.assertAlmostEqual(result['weighted_per_share_value'], result['scenarios']['base']['per_share_value'])
 
-    def test_the_reported_return_lowers_the_ceiling_and_the_terminal_rate_floors_it(self):
-        rows = [{'return_on_invested_capital': r} for r in (.08, .09, .10, .07, .09)]
-        sources = [{'id': 'S2', 'data': {}, 'historical_baseline': {'rows': rows}}]
-        reference = pipeline.terminal_return_reference(sources)
-        self.assertAlmostEqual(reference['median_return_on_capital'], .09)
-        self.assertAlmostEqual(pipeline._house_terminal_return(reference), .09)
-        self.assertEqual(pipeline._house_terminal_return({'median_return_on_capital': float('inf')}), .15)
+    @staticmethod
+    def returns(*values):
+        return [{'id': 'S2', 'data': {}, 'historical_baseline': {'rows': [{'return_on_invested_capital': r} for r in values]}}]
+
+    def test_the_reported_return_lowers_the_ceiling(self):
+        reference = pipeline.terminal_return_reference(self.returns(.10, .11, .12, .10, .11))
+        self.assertAlmostEqual(reference['median_return_on_capital'], .11)
+        self.assertAlmostEqual(pipeline._house_terminal_return(reference), .11)
         value = plan()
-        for scenario in value['scenarios'].values():
-            scenario['terminal_roic'] = .05
-        result = valuation.evaluate(value)
+        pipeline._pin_terminal_return(value, self.returns(.10, .11, .12, .10, .11), [])
+        self.assertAlmostEqual(value['scenarios']['base']['terminal_roic'], .11)
+
+    def test_the_terminal_rate_floors_it_before_any_valuation_and_on_every_relock(self):
+        # A median below the risk-free rate used to fail validation before a floor could run.
+        sources = self.returns(.03, .02, .04, .03, .03)
+        value = plan()
         changes = []
-        self.assertTrue(pipeline._floor_terminal_return(value, result, changes))
-        rate = result['scenarios']['base']['terminal_rate']
+        pipeline._pin_terminal_return(value, sources, changes)
+        rate = valuation.terminal_rates(value)['base']
         self.assertAlmostEqual(value['scenarios']['base']['terminal_roic'], rate)
+        self.assertIn('raised to the terminal discount rate', changes[0]['reason'])
+        result = valuation.evaluate(value)
+        self.assertAlmostEqual(result['scenarios']['base']['terminal_rate'], rate)
+        again = []
+        pipeline._pin_terminal_return(value, sources, again)
+        self.assertEqual(again, [])
+        self.assertAlmostEqual(value['scenarios']['base']['terminal_roic'], rate)
+
+    def test_a_constant_rate_plan_is_floored_at_its_wacc(self):
+        value = plan(glide=False, timing=False)
+        for scenario in value['scenarios'].values():
+            scenario['terminal_growth'] = .02
+        pipeline._pin_terminal_return(value, self.returns(.03, .02, .04, .03, .03), [])
+        rate = valuation.terminal_rates(value)['base']
+        self.assertGreater(rate, .03)
+        self.assertAlmostEqual(value['scenarios']['base']['terminal_roic'], rate)
+        valuation.evaluate(value)
+
+    def test_an_unbounded_median_is_saved_without_infinity(self):
+        rows = [{'return_on_capital_unbounded': True}] * 3 + [{'return_on_invested_capital': .5}] * 2
+        reference = pipeline.terminal_return_reference([{'id': 'S2', 'data': {}, 'historical_baseline': {'rows': rows}}])
+        self.assertTrue(reference['median_unbounded'])
+        self.assertIsNone(reference['median_return_on_capital'])
+        json.dumps(reference, allow_nan=False)
+        self.assertEqual(pipeline._house_terminal_return(reference), .15)
 
     def test_the_panel_shows_25_percent_beside_the_house_rule(self):
         value = plan()
