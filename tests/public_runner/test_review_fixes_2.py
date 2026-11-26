@@ -648,16 +648,19 @@ class TracedFigureRefutationTests(unittest.TestCase):
 
 
 class HouseConventionPinTests(unittest.TestCase):
-    def test_terminal_return_is_the_house_rule_and_weights_are_pinned(self):
+    def test_terminal_return_is_the_terminal_rate_and_weights_are_pinned(self):
         value = plan()
         value['scenarios']['base']['terminal_roic'] = .25
         value['scenarios']['bear']['probability'], value['scenarios']['bull']['probability'] = .2, .3
         changes = []
         notes = pipeline._pin_house_conventions(value, [{'id': 'S1'}], changes)
         notes += pipeline._pin_terminal_return(value, [{'id': 'S1'}], changes)
-        self.assertTrue(all(s['terminal_roic'] == pipeline.HOUSE_TERMINAL_ROIC for s in value['scenarios'].values()))
+        rates = valuation.terminal_rates(value)
+        for name, scenario in value['scenarios'].items():
+            self.assertAlmostEqual(scenario['terminal_roic'], rates[name])
         self.assertEqual({n: s['probability'] for n, s in value['scenarios'].items()}, pipeline.DEFAULT_WEIGHTS)
         self.assertEqual(len(notes), 2)
+        self.assertIn("Mauboussin's steady state", notes[1])
         self.assertIn('scenarios.base.terminal_roic', [c['field'] for c in changes])
         # A second lock of the locked plan changes nothing and records nothing.
         again = []
@@ -679,23 +682,44 @@ class HouseConventionPinTests(unittest.TestCase):
     def returns(*values):
         return [{'id': 'S2', 'data': {}, 'historical_baseline': {'rows': [{'return_on_invested_capital': r} for r in values]}}]
 
-    def test_the_reported_return_lowers_the_ceiling(self):
-        reference = pipeline.terminal_return_reference(self.returns(.10, .11, .12, .10, .11))
-        self.assertAlmostEqual(reference['median_return_on_capital'], .11)
-        self.assertAlmostEqual(pipeline._house_terminal_return(reference), .11)
+    def test_the_continuing_value_is_next_year_nopat_over_the_terminal_rate(self):
+        # Mauboussin: after the competitive advantage period, value = NOPAT(T+1) / WACC
+        # whatever the growth, because new investment earns exactly its cost.
         value = plan()
-        pipeline._pin_terminal_return(value, self.returns(.10, .11, .12, .10, .11), [])
-        self.assertAlmostEqual(value['scenarios']['base']['terminal_roic'], .11)
+        pipeline._pin_terminal_return(value, [], [])
+        result = valuation.evaluate(value)['scenarios']['base']
+        self.assertAlmostEqual(result['terminal_enterprise_value'], result['terminal_nopat'] / result['terminal_rate'])
 
-    def test_the_terminal_rate_floors_it_before_any_valuation_and_on_every_relock(self):
-        # A median below the risk-free rate used to fail validation before a floor could run.
+    def test_the_reported_return_is_kept_and_the_panel_shows_the_earlier_rule(self):
+        sources = self.returns(.10, .11, .12, .10, .11)
+        reference = pipeline.terminal_return_reference(sources)
+        self.assertAlmostEqual(reference['median_return_on_capital'], .11)
+        value = plan()
+        pipeline._pin_terminal_return(value, sources, [])
+        self.assertEqual(value['terminal_return_reference'], reference)
+        result = valuation.evaluate(value)
+        rows = {row['name']: row for row in result['convention_panel']['rows']}
+        self.assertEqual(rows['terminal_return_equals_terminal_rate']['status'], 'not_applicable')
+        earlier = rows['terminal_return_earlier_house_rule']
+        self.assertEqual(earlier['status'], 'calculated')
+        changed = copy.deepcopy(value)
+        changed['scenarios']['base']['terminal_roic'] = .11
+        self.assertAlmostEqual(earlier['per_share_value'], valuation.evaluate(changed)['scenarios']['base']['per_share_value'])
+        self.assertGreater(earlier['dollar_delta'], 0)
+        # A median at or above 15% gives the 15% row's value: the row is not repeated.
+        value['terminal_return_reference']['median_return_on_capital'] = .4
+        rows = {row['name']: row for row in valuation.evaluate(value)['convention_panel']['rows']}
+        self.assertEqual(rows['terminal_return_earlier_house_rule']['status'], 'not_applicable')
+        self.assertEqual(rows['terminal_return_15_percent']['status'], 'calculated')
+
+    def test_the_terminal_rate_is_pinned_before_any_valuation_and_on_every_relock(self):
         sources = self.returns(.03, .02, .04, .03, .03)
         value = plan()
         changes = []
         pipeline._pin_terminal_return(value, sources, changes)
         rate = valuation.terminal_rates(value)['base']
         self.assertAlmostEqual(value['scenarios']['base']['terminal_roic'], rate)
-        self.assertIn('raised to the terminal discount rate', changes[0]['reason'])
+        self.assertIn('equals the terminal discount rate', changes[0]['reason'])
         result = valuation.evaluate(value)
         self.assertAlmostEqual(result['scenarios']['base']['terminal_rate'], rate)
         again = []
@@ -703,13 +727,12 @@ class HouseConventionPinTests(unittest.TestCase):
         self.assertEqual(again, [])
         self.assertAlmostEqual(value['scenarios']['base']['terminal_roic'], rate)
 
-    def test_a_constant_rate_plan_is_floored_at_its_wacc(self):
+    def test_a_constant_rate_plan_uses_its_wacc(self):
         value = plan(glide=False, timing=False)
         for scenario in value['scenarios'].values():
             scenario['terminal_growth'] = .02
-        pipeline._pin_terminal_return(value, self.returns(.03, .02, .04, .03, .03), [])
+        pipeline._pin_terminal_return(value, [], [])
         rate = valuation.terminal_rates(value)['base']
-        self.assertGreater(rate, .03)
         self.assertAlmostEqual(value['scenarios']['base']['terminal_roic'], rate)
         valuation.evaluate(value)
 
@@ -719,15 +742,14 @@ class HouseConventionPinTests(unittest.TestCase):
         self.assertTrue(reference['median_unbounded'])
         self.assertIsNone(reference['median_return_on_capital'])
         json.dumps(reference, allow_nan=False)
-        self.assertEqual(pipeline._house_terminal_return(reference), .15)
 
-    def test_the_panel_shows_25_percent_beside_the_house_rule(self):
+    def test_the_panel_shows_15_and_25_percent_beside_the_house_rule(self):
         value = plan()
-        for scenario in value['scenarios'].values():
-            scenario['terminal_roic'] = .15
+        pipeline._pin_terminal_return(value, [], [])
         rows = {row['name']: row for row in valuation.evaluate(value)['convention_panel']['rows']}
-        self.assertEqual(rows['terminal_return_25_percent']['status'], 'calculated')
-        self.assertEqual(rows['terminal_return_15_percent']['status'], 'not_applicable')
+        for name in ('terminal_return_15_percent', 'terminal_return_25_percent', 'terminal_return_rate_plus_4_points'):
+            self.assertEqual(rows[name]['status'], 'calculated')
+            self.assertGreater(rows[name]['dollar_delta'], 0)
 
 
 class CauseWordingTests(unittest.TestCase):

@@ -527,6 +527,23 @@ wrong paper, and a history field the new tax rate overwrote.
 
 The suite has 652 offline tests.
 
+### Mauboussin's steady state for the terminal return (2026-11-26)
+
+By owner choice the terminal return on new capital now equals the terminal discount
+rate in every scenario, replacing the 15% limit. The 10-year forecast is the
+competitive advantage period, and the continuing value is year-11 NOPAT over the
+terminal rate, as in Mauboussin's worked templates. His 2014 paper cites research putting market-implied
+advantage periods at about 5 years for competitive industries and about 15 for stable
+ones, and about 8 years on average for 1976-2007; the house uses the plan's 10 years
+for every company. On earlier offline estimates the change lowers base values by
+roughly a tenth to a seventh (Apple about $196 to $168, Microsoft $560 to $499); no
+plan has yet been valued under it. The implied equity risk premium behind the discount
+rate assumes the market earns more than its cost of capital on new investment, so
+this convention is the more conservative pairing; the convention panel shows the
+earlier rule and 15% beside it.
+
+The suite has 653 offline tests.
+
 ### Still open after 2026-11-14
 
 - No live run has produced an approved memo. The final run's first draft drew 4 major

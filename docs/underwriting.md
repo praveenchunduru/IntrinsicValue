@@ -192,25 +192,29 @@ the reported history, shown to the plan author and printed in the exhibits:
 
 ## House conventions the plan does not choose
 
-- **Terminal return on new capital is 15%** in every scenario, about the market's
-  long-run return on new capital, lowered to the median reported return on invested
-  capital over the last five years where that is lower, and never below the scenario's
-  terminal discount rate. Return on invested capital is the reported history's ROIC by
-  the Mauboussin and Callahan method (below); a year whose average capital is at or
-  below zero counts as unbounded, and a median that is unbounded leaves the 15% ceiling
-  in place. Python
-  computes each scenario's terminal discount rate from the rate inputs (the glide
-  target, or the constant WACC) before valuing the plan, so the floor holds when a
-  locked plan is locked again. The convention panel shows the value at the terminal discount rate (no
-  excess return), 4 points above it, at 15% and at 25%.
+- **Terminal return on new capital equals the terminal discount rate**, Mauboussin's
+  steady state. The 10 forecast years are the competitive advantage period: excess
+  returns on new investment come only from those years' growth and capital efficiency.
+  Afterwards new investment earns its cost of capital, so growth adds no value and the
+  continuing value is year-11 NOPAT over the terminal discount rate, the form of
+  Appendix A of Mauboussin and Callahan's 2022 ROIC paper and of "Market-Expected
+  Return on Investment" (2021). Python computes each scenario's terminal rate from the
+  rate inputs (the glide target, or the constant WACC) before valuing the plan, so a
+  locked plan locked again keeps it. The convention panel shows the value with a
+  terminal return 4 points above the terminal rate, at the reported five-year median
+  ROIC capped at 15% (the earlier house rule) where that differs from 15%, and at 15%
+  and 25%. The implied equity risk premium behind the discount rate assumes the market
+  as a whole earns more than its cost of capital on new investment; the 15% row shows
+  the value under that assumption for this company.
 - **The base case is the headline value.** Bear and bull are stress cases without
   probabilities; Python sets the probabilities to 0, 1 and 0 and drops any
   `weights_basis`. The summary table labels each case's role and has no weighted row.
 
 Owner choices: the terminal return and weights on 2026-11-15, after same-evidence plans
 set terminal returns of 20-30% and different weights, moving value by several percent
-between runs; the return limit, the headline base case, cost shares, margin ceilings
-and the three-year reinvestment window on 2026-11-26.
+between runs; the headline base case, cost shares, margin ceilings and the three-year
+reinvestment window on 2026-11-26, and later that day Mauboussin's steady state in place
+of a 15% terminal return limited by the reported median ROIC.
 
 ## Date the required-return inputs
 
@@ -357,8 +361,9 @@ Every plan with a market price reports:
   discount rate and makes no forecast of shareholder returns.
 - `convention_panel`: base value with one convention changed at a time: the current
   rate held constant, Damodaran's terminal rate, terminal growth at the risk-free rate,
-  steady-state and terminal tax at the marginal rate, a terminal return equal to the
-  terminal rate, a terminal return 4 points above it, the base-case margin held at or
+  steady-state and terminal tax at the marginal rate, a terminal return 4 points above
+  the terminal rate, the earlier house rule (the reported five-year median ROIC, at most
+  15%, where that is neither 15% nor the terminal rate), the base-case margin held at or
   below the reported five-year peak (when the history is profitable), a 15% and a 25%
   terminal return, terminal reinvestment that continues the forecast's capital
   efficiency, and the whole rate path one point higher and lower.

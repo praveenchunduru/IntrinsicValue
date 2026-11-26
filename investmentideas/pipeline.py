@@ -72,8 +72,8 @@ MEMO_WORDS = 'about 3,000 words of prose in total; Python adds the tables, and a
 FORECAST_SCHEMA = """Return ONLY compact JSON for house forecasts:
 {"assumptions_label":"House forecasts, not reported facts or guidance",
  "scenario_rationales":{"bear":"Evidence and economic mechanism for this scenario [S#]","base":"...","bull":"..."},
- "scenarios":{"bear":{"probability":<decimal>,"tax_rate":<decimal>,"sales_to_capital":<number>,
- "terminal_roic":0.15},"base":{<same fields>},"bull":{<same fields>}}}
+ "scenarios":{"bear":{"probability":<decimal>,"tax_rate":<decimal>,"sales_to_capital":<number>},
+ "base":{<same fields>},"bull":{<same fields>}}} (Python sets terminal_roic)
 plus EITHER an operating_model (preferred when the evidence reports revenue by product, service or
 segment; see below), in which case Python derives each scenario's growth and margins from its drivers
 and any stated growth_rates or ebit_margins are dropped, OR, without one, "growth_rates":[<10 annual
@@ -97,9 +97,10 @@ D&A; GAAP EBIT already expenses SBC, R&D and operating rent. Do not deduct those
 again. Explicitly justify growth/margin fade, capital efficiency, tax and WACC.
 Terminal reinvestment is g/ROIC of NOPAT;
 explain a material forecast-to-terminal capital-intensity transition. Terminal return on new
-capital is a house convention that Python sets: 15%, about the market's long-run return on new
-capital, lowered to the company's reported median return on capital where that is lower and never
-below the terminal discount rate.
+capital is a house convention that Python sets: the terminal discount rate (Mauboussin's steady
+state). The 10 forecast years are the competitive advantage period: excess returns on new
+investment come only from the forecast years' growth and capital efficiency, and after year 10
+growth adds no value.
 Optional counterfactuals map names to base-scenario forecast overrides (the same horizon).
 They are separate diagnostic cases, never probability weights or reported facts; Python computes
 their values. A plausible competing market-pricing case can be included without claiming its
@@ -2046,18 +2047,23 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
 
 
 # House conventions Python sets on every plan built under the current
-# conventions (owner choices, 2026-11-26, after two Fable reviews and a check of
-# Damodaran's practice). The plan author picked 20-30% terminal returns without
-# evidence and same-evidence plans differed through invented scenario weights.
-# - Terminal return on new capital: the market's own return on new capital (about
-#   15%: what the implied premium assumes the index earns; Damodaran's January 2026
-#   data shows 15.1% for the market excluding financials) as a ceiling, lowered to
-#   the company's five-year median reported return on capital where that is lower,
-#   and never below the terminal discount rate (computed from the rate inputs,
-#   which do not depend on the return).
+# conventions. The plan author picked 20-30% terminal returns without evidence and
+# same-evidence plans differed through invented scenario weights.
+# - Terminal return on new capital: the terminal discount rate (owner choice,
+#   2026-11-26, "follow Mauboussin"). Mauboussin's steady state: the 10-year
+#   forecast is the competitive advantage period, and afterwards new investment
+#   earns its cost of capital, so the continuing value is year-11 NOPAT over the
+#   terminal cost of capital whatever the terminal growth (Mauboussin and
+#   Callahan, "Return on Invested Capital", 2022, Appendix A; "Market-Expected
+#   Return on Investment", 2021). The rate comes from the rate inputs, which do not
+#   depend on the return. It replaces a 15% ceiling lowered to the reported median
+#   ROIC (2026-11-15 to 2026-11-26), which the convention panel still shows.
 # - Headline: the base case. Bear and bull are unweighted stress cases; the engine
 #   receives probabilities 0 / 1 / 0, so every weighted figure equals the base case.
-HOUSE_TERMINAL_ROIC = .15
+# About the market's long-run return on new capital, which the implied premium
+# assumes the index earns (Damodaran, January 2026: 15.1% excluding financials);
+# the ceiling of the earlier house rule, kept for the convention panel.
+MARKET_TERMINAL_ROIC = .15
 DEFAULT_WEIGHTS = {'bear': 0.0, 'base': 1.0, 'bull': 0.0}
 
 
@@ -2087,12 +2093,6 @@ def _grouped_history(sources):
     return grouped
 
 
-def _house_terminal_return(reference):
-    median=(reference or {}).get('median_return_on_capital')
-    return (min(HOUSE_TERMINAL_ROIC,median) if isinstance(median,(int,float)) and math.isfinite(median) and median>0
-            else HOUSE_TERMINAL_ROIC)
-
-
 def _pin_house_conventions(locked, sources, changes):
     """The base-case headline follows the house rule; the terminal return is pinned at the end of the lock."""
     notes=[]
@@ -2109,11 +2109,11 @@ def _pin_house_conventions(locked, sources, changes):
 
 
 def _pin_terminal_return(locked, sources, changes):
-    """Terminal return on new capital: the house ceiling, lowered to the reported median, floored at the terminal rate.
+    """Terminal return on new capital: the scenario's terminal discount rate (Mauboussin's steady state).
 
     Runs once all rate inputs are final. The terminal rates do not depend on the
     return, so re-locking a locked plan reproduces the same value and records no
-    change (a floor applied after valuation was undone by every re-lock).
+    change. The reported ROIC reference is kept for the convention panel.
     """
     scenarios=locked.get('scenarios') if isinstance(locked.get('scenarios'),dict) else {}
     if not scenarios:
@@ -2127,34 +2127,27 @@ def _pin_terminal_return(locked, sources, changes):
         locked['terminal_return_reference']=reference
     else:
         locked.pop('terminal_return_reference',None)
-    target=_house_terminal_return(reference)
     try:
         rates=terminal_rates(locked)
     except (ValueError,KeyError,TypeError,AttributeError,ArithmeticError):
-        # The valuation will raise the same error for the plan to repair.
+        # The valuation will raise the same error for the plan to repair; a valid
+        # placeholder keeps that error the one reported.
         rates={}
-    raised=[]
     for name,scenario in scenarios.items():
         if not isinstance(scenario,dict):
             continue
         rate=rates.get(name)
-        pinned=max(target,rate) if isinstance(rate,(int,float)) and math.isfinite(rate) else target
-        if pinned>target:
-            raised.append(name)
+        pinned=rate if isinstance(rate,(int,float)) and math.isfinite(rate) else MARKET_TERMINAL_ROIC
         previous=scenario.get('terminal_roic')
         if not (isinstance(previous,(int,float)) and not isinstance(previous,bool) and abs(previous-pinned)<=1e-12):
-            changes.append({'field':f'scenarios.{name}.terminal_roic','previous':previous,'pinned':pinned,
-                            'source_refs':(reference or {}).get('source_refs',[]) if pinned==target else [],
-                            'reason':'terminal return on new capital is the house convention'+
-                                     (', raised to the terminal discount rate' if pinned>target else '')})
+            changes.append({'field':f'scenarios.{name}.terminal_roic','previous':previous,'pinned':pinned,'source_refs':[],
+                            'reason':'terminal return on new capital equals the terminal discount rate (house convention: '
+                                     'Mauboussin\'s steady state)'})
         scenario['terminal_roic']=pinned
-    median=(reference or {}).get('median_return_on_capital')
-    lowered=(f', lowered to the reported median return on capital of {median:.1%}'
-             if target<HOUSE_TERMINAL_ROIC and isinstance(median,(int,float)) else '')
-    floored=(' and raised to the terminal discount rate in '+', '.join(raised) if raised else '')
-    return [f'Terminal return on new capital is the house {HOUSE_TERMINAL_ROIC:.0%} ceiling{lowered}{floored}; it is never '
-            'below the terminal discount rate. The convention panel shows the value at the terminal discount rate, '
-            '4 points above it, and at 15% and 25%.']
+    return ['Terminal return on new capital equals the terminal discount rate (Mauboussin\'s steady state): the 10-year '
+            'forecast is the competitive advantage period, after which new investment earns its cost of capital, so growth '
+            'beyond it adds no value. The convention panel shows the value with a terminal return 4 points above the '
+            'terminal rate, at the reported median ROIC capped at 15% (the earlier house rule), and at 15% and 25%.']
 
 
 def _history_rows(sources):

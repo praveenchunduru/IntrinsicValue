@@ -98,8 +98,9 @@ growth to the risk-free rate unless a scenario gives a company-specific reason f
 less. Present values are dated at the valuation date when the reported balance sheet
 allows it. Year-1 margins must start from the last reported results unless the plan
 cites evidence for a step. Costs are shares of revenue, final-year margins have
-ceilings from the reported history, the terminal return on new capital is at most 15%,
-and the base case is the headline value with bear and bull as unweighted stress cases.
+ceilings from the reported history, the terminal return on new capital equals the
+terminal cost of capital after the 10-year forecast (Mauboussin's steady state), and the
+base case is the headline value with bear and bull as unweighted stress cases.
 The memo reports value relative to price, the
 discount rate the price implies beside the required return, and the value under
 alternative conventions one change at a time. It sets no entry prices, margins of
