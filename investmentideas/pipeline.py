@@ -27,7 +27,7 @@ from .inputs import canonical_reported_inputs, operating_company_gate, pin_repor
 from .quality import (DIAGNOSTIC_SCOPE, HOUSE_ATTRIBUTION, RUBRIC, TRADING_TERMS, assessment_findings, claim_ledger,
                       inspect_memo, parse_json, parse_review, prereview_checks, prose_words, trace_pools, untraced_figures)
 from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_breakdown_facts, inline_facts, archive_focus_excerpts
-from .evidence_tables import (breakdown_tables, filing_supplement_for, historical_baseline, render_baseline,
+from .evidence_tables import (breakdown_tables, filing_supplement_for, historical_baseline, render_baseline, render_roic,
                               render_breakdowns)
 from .macro import gather_us_calibration
 from .market_beta import gather_weekly_beta
@@ -2075,8 +2075,8 @@ def terminal_return_reference(sources):
             unbounded=not math.isfinite(median)
             return {'median_return_on_capital':None if unbounded else median,'median_unbounded':unbounded,
                     'years':len(values),'source_refs':[sid],
-                    'basis':'Five-year median of operating income after tax over beginning invested capital, from the '
-                            'reported history (an approximation from standard balance-sheet concepts).'}
+                    'basis':'Five-year median of reported return on invested capital by the Mauboussin and Callahan method '
+                            '(NOPAT over average operating invested capital, with goodwill and acquired intangibles).'}
     return None
 
 
@@ -2346,7 +2346,7 @@ def reported_tables_section(sources):
         data=source.get('data') if isinstance(source.get('data'),dict) else {}
         baseline=source.get('historical_baseline') or data.get('historical_baseline')
         if baseline and baseline.get('rows'):
-            text=render_baseline(baseline,source.get('id')).split('\n')
+            text=render_baseline(baseline,source.get('id'),include_roic=False).split('\n')
             notes=text[text.index('Basis notes:'):] if 'Basis notes:' in text else []
             text=text[:len(text)-len(notes)]
             caption,header,rows=text[0],text[1].split(' | '),[row.split(' | ') for row in text[2:] if row.strip()]
@@ -2356,6 +2356,14 @@ def reported_tables_section(sources):
                 lines.append(f'| {name} | '+' | '.join(row[index] if index<len(row) else 'n/a' for row in rows)+' |')
             if notes:
                 lines+=['']+notes
+            returns=render_roic(baseline,source.get('id')).split('\n')
+            if len(returns)>2:
+                basis=returns.index('ROIC basis:') if 'ROIC basis:' in returns else len(returns)
+                caption,header,rows=returns[0],returns[1].split(' | '),[row.split(' | ') for row in returns[2:basis] if row.strip()]
+                lines+=['', caption, '', '| Measure | '+' | '.join(row[0] for row in rows)+' |', '|---|'+'---:|'*len(rows)]
+                for index,name in enumerate(header[1:],1):
+                    lines.append(f'| {name} | '+' | '.join(row[index] if index<len(row) else 'n/a' for row in rows)+' |')
+                lines+=['']+returns[basis:]
         breakdowns=source.get('breakdown_tables') or data.get('breakdown_tables')
         if breakdowns:
             lines+=['', render_breakdowns(breakdowns,source.get('id'))]

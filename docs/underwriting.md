@@ -195,10 +195,10 @@ the reported history, shown to the plan author and printed in the exhibits:
 - **Terminal return on new capital is 15%** in every scenario, about the market's
   long-run return on new capital, lowered to the median reported return on invested
   capital over the last five years where that is lower, and never below the scenario's
-  terminal discount rate. Return on invested capital is operating income after tax
-  (effective rate, else 25%) over the prior year's equity plus debt and finance leases
-  less cash and marketable securities; a year whose capital is at or below zero counts
-  as unbounded, and a median that is unbounded leaves the 15% ceiling in place. Python
+  terminal discount rate. Return on invested capital is the reported history's ROIC by
+  the Mauboussin and Callahan method (below); a year whose average capital is at or
+  below zero counts as unbounded, and a median that is unbounded leaves the 15% ceiling
+  in place. Python
   computes each scenario's terminal discount rate from the rate inputs (the glide
   target, or the constant WACC) before valuing the plan, so the floor holds when a
   locked plan is locked again. The convention panel shows the value at the terminal discount rate (no
@@ -528,6 +528,40 @@ as n/a. The 10-K and 10-Q excerpts include gross-margin, inventory, purchase
 commitment and share-repurchase disclosures. The tables are derived from the archived
 documents on every run, so a folder collected earlier gets new columns.
 
+Beside the history, Python computes return on invested capital by the method of
+Mauboussin and Callahan ("Return on Invested Capital: How to Calculate ROIC and Handle
+Common Issues", Counterpoint Global, October 2022), from up to eight earlier fiscal
+years as openings:
+
+- NOPAT is EBITA times one minus the cash tax rate, the estimate the paper calls
+  usually sufficient. EBITA is operating income plus amortization of acquired
+  intangibles plus the interest in operating lease cost (the average operating lease
+  liability times its weighted-average discount rate). The cash tax rate is the tax
+  provision less deferred tax expense, over pretax income; the effective rate where
+  deferred taxes are unreported, and 25% where neither is between 0% and 50%. Where no
+  operating income is reported (Johnson & Johnson), EBIT is pretax income plus net
+  interest expense, and the table marks it.
+- Invested capital is the operating approach: total assets less current liabilities
+  other than debt, less cash and current securities above an operating balance of 2%
+  of revenue, less noncurrent securities and equity investments. Commercial paper
+  inside short-term borrowings is counted once.
+- ROIC is NOPAT over the average of opening and closing invested capital, shown with
+  NOPAT margin and capital turnover, without goodwill and acquired intangibles, and
+  with internally generated intangibles capitalized where selling and marketing and
+  G&A are reported apart (100% of R&D over six years, 70% of selling and marketing and
+  20% of G&A over two years, straight line from the year after the spending, as the
+  paper applies to Microsoft).
+- Incremental ROIC is the NOPAT change over three years over the change in invested
+  capital over the three years ending a year earlier; a fall in capital shows n/m.
+
+On Microsoft's filings as of the end of 2022 the method reproduces the paper's example:
+invested capital of $96.1, $120.2 and $164.8 billion for fiscal 2020-2022 (paper: 96,
+120, 165), ROIC 48.1% (49%), 92.2% without goodwill and acquired intangibles (94%),
+and 33.9% with intangibles capitalized (34%). NOPAT is $68.6 billion against the
+paper's $70 billion, which estimates about $1 billion of lease interest against $0.3
+billion here. The paper's industry-specific capitalization shares (Iqbal and others,
+by Fama-French industry) are not applied.
+
 The forecast author fills one template: an operating model when the filings report
 revenue by product, service or segment, otherwise aggregate growth and margin arrays.
 Stated aggregate paths that the operating drivers do not produce are dropped, and
@@ -572,7 +606,8 @@ amount is within 3% of a reported year's buybacks takes that year's program valu
 average price, so the exhibits and the history table quote one price. By default one revision follows if material findings remain,
 and the second review checks the earlier findings rather than re-auditing from scratch.
 
-Python prints the reported history (one column per year) and the segment tables after
+Python prints the reported history and the return-on-capital table (one column per
+year) and the segment tables after
 the exhibits, with a scale check of the final forecast year against today; writers no
 longer re-type them.
 

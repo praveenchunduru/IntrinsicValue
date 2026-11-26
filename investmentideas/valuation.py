@@ -1716,7 +1716,7 @@ def _convention_panel(actuals, definitions, scenarios, discounting, reported_pea
             {'terminal_tax_rate': discounting['marginal_tax_rate']},
             applies=abs(base.get('terminal_tax_rate', base['tax_rate']) - discounting['marginal_tax_rate']) > 1e-9,
             reason='Terminal tax already equals the marginal rate')
-    add('terminal_return_equals_terminal_rate', 'Terminal return on new capital = terminal discount rate: the company earns no excess return on new investment, while the market risk premium still assumes the market does',
+    add('terminal_return_equals_terminal_rate', 'Terminal return on new capital = terminal discount rate (Mauboussin\'s steady-state continuing value, NOPAT over the cost of capital): the company earns no excess return on new investment, while the market risk premium still assumes the market does',
         {'terminal_roic': terminal}, applies=terminal >= base['terminal_growth'] and abs(base['terminal_roic'] - terminal) > 1e-9,
         reason='House terminal return already equals the terminal rate')
     # Damodaran's levels (owner choice, 2026-11-26): a lasting excess return of 4

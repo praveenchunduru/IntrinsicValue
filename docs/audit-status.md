@@ -497,6 +497,28 @@ shares were counted twice. The exhibit no longer calls the headline a weighted v
 
 Not run against a paid model. The suite has 632 offline tests.
 
+### Return on invested capital to Mauboussin's method (2026-11-26)
+
+By owner request the ROIC analysis follows Mauboussin and Callahan's October 2022
+Counterpoint Global paper. Four readers went through his papers on calculating ROIC,
+intangibles and ROIC, ROIC in the investment process, market-expected return on
+investment, base rates and fade, and measuring the moat. Morgan Stanley's and Eaton
+Vance's sites refused automated fetches, so some came from archived or mirrored copies;
+the 2025 capital-allocation and 2023 stock-compensation papers were not read.
+
+The earlier ROIC (operating income after effective tax over beginning equity plus debt
+less cash) gave Apple capital below zero, so its return counted as unbounded. The
+operating approach gives Apple about $59 billion of capital in fiscal 2022 and an ROIC
+of 173% (paper: 162%). On Microsoft's filings as of 2022 the method reproduces the
+paper's example within a point or two (see underwriting.md). Across 16 companies the
+latest ROIC runs from 6% (AT&T) to 129% (Apple); Walmart 14%, Home Depot 24%, Coca-Cola
+24%, Costco 28%, Alphabet 42%, Microsoft 33%. The house terminal-return limit now reads
+this ROIC. Two data fixes came from the sweep: commercial paper tagged inside short-term
+borrowings was counted twice (Microsoft), and Microsoft's fiscal 2017 short-term
+investments use a concept retired in 2018.
+
+The suite has 646 offline tests.
+
 ### Still open after 2026-11-14
 
 - No live run has produced an approved memo. The final run's first draft drew 4 major
