@@ -195,6 +195,13 @@ def _validated(plan):
                   for key in ('probability', 'tax_rate', 'sales_to_capital', *rate_keys, 'terminal_roic')}
         values['growth_rates'] = [_number(value, name + '.growth_rates') for value in growth]
         values['ebit_margins'] = [_number(value, name + '.ebit_margins') for value in margins]
+        # Mauboussin's steady state: the return on new terminal capital is the terminal
+        # discount rate of whatever rate path is applied, so an alternative rate keeps it.
+        values['terminal_roic_follows_rate'] = (item.get('terminal_roic_basis') == 'terminal_rate' or
+                                                item.get('terminal_roic_follows_rate') is True)
+        if values['terminal_roic_follows_rate']:
+            # The stated figure follows the current rate inputs (a revalue after a beta edit).
+            values['terminal_roic'] = discounting['terminal'] if glide else values['wacc']
         if glide and item.get('wacc') is not None:
             raise ValueError(f'{name}.wacc must be omitted: the dated discount-rate path governs every year')
         if item.get('terminal_tax_rate') is not None:
@@ -293,6 +300,7 @@ def _project(actuals, scenario, *, flat=None, shift=0.0, terminal=None):
     rates, terminal_rate = _rate_path(scenario, flat=flat, shift=shift, terminal=terminal)
     if not all(0 < rate < 1 for rate in rates) or terminal_rate <= scenario['terminal_growth']:
         raise ValueError('Discount rates must be between zero and one and the terminal rate above terminal growth')
+    roic = terminal_rate if scenario.get('terminal_roic_follows_rate') else scenario['terminal_roic']
     stub = scenario.get('stub_years', 0.0)
     versioned = scenario.get('convention') == GLIDE or stub > 0
     explicit = len(scenario['growth_rates'])
@@ -313,7 +321,7 @@ def _project(actuals, scenario, *, flat=None, shift=0.0, terminal=None):
         if year <= explicit:
             reinvestment = (revenue - previous) / scenario['sales_to_capital']
         else:
-            reinvestment = nopat * scenario['terminal_growth'] / scenario['terminal_roic']
+            reinvestment = nopat * scenario['terminal_growth'] / roic
         fcff = nopat - reinvestment
         cumulative *= 1 + rates[year - 1]
         counted = 1 - stub if year == 1 else 1.0
@@ -335,7 +343,7 @@ def _project(actuals, scenario, *, flat=None, shift=0.0, terminal=None):
     terminal_revenue = revenue * (1 + scenario['terminal_growth'])
     terminal_ebit = terminal_revenue * scenario['ebit_margins'][-1]
     terminal_nopat = terminal_ebit * (1 - terminal_tax)
-    terminal_reinvestment = terminal_nopat * scenario['terminal_growth'] / scenario['terminal_roic']
+    terminal_reinvestment = terminal_nopat * scenario['terminal_growth'] / roic
     terminal_fcff = terminal_nopat - terminal_reinvestment
     terminal_value = terminal_fcff / (terminal_rate - scenario['terminal_growth'])
     pv_terminal = terminal_value * roll / cumulative if versioned else terminal_value / (1 + rates[0]) ** len(rows)
@@ -350,7 +358,7 @@ def _project(actuals, scenario, *, flat=None, shift=0.0, terminal=None):
               'terminal_value_fraction': pv_terminal / enterprise if enterprise else None,
               'terminal_revenue': terminal_revenue, 'terminal_nopat': terminal_nopat,
               'terminal_reinvestment': terminal_reinvestment, 'terminal_fcff': terminal_fcff,
-              'terminal_reinvestment_rate': scenario['terminal_growth'] / scenario['terminal_roic'],
+              'terminal_reinvestment_rate': scenario['terminal_growth'] / roic, 'terminal_roic_applied': roic,
               'terminal_enterprise_value': terminal_value, 'cashflows': rows}
     if versioned:
         result.update(initial_rate=rates[0], terminal_rate=terminal_rate,
@@ -798,6 +806,8 @@ def _counterfactuals(plan, actuals, definitions):
             changed.update({key:value for key,value in overrides.items() if key != 'operating_overrides'})
         else:
             changed = dict(base, **overrides)
+        if 'terminal_roic' in overrides:
+            changed['terminal_roic_follows_rate'] = False
         flat = None
         if base.get('convention') == GLIDE and changed.get('wacc') is not None:
             # Under the rate glide, a counterfactual wacc is one flat rate in every year and the terminal value.
@@ -984,7 +994,8 @@ def _computed_diagnostics(actuals, definitions, scenarios, weighted):
             continuing_roic = terminal_margin * inputs['sales_to_capital'] * (1 + inputs['terminal_growth'])
             if continuing_roic >= inputs['terminal_growth'] and continuing_roic > 0:
                 try:
-                    alternative_price = _finite_or_none(_project(actuals, dict(inputs, terminal_roic=continuing_roic))['per_share_value'])
+                    alternative_price = _finite_or_none(_project(actuals, dict(inputs, terminal_roic=continuing_roic,
+                                                                                 terminal_roic_follows_rate=False))['per_share_value'])
                 except (ValueError, ArithmeticError):
                     alternative_price = None
         transition[name] = {
@@ -1023,9 +1034,11 @@ def _computed_diagnostics(actuals, definitions, scenarios, weighted):
         actuals['net_debt']-actuals['other_equity_claims'])/actuals['shares_outstanding'])
     no_terminal_excess_return = {'terminal_roic': base_terminal, 'per_share_value': None,
                                  'dollar_delta': None, 'percent_delta': None,
-                                 'fixed_assumptions': 'Only the return on new terminal investment changes to the terminal discount rate. Terminal operating margin and growth and every explicit-forecast and equity-bridge input stay fixed; existing asset rents are not separately erased. The company earns no excess return on new capital while the market risk premium still assumes the market does.'}
+                                 'fixed_assumptions': ('The house terminal return already equals the terminal discount rate (Mauboussin\'s steady state), so this row equals the house value.'
+                                                       if base.get('terminal_roic_follows_rate') else
+                                                       'Only the return on new terminal investment changes to the terminal discount rate. Terminal operating margin and growth and every explicit-forecast and equity-bridge input stay fixed; existing asset rents are not separately erased. The company earns no excess return on new capital while the market risk premium still assumes the market does.')}
     try:
-        value = _project(actuals, dict(base, terminal_roic=base_terminal))['per_share_value']
+        value = _project(actuals, dict(base, terminal_roic=base_terminal, terminal_roic_follows_rate=False))['per_share_value']
         no_terminal_excess_return.update(status='calculated', per_share_value=value,
                                         **_value_change(value, baseline))
     except (ValueError, ArithmeticError):
@@ -1550,6 +1563,8 @@ def _price_requirements(actuals, base, market):
     def set_to(field):
         def mutate(scenario, value):
             scenario[field] = value
+            if field == 'terminal_roic':
+                scenario['terminal_roic_follows_rate'] = False
         return mutate
     def path(field, delta):
         # A shift row's year-1 figure alone was misread live (2026-11-14) as the
@@ -1696,6 +1711,8 @@ def _convention_panel(actuals, definitions, scenarios, discounting, reported_pea
             return
         try:
             scenario = dict(base, **change)
+            if 'terminal_roic' in change:
+                scenario['terminal_roic_follows_rate'] = False
             result = _project(actuals, scenario, **project)
             spread = result.get('terminal_spread', _rate_path(scenario, **project)[1] - scenario['terminal_growth'])
             row.update(per_share_value=result['per_share_value'], terminal_spread=spread,
@@ -1720,7 +1737,8 @@ def _convention_panel(actuals, definitions, scenarios, discounting, reported_pea
             applies=abs(base.get('terminal_tax_rate', base['tax_rate']) - discounting['marginal_tax_rate']) > 1e-9,
             reason='Terminal tax already equals the marginal rate')
     add('terminal_return_equals_terminal_rate', 'Terminal return on new capital = terminal discount rate (Mauboussin\'s steady-state continuing value, NOPAT over the cost of capital): the company earns no excess return on new investment, while the market risk premium still assumes the market does',
-        {'terminal_roic': terminal}, applies=terminal >= base['terminal_growth'] and abs(base['terminal_roic'] - terminal) > 1e-9,
+        {'terminal_roic': terminal}, applies=(not base.get('terminal_roic_follows_rate') and terminal >= base['terminal_growth']
+                                              and abs(base['terminal_roic'] - terminal) > 1e-9),
         reason='House terminal return already equals the terminal rate (Mauboussin\'s steady state)')
     # The house rule from 2026-11-15 to 2026-11-26: 15%, lowered to the reported
     # five-year median ROIC, never below the terminal rate.

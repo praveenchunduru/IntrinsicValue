@@ -704,6 +704,7 @@ class HouseConventionPinTests(unittest.TestCase):
         self.assertEqual(earlier['status'], 'calculated')
         changed = copy.deepcopy(value)
         changed['scenarios']['base']['terminal_roic'] = .11
+        changed['scenarios']['base'].pop('terminal_roic_basis')
         self.assertAlmostEqual(earlier['per_share_value'], valuation.evaluate(changed)['scenarios']['base']['per_share_value'])
         self.assertGreater(earlier['dollar_delta'], 0)
         # A median at or above 15% gives the 15% row's value: the row is not repeated.
@@ -742,6 +743,32 @@ class HouseConventionPinTests(unittest.TestCase):
         self.assertTrue(reference['median_unbounded'])
         self.assertIsNone(reference['median_return_on_capital'])
         json.dumps(reference, allow_nan=False)
+
+    def test_rate_alternatives_keep_the_steady_state(self):
+        # A rate change alone must not add or remove an excess return on new capital.
+        value = plan()
+        pipeline._pin_terminal_return(value, [], [])
+        result = valuation.evaluate(value)
+        rows = {row['name']: row for row in result['convention_panel']['rows']}
+        actuals, definitions, _ = valuation._validated(valuation.materialize(value)[0])
+        for name, shift in (('required_return_minus_1_point', -.01), ('required_return_plus_1_point', .01)):
+            moved = valuation._project(actuals, definitions['base'], shift=shift)
+            self.assertAlmostEqual(moved['terminal_enterprise_value'], moved['terminal_nopat'] / moved['terminal_rate'])
+            self.assertAlmostEqual(rows[name]['per_share_value'], moved['per_share_value'])
+        # A flat-rate counterfactual follows its own rate too.
+        value['counterfactuals'] = {'flat': {'wacc': .07}}
+        case = valuation.evaluate(value)['counterfactuals']['flat']
+        self.assertAlmostEqual(case['terminal_enterprise_value'], case['terminal_nopat'] / .07)
+        # An explicit terminal return replaces the steady state.
+        value['counterfactuals'] = {'roic': {'terminal_roic': .2}}
+        case = valuation.evaluate(value)['counterfactuals']['roic']
+        self.assertAlmostEqual(case['terminal_roic_applied'], .2)
+
+    def test_an_invalid_plan_raises_at_the_pin_instead_of_falling_back(self):
+        value = plan()
+        value['scenarios']['base']['sales_to_capital'] = -1
+        with self.assertRaises(ValueError):
+            pipeline._pin_terminal_return(value, [], [])
 
     def test_the_panel_shows_15_and_25_percent_beside_the_house_rule(self):
         value = plan()

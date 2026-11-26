@@ -215,6 +215,11 @@ class OperatingUnitLabelTests(unittest.TestCase):
         self.assertEqual(locked['scenarios']['base']['growth_rates'], [.02]*5)
         aggregate = inputs()
         aggregate['operating_model']['earnings_mode'] = 'aggregate_ebit_margins'
+        # That mode has no gross margins or expenses (the lock now values the plan's rates).
+        for scenario in aggregate['operating_model']['scenarios'].values():
+            scenario.pop('expenses', None)
+            for component in scenario['components'].values():
+                component.pop('gross_margins', None)
         for scenario in aggregate['scenarios'].values():
             scenario['ebit_margins'] = [.3]*5
         self.assertEqual(self.lock(aggregate)[0]['scenarios']['base']['ebit_margins'], [.3]*5)

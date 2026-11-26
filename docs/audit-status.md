@@ -542,7 +542,16 @@ rate assumes the market earns more than its cost of capital on new investment, s
 this convention is the more conservative pairing; the convention panel shows the
 earlier rule and 15% beside it.
 
-The suite has 653 offline tests.
+An independent Opus review of the change found that the pin could fall back to 15% when
+the rate calculation failed for a reason the lock removed afterwards, and that every
+alternative that moves the discount rate (rate shifts, flat-rate counterfactuals,
+calibration comparisons, the implied return) kept the old terminal return and so added
+or removed an excess return. The pin now runs last and raises the plan's own error, and
+scenarios carry `terminal_roic_basis: "terminal_rate"` so the engine applies the
+terminal rate of whatever rate path it values; rows that set a terminal return clear it.
+A correction of a supplied plan is told to keep its own terminal return.
+
+The suite has 655 offline tests.
 
 ### Still open after 2026-11-14
 

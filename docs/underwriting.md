@@ -136,7 +136,9 @@ in gross-profit mode, `ebit_margins`. Python derives them and rejects conflictin
 duplicates. Other scenario fields remain explicit: probability, cash operating
 tax, incremental sales-to-capital, terminal growth and terminal ROIC (under the
 rate glide below, terminal growth may be omitted and defaults to the risk-free
-rate). The model does not infer these from category history.
+rate; in the full pipeline Python sets the probabilities and the terminal ROIC, and
+`terminal_roic_basis: "terminal_rate"` makes the terminal return follow the terminal
+discount rate of any rate path applied). The model does not infer these from category history.
 
 GAAP R&D and SG&A must retain their stock-compensation and rent costs under this
 convention. Do not deduct them again. FCFF is EBIT less cash operating taxes and

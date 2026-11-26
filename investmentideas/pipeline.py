@@ -749,13 +749,16 @@ def _correction_rate_text(sources, plan, apply):
     currency=((plan.get('reported_inputs') or {}).get('currency') or plan.get('currency') or
               canonical_reported_inputs(sources).get('currency'))
     rate=plan.get('discount_rate') if isinstance(plan.get('discount_rate'),dict) else {}
+    # A supplied plan keeps its own terminal return; the schema says Python sets it.
+    own=('' if apply else ' This supplied plan keeps its own terminal_roic: include it in every scenario as in the '
+         'current proposal unless a finding requires a change.')
     if apply or rate.get('term_structure')=='glide_to_market_v1' or 'valuation_timing' in plan:
-        return _rate_convention(sources,currency)
+        return _rate_convention(sources,currency)+own
     growth={name:(scenario or {}).get('terminal_growth') for name,scenario in (plan.get('scenarios') or {}).items()
             if isinstance(scenario,dict)}
     return ('\nRATE CONVENTION FOR THIS RUN: this supplied plan keeps its own constant discount rate. Keep each scenario\'s '
             'terminal_growth'+('' if rate else ' and wacc')+' as in the current proposal '+json.dumps(growth)+
-            ' unless a finding requires a change; do not add term_structure or valuation_timing.')
+            ' unless a finding requires a change; do not add term_structure or valuation_timing.'+own)
 
 
 def _omit_invalid_optional_sections(plan,validated):
@@ -2005,9 +2008,6 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
                 record['observed_at']=stamp[:10]
                 changes.append({'field':f'discount_rate.{name}.observed_at','previous':stamp,'pinned':stamp[:10],
                     'source_refs':[],'reason':'timestamp shortened to its written calendar date'})
-    if pin_terminal:
-        # After the WACC duplicates are dropped: the rate inputs are final here.
-        convention_notes=[*convention_notes,*_pin_terminal_return(locked,sources,changes)]
     if 'market_price' not in locked['reported_inputs']:
         locked.pop('market_price',None)
         locked['source_refs'].pop('market_price',None)
@@ -2043,6 +2043,10 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
          if locked.get('valuation_timing') else
          'Annual year-end cash flows are used without an interim balance-sheet roll-forward or stub-period adjustment. ')+
         ' '.join(convention_notes))
+    if pin_terminal:
+        # Last, once the plan is cleaned and labelled: the rate inputs are final and a
+        # failure here is the plan's own error, raised for repair.
+        locked['assumptions_label']+=' '+' '.join(_pin_terminal_return(locked,sources,changes))
     return locked,changes
 
 
@@ -2127,17 +2131,13 @@ def _pin_terminal_return(locked, sources, changes):
         locked['terminal_return_reference']=reference
     else:
         locked.pop('terminal_return_reference',None)
-    try:
-        rates=terminal_rates(locked)
-    except (ValueError,KeyError,TypeError,AttributeError,ArithmeticError):
-        # The valuation will raise the same error for the plan to repair; a valid
-        # placeholder keeps that error the one reported.
-        rates={}
+    # Raises what the valuation would raise for an invalid plan, for repair.
+    rates=terminal_rates(locked)
     for name,scenario in scenarios.items():
         if not isinstance(scenario,dict):
             continue
-        rate=rates.get(name)
-        pinned=rate if isinstance(rate,(int,float)) and math.isfinite(rate) else MARKET_TERMINAL_ROIC
+        pinned=rates[name]
+        scenario['terminal_roic_basis']='terminal_rate'
         previous=scenario.get('terminal_roic')
         if not (isinstance(previous,(int,float)) and not isinstance(previous,bool) and abs(previous-pinned)<=1e-12):
             changes.append({'field':f'scenarios.{name}.terminal_roic','previous':previous,'pinned':pinned,'source_refs':[],
@@ -2146,8 +2146,9 @@ def _pin_terminal_return(locked, sources, changes):
         scenario['terminal_roic']=pinned
     return ['Terminal return on new capital equals the terminal discount rate (Mauboussin\'s steady state): the 10-year '
             'forecast is the competitive advantage period, after which new investment earns its cost of capital, so growth '
-            'beyond it adds no value. The convention panel shows the value with a terminal return 4 points above the '
-            'terminal rate, at the reported median ROIC capped at 15% (the earlier house rule), and at 15% and 25%.']
+            'beyond it adds no value; rate alternatives keep this. The convention panel shows the value with a terminal '
+            'return 4 points above the terminal rate, at 15% and 25%, and at the earlier house rule (the reported median '
+            'ROIC, at most 15%) where that differs from these.']
 
 
 def _history_rows(sources):
