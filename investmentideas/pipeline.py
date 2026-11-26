@@ -2062,7 +2062,7 @@ DEFAULT_WEIGHTS = {'bear': 0.0, 'base': 1.0, 'bull': 0.0}
 
 
 def terminal_return_reference(sources):
-    """Median reported return on beginning invested capital over the history, or None."""
+    """Median reported ROIC (Mauboussin and Callahan method) over the history, or None."""
     for sid,rows in _grouped_history(sources).items():
         values=[float('inf') if row.get('return_on_capital_unbounded') else row.get('return_on_invested_capital')
                 for row in rows[-5:]]

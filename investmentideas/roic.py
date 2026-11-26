@@ -58,26 +58,44 @@ INSTANTS = {
     'assets': ('Assets',),
     'current_liabilities': ('LiabilitiesCurrent',),
     'debt_current': ('DebtCurrent',),
-    'long_term_debt_current': ('LongTermDebtCurrent',),
-    'commercial_paper': ('CommercialPaper',),
+    # Home Depot and Coca-Cola tag current long-term debt with the lease-inclusive concept.
+    'long_term_debt_current': ('LongTermDebtCurrent', 'LongTermDebtAndCapitalLeaseObligationsCurrent'),
     'short_term_borrowings': ('ShortTermBorrowings',),
+    'commercial_paper': ('CommercialPaper',),
+    'other_short_term_borrowings': ('OtherShortTermBorrowings',),
     'cash': ('CashAndCashEquivalentsAtCarryingValue',),
     # The balance-sheet total where it is tagged; Microsoft's fiscal 2017 short-term
     # investments use the concept retired in 2018 (AvailableForSaleSecuritiesCurrent).
     'cash_and_short_term_investments': ('CashCashEquivalentsAndShortTermInvestments',),
     'securities_current': ('ShortTermInvestments', 'MarketableSecuritiesCurrent',
-                           'AvailableForSaleSecuritiesDebtSecuritiesCurrent', 'AvailableForSaleSecuritiesCurrent'),
-    # The balance-sheet investments line where it is tagged (Microsoft's equity
-    # investments); otherwise its parts. Never both: the parts sit inside it.
+                           'AvailableForSaleSecuritiesDebtSecuritiesCurrent', 'DebtSecuritiesCurrent',
+                           'AvailableForSaleSecuritiesCurrent', 'OtherShortTermInvestments'),
+    # Coca-Cola reports marketable securities on their own line beside its cash and
+    # short-term investments total.
+    'marketable_securities_other': ('MarketableSecurities',),
+    # Nvidia tags no current or noncurrent securities line: its balance-sheet
+    # marketable securities are the debt securities total plus marketable equity.
+    'securities_unsplit': ('AvailableForSaleSecuritiesDebtSecurities', 'DebtSecuritiesAvailableForSaleExcludingAccruedInterest'),
+    'equity_securities_marketable': ('EquitySecuritiesFvNi',),
+    # The balance-sheet investments line where it is tagged (Microsoft); otherwise
+    # noncurrent securities plus the largest of the overlapping investment lines
+    # (Alphabet's other investments contain its equity-method stakes).
     'long_term_investments': ('LongTermInvestments',),
     'securities_noncurrent': ('MarketableSecuritiesNoncurrent', 'AvailableForSaleSecuritiesDebtSecuritiesNoncurrent',
                               'AvailableForSaleSecuritiesNoncurrent'),
     'equity_method_investments': ('EquityMethodInvestments',),
     'other_long_term_investments': ('OtherLongTermInvestments',),
+    'equity_securities_nonmarketable': ('EquitySecuritiesWithoutReadilyDeterminableFairValueAmount',
+                                        'EquitySecuritiesFVNINoncurrent'),
+    # An overfunded pension is non-operating (p6); Johnson & Johnson's is $7.3 billion.
+    'pension_assets': ('DefinedBenefitPlanAssetsForPlanBenefitsNoncurrent',),
     'goodwill': ('Goodwill',),
     'intangibles': ('IntangibleAssetsNetExcludingGoodwill',),
     'intangibles_finite': ('FiniteLivedIntangibleAssetsNet',),
     'intangibles_indefinite': ('IndefiniteLivedIntangibleAssetsExcludingGoodwill',),
+    # Coca-Cola tags its indefinite-lived intangibles by kind.
+    'intangibles_trademarks': ('IndefiniteLivedTrademarks',),
+    'intangibles_franchise': ('IndefiniteLivedFranchiseRights',),
     'operating_lease_liability': ('OperatingLeaseLiability',),
 }
 RATES = {'operating_lease_rate': ('OperatingLeaseWeightedAverageDiscountRatePercent',)}
@@ -100,24 +118,41 @@ def invested_capital(row):
     # Commercial paper is part of short-term borrowings; Microsoft tags the same
     # amount under both, so only one is taken.
     short = (_amount(row, 'short_term_borrowings') if row.get('short_term_borrowings') is not None else
-             _amount(row, 'commercial_paper'))
+             _amount(row, 'commercial_paper') + _amount(row, 'other_short_term_borrowings'))
     debt = (_number(row.get('debt_current')) if row.get('debt_current') is not None else
             _amount(row, 'long_term_debt_current') + short)
-    cash = (_number(row.get('cash_and_short_term_investments')) if row.get('cash_and_short_term_investments') is not None
-            else _amount(row, 'cash') + _amount(row, 'securities_current'))
+    if row.get('cash_and_short_term_investments') is not None:
+        cash = _number(row['cash_and_short_term_investments'])
+        if row.get('securities_current') is None:
+            cash += _amount(row, 'marketable_securities_other')
+    elif row.get('securities_current') is not None or row.get('securities_noncurrent') is not None:
+        cash = _amount(row, 'cash') + _amount(row, 'securities_current')
+    else:
+        cash = (_amount(row, 'cash') + _amount(row, 'securities_unsplit') + _amount(row, 'equity_securities_marketable') +
+                _amount(row, 'marketable_securities_other'))
     excess = max(0.0, cash - OPERATING_CASH_SHARE * revenue)
-    investments = (_amount(row, 'long_term_investments') if row.get('long_term_investments') is not None else
-                   _amount(row, 'securities_noncurrent') + _amount(row, 'equity_method_investments') +
-                   _amount(row, 'other_long_term_investments'))
-    return assets - (current - debt) - excess - investments
+    if row.get('long_term_investments') is not None:
+        investments = _amount(row, 'long_term_investments')
+    else:
+        # The largest overlapping line: an investment left in errs toward lower ROIC,
+        # one counted twice could take capital below zero.
+        investments = _amount(row, 'securities_noncurrent') + max(
+            _amount(row, 'equity_method_investments'), _amount(row, 'other_long_term_investments'),
+            _amount(row, 'equity_securities_nonmarketable'))
+    return assets - (current - debt) - excess - investments - _amount(row, 'pension_assets')
 
 
 def acquired_intangibles(row):
     """Goodwill plus acquired intangibles, or None when goodwill is unreported."""
-    if row.get('goodwill') is None and row.get('intangibles') is None and row.get('intangibles_finite') is None:
+    if all(row.get(name) is None for name in ('goodwill', 'intangibles', 'intangibles_finite', 'intangibles_indefinite',
+                                              'intangibles_trademarks')):
         return None
-    other = (_amount(row, 'intangibles') if row.get('intangibles') is not None else
-             _amount(row, 'intangibles_finite') + _amount(row, 'intangibles_indefinite'))
+    if row.get('intangibles') is not None:
+        other = _amount(row, 'intangibles')
+    else:
+        indefinite = (_amount(row, 'intangibles_indefinite') if row.get('intangibles_indefinite') is not None else
+                      _amount(row, 'intangibles_trademarks') + _amount(row, 'intangibles_franchise'))
+        other = _amount(row, 'intangibles_finite') + indefinite
     return _amount(row, 'goodwill') + other
 
 
@@ -148,13 +183,12 @@ def _consecutive(earlier, later):
 def _capitalized(history, index):
     """(investment, amortization, net asset) at ``index`` from straight-line vintages, or None.
 
-    Needs every line's spending for the asset life before the year; a company that
-    reports a line in no year of the history has none (Costco's R&D).
+    Needs every line's spending for the asset life before the year. A line missing
+    from the whole history is not taken as zero: Amazon reports its technology
+    spending under its own concept, not R&D.
     """
     investment = amortization = net = 0.0
     for line, (share, life) in CAPITALIZATION.items():
-        if all(row.get(line) is None for row in history):
-            continue
         if index < life:
             return None
         window = history[index - life:index + 1]
@@ -209,7 +243,7 @@ def history(rows):
                  if operating is not None else None)
         nopat = ebita * (1 - tax_rate) if ebita is not None else None
         item = {'fiscal_year_end': row.get('fiscal_year_end'), 'ebita': ebita, 'nopat': nopat, 'ebit_basis': ebit_basis,
-                'operating_lease_interest': lease_interest, 'cash_tax_rate': tax_rate, 'cash_tax_basis': tax_basis,
+                'operating_lease_interest': lease_interest, 'nopat_tax_rate': tax_rate, 'nopat_tax_basis': tax_basis,
                 'invested_capital': capital,
                 'invested_capital_excluding_acquired': capital - acquired if capital is not None and acquired is not None else None}
         revenue = _number(row.get('revenue'))
@@ -254,4 +288,10 @@ def history(rows):
                 item['incremental_return'] = (nopat - then['nopat']) / change if change > 0 else None
                 item['incremental_capital_change'] = change
         output.append(item)
-    return output, split
+    if not split:
+        status = 'no_split'
+    elif all(row.get('research_and_development') is None for row in rows):
+        status = 'no_rnd'
+    else:
+        status = 'computed' if output and output[-1].get('adjusted_return') is not None else 'short_history'
+    return output, status

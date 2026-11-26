@@ -31,7 +31,7 @@ def year(end, **values):
 
 class MicrosoftExampleTests(unittest.TestCase):
     def setUp(self):
-        self.rows, self.split = roic.history(MICROSOFT)
+        self.rows, self.status = roic.history(MICROSOFT)
         self.by_year = {row['fiscal_year_end'][:4]: row for row in self.rows}
 
     def test_invested_capital_matches_the_paper(self):
@@ -46,7 +46,7 @@ class MicrosoftExampleTests(unittest.TestCase):
         self.assertAlmostEqual(latest['nopat'], 70e3, delta=2000)
         self.assertAlmostEqual(latest['return_on_invested_capital'], .49, delta=.015)
         self.assertAlmostEqual(latest['return_excluding_acquired'], .94, delta=.025)
-        self.assertTrue(self.split)
+        self.assertEqual(self.status, 'computed')
         self.assertAlmostEqual(latest['adjusted_return'], .34, delta=.01)
         self.assertAlmostEqual(latest['adjusted_nopat'], 80e3, delta=2000)
         self.assertAlmostEqual(latest['adjusted_invested_capital'], 260e3, delta=2000)
@@ -55,9 +55,9 @@ class MicrosoftExampleTests(unittest.TestCase):
 
     def test_cash_taxes_are_the_provision_less_deferred_tax_expense(self):
         latest = self.by_year['2022']
-        self.assertEqual(latest['cash_tax_basis'], 'cash')
+        self.assertEqual(latest['nopat_tax_basis'], 'cash')
         # Provision $10,978 million less deferred tax expense of -$5,702 million.
-        self.assertAlmostEqual(latest['cash_tax_rate'], (10978 + 5702) / 83716, delta=.002)
+        self.assertAlmostEqual(latest['nopat_tax_rate'], (10978 + 5702) / 83716, delta=.002)
 
 
 class MethodTests(unittest.TestCase):
@@ -74,6 +74,33 @@ class MethodTests(unittest.TestCase):
         # The balance-sheet investments line replaces its parts.
         self.assertEqual(roic.invested_capital(year('2024-12-31', long_term_investments=70, equity_method_investments=50)),
                          1500 - 300 - 80 - 70)
+
+    def test_securities_without_a_current_line_come_from_the_debt_total_and_marketable_equity(self):
+        # Nvidia fiscal 2026: no current securities line; debt securities plus marketable equity.
+        row = year('2024-12-31', securities_unsplit=60, equity_securities_marketable=40)
+        self.assertEqual(roic.invested_capital(row), 1500 - 300 - (200 - 20))
+        # A current line wins, and already holds the marketable equity (Meta).
+        self.assertEqual(roic.invested_capital(dict(row, securities_current=100)), 1500 - 300 - (200 - 20))
+        self.assertEqual(roic.invested_capital(dict(row, securities_current=50)), 1500 - 300 - (150 - 20))
+
+    def test_marketable_securities_beside_the_cash_total_are_excluded(self):
+        # Coca-Cola: cash and short-term investments, plus marketable securities on their own line.
+        row = year('2024-12-31', cash_and_short_term_investments=150, marketable_securities_other=30)
+        self.assertEqual(roic.invested_capital(row), 1500 - 300 - (180 - 20))
+
+    def test_overlapping_investment_lines_count_once_and_pension_surpluses_are_excluded(self):
+        row = year('2024-12-31', other_long_term_investments=70, equity_method_investments=20,
+                   securities_noncurrent=10, pension_assets=15)
+        self.assertEqual(roic.invested_capital(row), 1500 - 300 - 80 - 10 - 70 - 15)
+
+    def test_lease_inclusive_current_debt_and_other_borrowings_are_debt(self):
+        self.assertEqual(roic.invested_capital(year('2024-12-31', long_term_debt_current=40, commercial_paper=20,
+                                                    other_short_term_borrowings=5)), 1500 - (300 - 65) - 80)
+
+    def test_indefinite_intangibles_tagged_by_kind_are_acquired_intangibles(self):
+        row = year('2024-12-31', goodwill=100, intangibles_finite=5, intangibles_trademarks=60, intangibles_franchise=7)
+        self.assertEqual(roic.acquired_intangibles(row), 172)
+        self.assertEqual(roic.acquired_intangibles(dict(row, intangibles_indefinite=50)), 155)
 
     def test_roic_uses_average_capital_and_flags_capital_at_or_below_zero(self):
         rows, _ = roic.history([year('2023-12-31'), year('2024-12-31', assets=1700)])
@@ -117,23 +144,30 @@ class MethodTests(unittest.TestCase):
     def test_intangibles_need_selling_and_administrative_reported_apart(self):
         rows = [year(f'20{10 + i}-12-31', research_and_development=100, selling_general_administrative=200)
                 for i in range(9)]
-        measures, split = roic.history(rows)
-        self.assertFalse(split)
+        measures, status = roic.history(rows)
+        self.assertEqual(status, 'no_split')
         self.assertIsNone(measures[-1].get('adjusted_return'))
         rows = [dict(row, selling_and_marketing=150, general_and_administrative=50) for row in rows]
-        measures, split = roic.history(rows)
-        self.assertTrue(split)
+        measures, status = roic.history(rows)
+        self.assertEqual(status, 'computed')
         # Flat spending: investment equals amortization, so NOPAT is unchanged; the
         # balance is R&D 100 x (6+5+...+1)/6 plus S&M 105 x 1.5 plus G&A 10 x 1.5.
         latest = measures[-1]
         self.assertAlmostEqual(latest['adjusted_nopat'], latest['nopat'])
         self.assertAlmostEqual(latest['capitalized_intangibles'], 350 + 157.5 + 15)
 
+    def test_an_unreported_rnd_line_is_not_taken_as_zero(self):
+        rows = [year(f'20{10 + i}-12-31', selling_and_marketing=150, general_and_administrative=50) for i in range(9)]
+        measures, status = roic.history(rows)
+        self.assertEqual(status, 'no_rnd')
+        self.assertIsNone(measures[-1].get('adjusted_return'))
+
     def test_short_history_leaves_the_intangible_adjustment_blank(self):
         rows = [year(f'20{20 + i}-12-31', research_and_development=100, selling_and_marketing=150,
                      general_and_administrative=50) for i in range(5)]
-        measures, _ = roic.history(rows)
+        measures, status = roic.history(rows)
         self.assertIsNone(measures[-1].get('adjusted_return'))
+        self.assertEqual(status, 'short_history')
 
 
 class ExhibitTests(unittest.TestCase):
@@ -143,8 +177,8 @@ class ExhibitTests(unittest.TestCase):
                  'invested_capital': 80e9, 'average_invested_capital': 75e9, 'capital_turnover': 1.33,
                  'return_on_invested_capital': .267, 'return_on_capital_unbounded': False,
                  'return_excluding_acquired': .5, 'incremental_return': None, 'incremental_capital_change': -1e9,
-                 'cash_tax_rate': .2, 'cash_tax_basis': 'cash', 'ebit_basis': 'pretax income plus net interest expense',
-                 'intangibles_capitalized': False}]
+                 'nopat_tax_rate': .2, 'nopat_tax_basis': 'cash', 'ebit_basis': 'pretax income plus net interest expense',
+                 'intangibles_capitalization': 'no_split'}]
         for key in ('revenue_growth', 'gross_margin', 'operating_margin', 'research_and_development_to_revenue',
                     'selling_general_administrative_to_revenue', 'effective_tax_rate', 'capital_expenditure_to_revenue',
                     'depreciation_amortization_to_revenue', 'stock_compensation_to_revenue', 'repurchases', 'dividends'):
@@ -156,6 +190,9 @@ class ExhibitTests(unittest.TestCase):
         self.assertIn('| 3-year incremental ROIC | n/m (capital fell or unchanged) |', section)
         self.assertIn('EBIT is pretax income plus net interest expense', section)
         self.assertNotIn('ROIC with intangibles capitalized |', section)
+        self.assertIn('which the filings do not report apart', section)
+        self.assertIn('8.8% for Russell 3000 companies', section)
+        self.assertIn('No adjustment is made for restructuring charges', section)
 
 
 if __name__ == '__main__':

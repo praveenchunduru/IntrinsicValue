@@ -1024,7 +1024,7 @@ def _roic_inputs(gaap, period, as_of):
     return row
 
 
-ROIC_FIELDS = ('nopat', 'nopat_margin', 'ebita', 'ebit_basis', 'operating_lease_interest', 'cash_tax_rate', 'cash_tax_basis',
+ROIC_FIELDS = ('nopat', 'nopat_margin', 'ebita', 'ebit_basis', 'operating_lease_interest', 'nopat_tax_rate', 'nopat_tax_basis',
                'invested_capital', 'average_invested_capital', 'capital_turnover', 'return_on_invested_capital',
                'return_on_capital_unbounded', 'invested_capital_excluding_acquired', 'return_excluding_acquired',
                'return_excluding_acquired_unbounded', 'intangible_investment', 'intangible_amortization',
@@ -1037,13 +1037,13 @@ def _attach_roic(table, gaap, as_of):
     if not table:
         return
     periods = _fiscal_years(gaap, len(table) + ROIC_EXTRA_YEARS, as_of)
-    measures, split = roic.history([_roic_inputs(gaap, period, as_of) for period in periods])
+    measures, status = roic.history([_roic_inputs(gaap, period, as_of) for period in periods])
     by_end = {item['fiscal_year_end']: item for item in measures}
     for row in table:
         item = by_end.get(row['fiscal_year_end']) or {}
         row.update({field: item.get(field) for field in ROIC_FIELDS})
         row['return_on_capital_unbounded'] = bool(row['return_on_capital_unbounded'])
-        row['intangibles_capitalized'] = split
+        row['intangibles_capitalization'] = status
 
 
 def render_baseline(baseline, source_id=None, include_roic=True):
@@ -1110,7 +1110,7 @@ def _roic_lines(rows, ref):
     adjusted = any(row.get('adjusted_return') is not None or row.get('adjusted_return_unbounded') for row in rows)
     header = ('FY end | NOPAT | NOPAT margin | invested capital (year end) | average invested capital | capital turnover | '
               'ROIC | ROIC excluding goodwill and acquired intangibles | ' +
-              ('ROIC with intangibles capitalized | ' if adjusted else '') + '3-year incremental ROIC | cash tax rate')
+              ('ROIC with intangibles capitalized | ' if adjusted else '') + '3-year incremental ROIC | NOPAT tax rate')
     lines = ['', f'Return on invested capital{ref}, Mauboussin and Callahan method (Counterpoint Global, October 2022); '
              'computed by Python from reported values, billions of the reporting currency.', header]
     for row in rows:
@@ -1124,12 +1124,16 @@ def _roic_lines(rows, ref):
             cells.append(_return(row, 'adjusted_return'))
         cells += ['n/m (capital fell or unchanged)' if incremental is None and row.get('incremental_capital_change') is not None
                   else _pct(incremental),
-                  _pct(row.get('cash_tax_rate')) + ('' if row.get('cash_tax_basis') in (None, 'cash') else
-                                                    f' ({row["cash_tax_basis"]})')]
+                  _pct(row.get('nopat_tax_rate')) + ('' if row.get('nopat_tax_basis') in (None, 'cash') else
+                                                     f' ({row["nopat_tax_basis"]})')]
         if row.get('ebit_basis') not in (None, 'operating income'):
             cells[1] += '*'
         lines.append(' | '.join(cells))
-    capitalized = rows[-1].get('intangibles_capitalized')
+    status = rows[-1].get('intangibles_capitalization')
+    absent = {'no_split': 'the method applies separate shares to selling and marketing and to G&A, which the filings '
+                          'do not report apart',
+              'no_rnd': 'no R&D line is reported, and the method does not take a missing line as zero',
+              'short_history': 'the reported history is shorter than the six-year R&D life'}
     marked = any(row.get('ebit_basis') not in (None, 'operating income') for row in rows)
     lines += ['ROIC basis:',
               *(['- * No operating income is reported: EBIT is pretax income plus net interest expense, so other '
@@ -1147,11 +1151,13 @@ def _roic_lines(rows, ref):
               ('- With intangibles capitalized: 100% of R&D is treated as investment over six years, and 70% of selling '
                'and marketing and 20% of G&A over two years each, straight line from the year after the spending; NOPAT '
                'adds the year\'s investment less its amortization and invested capital adds the unamortized balance.'
-               if capitalized else
-               '- ROIC with intangibles capitalized is not shown: the method applies separate shares to selling and '
-               'marketing and to G&A, which the filings do not report apart.'),
-              '- For reference, the method\'s authors report a median ROIC of about 9% for Russell 3000 companies outside '
-              'financials and real estate in 2021.']
+               if adjusted else
+               '- ROIC with intangibles capitalized is not shown: ' + absent.get(status, 'the inputs are incomplete') + '.'),
+              '- No adjustment is made for restructuring charges, impairments or one-time tax items, which the paper '
+              'removes; years that contain them are shown as reported (a tax rate outside 0-50% falls back as noted).',
+              '- For reference, Mauboussin and Callahan ("ROIC and Intangible Assets", November 2022) report a median 2021 '
+              'ROIC of 8.8% for Russell 3000 companies outside financials and real estate (9.0% with intangibles '
+              'capitalized).']
     return lines
 
 

@@ -543,12 +543,22 @@ years as openings:
   interest expense, and the table marks it.
 - Invested capital is the operating approach: total assets less current liabilities
   other than debt, less cash and current securities above an operating balance of 2%
-  of revenue, less noncurrent securities and equity investments. Commercial paper
-  inside short-term borrowings is counted once.
+  of revenue, less noncurrent securities, equity investments and overfunded pensions.
+  Commercial paper inside short-term borrowings is counted once, current debt tagged
+  with the lease-inclusive concept is debt, and where no current securities line is
+  tagged (Nvidia) the debt securities total plus marketable equity stands in for it.
+  Investment lines that can nest (other investments, equity-method investments,
+  non-marketable equity) contribute only the largest, so an investment can be left in
+  capital, which lowers ROIC, but none is counted twice. Indefinite-lived trademarks and
+  franchise rights count as acquired intangibles (Coca-Cola).
+- No adjustment is made for restructuring charges, impairments or one-time tax items,
+  which the paper removes. Years that contain them are shown as reported, so
+  Microsoft's incremental ROIC for 2018-2021 differs from the paper's Exhibit 16.
 - ROIC is NOPAT over the average of opening and closing invested capital, shown with
   NOPAT margin and capital turnover, without goodwill and acquired intangibles, and
-  with internally generated intangibles capitalized where selling and marketing and
-  G&A are reported apart (100% of R&D over six years, 70% of selling and marketing and
+  with internally generated intangibles capitalized where R&D, selling and marketing
+  and G&A are all reported (a missing R&D line is not taken as zero: Amazon reports
+  technology spending under its own concept) (100% of R&D over six years, 70% of selling and marketing and
   20% of G&A over two years, straight line from the year after the spending, as the
   paper applies to Microsoft).
 - Incremental ROIC is the NOPAT change over three years over the change in invested

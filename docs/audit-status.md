@@ -511,13 +511,21 @@ less cash) gave Apple capital below zero, so its return counted as unbounded. Th
 operating approach gives Apple about $59 billion of capital in fiscal 2022 and an ROIC
 of 173% (paper: 162%). On Microsoft's filings as of 2022 the method reproduces the
 paper's example within a point or two (see underwriting.md). Across 16 companies the
-latest ROIC runs from 6% (AT&T) to 129% (Apple); Walmart 14%, Home Depot 24%, Coca-Cola
-24%, Costco 28%, Alphabet 42%, Microsoft 33%. The house terminal-return limit now reads
-this ROIC. Two data fixes came from the sweep: commercial paper tagged inside short-term
-borrowings was counted twice (Microsoft), and Microsoft's fiscal 2017 short-term
-investments use a concept retired in 2018.
+latest ROIC runs from 6% (AT&T) to 140% (Nvidia); Walmart 14%, Home Depot 22%, Coca-Cola
+23%, Costco 28%, Alphabet 42%, Microsoft 33%, Apple 129%. The house terminal-return
+limit now reads this ROIC. Data fixes from the sweep: commercial paper tagged inside
+short-term borrowings was counted twice (Microsoft), and Microsoft's fiscal 2017
+short-term investments use a concept retired in 2018.
 
-The suite has 646 offline tests.
+An independent Opus review checked the code against the paper's text and found the
+arithmetic, lags and vintages right, and seven tagging and labelling defects, all
+fixed: Nvidia's securities (ROIC 98.8% to 139.8%), Meta's and Amazon's equity
+investments, Coca-Cola's trademarks (ROIC without goodwill 36.5% to 56.5%), Home
+Depot's and Coca-Cola's current debt, Amazon's unreported R&D taken as zero, an
+undisclosed omission of unusual-item adjustments, a median ROIC note cited to the
+wrong paper, and a history field the new tax rate overwrote.
+
+The suite has 652 offline tests.
 
 ### Still open after 2026-11-14
 
