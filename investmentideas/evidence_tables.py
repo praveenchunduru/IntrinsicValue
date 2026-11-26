@@ -84,6 +84,37 @@ INSTANTS = {
     'inventory': ('InventoryNet',),
     'equity': ('StockholdersEquity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest'),
 }
+# Balance-sheet lines for invested capital (equity + debt + finance leases - cash and
+# marketable securities), from which Python computes the return on capital that
+# limits the house terminal return (owner choice, 2026-11-15). An approximation:
+# each line uses the first standard concept reported, missing lines count as zero.
+CAPITAL_INSTANTS = {
+    'long_term_debt_total': ('LongTermDebt',),
+    'long_term_debt_noncurrent': ('LongTermDebtNoncurrent',),
+    'long_term_debt_current': ('LongTermDebtCurrent',),
+    'commercial_paper': ('CommercialPaper',),
+    'finance_lease_liability': ('FinanceLeaseLiability',),
+    'finance_lease_noncurrent': ('FinanceLeaseLiabilityNoncurrent',),
+    'finance_lease_current': ('FinanceLeaseLiabilityCurrent',),
+    'cash': ('CashAndCashEquivalentsAtCarryingValue',),
+    'marketable_current': ('MarketableSecuritiesCurrent', 'ShortTermInvestments', 'AvailableForSaleSecuritiesDebtSecuritiesCurrent'),
+    'marketable_noncurrent': ('MarketableSecuritiesNoncurrent', 'AvailableForSaleSecuritiesDebtSecuritiesNoncurrent'),
+}
+STATUTORY_TAX_FALLBACK = .25
+
+
+def _invested_capital(row):
+    """Equity + debt + finance leases - cash and marketable securities, or None without equity."""
+    if not isinstance(row.get('equity'), (int, float)):
+        return None
+    def amount(name):
+        value = row.get(name)
+        return value if isinstance(value, (int, float)) else 0
+    debt = (amount('long_term_debt_total') if row.get('long_term_debt_total') is not None else
+            amount('long_term_debt_noncurrent') + amount('long_term_debt_current')) + amount('commercial_paper')
+    leases = (amount('finance_lease_liability') if row.get('finance_lease_liability') is not None else
+              amount('finance_lease_noncurrent') + amount('finance_lease_current'))
+    return row['equity'] + debt + leases - amount('cash') - amount('marketable_current') - amount('marketable_noncurrent')
 # Share counts the writer would otherwise subtract by hand: a live draft
 # (2026-11-14) stated Apple's net share reduction a thousand times too small.
 SHARES_OUTSTANDING = ('CommonStockSharesOutstanding',)
@@ -783,6 +814,8 @@ def historical_baseline(payload, years=5, as_of=None, supplement=None):
             row[name], used = _instant(gaap, options, end, currency, as_of)
             if used:
                 concepts.setdefault(name, used)
+        for name, options in CAPITAL_INSTANTS.items():
+            row[name], used = _instant(gaap, options, end, currency, as_of)
         row['shares_outstanding'], used = _share_instant(gaap, SHARES_OUTSTANDING, end, as_of)
         row['shares_outstanding_as_of'] = end if used else None
         if row['shares_outstanding'] is None and not used:
@@ -832,6 +865,16 @@ def historical_baseline(payload, years=5, as_of=None, supplement=None):
             # Growth from a negative or zero base has no meaning.
             return (_ratio(change(key), prior[key]) if prior and prior[key] is not None and prior[key] > 0
                     and row[key] is not None else None)
+        # Return on beginning invested capital: operating income after the year's
+        # effective tax rate (statutory 25% when that is missing or outside 0-50%).
+        capital = _invested_capital(row)
+        prior_capital = _invested_capital(prior) if prior else None
+        tax_rate = (_ratio(row['income_tax_expense'], pretax) if (pretax or 0) > 0 else None)
+        tax_rate = tax_rate if isinstance(tax_rate, float) and 0 <= tax_rate <= .5 else STATUTORY_TAX_FALLBACK
+        after_tax = row['operating_income'] * (1 - tax_rate) if isinstance(row['operating_income'], (int, float)) else None
+        roic = after_tax / prior_capital if after_tax is not None and prior_capital and prior_capital > 0 else None
+        item.update(invested_capital=capital, return_on_invested_capital=roic,
+                    return_on_capital_unbounded=bool(after_tax and after_tax > 0 and prior_capital is not None and prior_capital <= 0))
         item.update(
             net_share_change=change('shares_outstanding') if same_basis else None,
             operating_income_growth=growth('operating_income'),
@@ -1000,7 +1043,8 @@ def render_baseline(baseline, source_id=None):
              'FY end | revenue | growth | gross margin | operating margin | operating income growth | R&D/rev | SG&A/rev | '
              f'effective tax | capex/rev | {depreciation} | SBC/rev | buybacks (cash) | avg buyback price | dividends | '
              'diluted EPS | EPS growth | shares outstanding at FY end (millions) | change in shares outstanding (millions) | '
-             'shares repurchased (millions) | acquisitions (cash) | finance-lease additions']
+             'shares repurchased (millions) | acquisitions (cash) | finance-lease additions | invested capital | '
+             'return on invested capital']
     for row in rows:
         price = row.get('average_repurchase_price')
         eps = row.get('diluted_eps')
@@ -1022,8 +1066,14 @@ def render_baseline(baseline, source_id=None):
             'n/a' if eps is None else f'{eps:,.2f}', _pct(row.get('diluted_eps_growth')),
             shares, _shares(row.get('net_share_change'), signed=True),
             _shares(row.get('shares_repurchased')), _money(row.get('acquisitions')),
-            _money(row.get('finance_lease_additions'))]))
+            _money(row.get('finance_lease_additions')), _money(row.get('invested_capital')),
+            'n/m (capital at or below zero)' if row.get('return_on_capital_unbounded') else
+            _pct(row.get('return_on_invested_capital'))]))
     notes = _basis_notes(rows, source_id, baseline.get('supplement_source'))
+    if any(row.get('return_on_invested_capital') is not None or row.get('return_on_capital_unbounded') for row in rows):
+        notes = [*notes, 'Return on invested capital: operating income after the year\'s effective tax rate over the prior '
+                         'year-end equity plus debt and finance leases less cash and marketable securities; an approximation '
+                         'from standard concepts, missing lines counted as zero']
     if notes:
         lines.append('Basis notes:')
         lines.extend('- ' + note + '.' for note in notes)

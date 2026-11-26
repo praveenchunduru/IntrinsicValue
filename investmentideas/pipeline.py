@@ -58,8 +58,8 @@ forecast is close to consensus, say so.
 computed tables.
 (4) Management, capital allocation and financial history (about 450 words), from the reported
 history and breakdown tables; compare buybacks with house value using computed figures.
-(5) Forecast and scenarios (about 500 words): how the bear, base and bull paths start from reported
-results, what drives each, and, if the weights depart from 25/50/25, the cited basis for that. Scenario drivers are house assumptions:
+(5) Forecast and scenarios (about 500 words): how the base case (the headline, the expected path) and
+the bear and bull stress cases start from reported results and what drives each. Scenario drivers are house assumptions:
 say so, and cite a source only for the observed fact behind each. Outside estimates appear only as
 labelled unverified context.
 (6) Observations that would change the value (about 300 words), from the computed monitoring cases.
@@ -82,10 +82,10 @@ Placeholders mark where your evidence-based numbers go; nothing here is a defaul
 Start from the COMPUTED FROM REPORTED FILINGS tables: year-1 growth, gross and operating margins,
 expense levels, tax rate and capital intensity begin at the reported history and year to date, and
 each departure needs evidence in scenario_rationales.
-Use 10 forecast years, the same horizon in all scenarios. Probabilities default to 0.25 bear,
-0.50 base, 0.25 bull. A different split needs "weights_basis": evidence [S#] that makes one state
-more likely than the default; without it Python sets the default. Never cite frequencies, base
-rates or historical patterns the evidence does not contain. All rates are decimals.
+Use 10 forecast years, the same horizon in all scenarios. The base case is the headline value and
+must be written as the expected path; bear and bull are stress cases without probabilities (give
+probability 0, 1 and 0; Python sets them). Never cite frequencies, base rates or historical patterns
+the evidence does not contain. All rates are decimals.
 The RATE CONVENTION FOR THIS RUN, stated after these instructions, says whether to give
 scenario wacc and terminal_growth.
 Keep each rationale under 100 words. Do not reproduce historical actuals, cash/debt
@@ -97,8 +97,9 @@ D&A; GAAP EBIT already expenses SBC, R&D and operating rent. Do not deduct those
 again. Explicitly justify growth/margin fade, capital efficiency, tax and WACC.
 Terminal reinvestment is g/ROIC of NOPAT;
 explain a material forecast-to-terminal capital-intensity transition. Terminal return on new
-capital is a house convention that Python sets (15%, about the market's long-run return on new
-capital); the memo shows the value at the terminal discount rate and at 25% beside it.
+capital is a house convention that Python sets: 15%, about the market's long-run return on new
+capital, lowered to the company's reported median return on capital where that is lower and never
+below the terminal discount rate.
 Optional counterfactuals map names to base-scenario forecast overrides (the same horizon).
 They are separate diagnostic cases, never probability weights or reported facts; Python computes
 their values. A plausible competing market-pricing case can be included without claiming its
@@ -356,6 +357,8 @@ def _lock_and_value(candidate, state, *, apply_conventions=True, prior=None):
     if 'requested_counterfactuals' in state:
         locked['counterfactuals']=copy.deepcopy(state['requested_counterfactuals'])
     result=_evaluate(locked)
+    if apply_conventions and _floor_terminal_return(locked,result,changes):
+        result=_evaluate(locked)
     _check_continuity(locked,result,state['sources'],prior)
     if prior and 'forecast_continuity' in result:
         result['forecast_continuity']=forecast_continuity(locked,result)
@@ -1928,46 +1931,93 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
 
 
 # House conventions Python sets on every plan built under the current
-# conventions (owner choices, 2026-11-15). The plan author picked 25% terminal
-# return for both Apple and Microsoft, the largest single sensitivity in both
-# memos, and same-evidence plans differed by up to 4% from weights alone.
+# conventions (owner choices, 2026-11-26, after two Fable reviews and a check of
+# Damodaran's practice). The plan author picked 20-30% terminal returns without
+# evidence and same-evidence plans differed through invented scenario weights.
+# - Terminal return on new capital: the market's own return on new capital (about
+#   15%: what the implied premium assumes the index earns; Damodaran's January 2026
+#   data shows 15.1% for the market excluding financials) as a ceiling, lowered to
+#   the company's five-year median reported return on capital where that is lower,
+#   and never below the terminal discount rate (set after the first valuation).
+# - Headline: the base case. Bear and bull are unweighted stress cases; the engine
+#   receives probabilities 0 / 1 / 0, so every weighted figure equals the base case.
 HOUSE_TERMINAL_ROIC = .15
-DEFAULT_WEIGHTS = {'bear': .25, 'base': .50, 'bull': .25}
+DEFAULT_WEIGHTS = {'bear': 0.0, 'base': 1.0, 'bull': 0.0}
+
+
+def terminal_return_reference(sources):
+    """Median reported return on beginning invested capital over the history, or None."""
+    for sid,rows in _grouped_history(sources).items():
+        values=[float('inf') if row.get('return_on_capital_unbounded') else row.get('return_on_invested_capital')
+                for row in rows[-5:]]
+        values=[value for value in values if isinstance(value,(int,float))]
+        if len(values)>=2:
+            ordered=sorted(values)
+            middle=len(ordered)//2
+            median=ordered[middle] if len(ordered)%2 else (ordered[middle-1]+ordered[middle])/2
+            return {'median_return_on_capital':median,'years':len(values),'source_refs':[sid],
+                    'basis':'Five-year median of operating income after tax over beginning invested capital, from the '
+                            'reported history (an approximation from standard balance-sheet concepts).'}
+    return None
+
+
+def _grouped_history(sources):
+    grouped={}
+    for sid,row in _history_rows(sources):
+        grouped.setdefault(sid,[]).append(row)
+    return grouped
+
+
+def _house_terminal_return(reference):
+    median=(reference or {}).get('median_return_on_capital')
+    return min(HOUSE_TERMINAL_ROIC,median) if isinstance(median,(int,float)) and median>0 else HOUSE_TERMINAL_ROIC
 
 
 def _pin_house_conventions(locked, sources, changes):
-    """Terminal return on new capital and scenario weights follow the house rules.
-
-    Weights other than 25/50/25 stand only with a weights_basis of at least 40
-    characters citing sources in the evidence.
-    """
+    """Terminal return on new capital and the base-case headline follow the house rules."""
     notes=[]
     scenarios=locked.get('scenarios') if isinstance(locked.get('scenarios'),dict) else {}
+    reference=terminal_return_reference(sources)
+    if reference:
+        locked['terminal_return_reference']=reference
+    else:
+        locked.pop('terminal_return_reference',None)
+    target=_house_terminal_return(reference)
     moved=[]
     for name,scenario in scenarios.items():
-        if isinstance(scenario,dict) and scenario.get('terminal_roic')!=HOUSE_TERMINAL_ROIC:
+        if isinstance(scenario,dict) and scenario.get('terminal_roic')!=target:
             changes.append({'field':f'scenarios.{name}.terminal_roic','previous':scenario.get('terminal_roic'),
-                            'pinned':HOUSE_TERMINAL_ROIC,'source_refs':[],
+                            'pinned':target,'source_refs':(reference or {}).get('source_refs',[]),
                             'reason':'terminal return on new capital is the house convention'})
-            scenario['terminal_roic']=HOUSE_TERMINAL_ROIC
+            scenario['terminal_roic']=target
             moved.append(name)
     if moved:
-        notes.append(f'Terminal return on new capital is the house {HOUSE_TERMINAL_ROIC:.0%} in every scenario; the '
-                     'convention panel shows the value at the terminal discount rate and at 25%.')
-    known={source.get('id') for source in sources if isinstance(source,dict)}
-    basis=locked.get('weights_basis')
-    cited=re.findall(r'\[(S\d+)\]',basis) if isinstance(basis,str) else []
-    supported=isinstance(basis,str) and len(basis.strip())>=40 and bool(cited) and all(ref in known for ref in cited)
+        lowered=(f', lowered to the reported median return on capital of {reference["median_return_on_capital"]:.1%}'
+                 if target<HOUSE_TERMINAL_ROIC else '')
+        notes.append(f'Terminal return on new capital is the house {HOUSE_TERMINAL_ROIC:.0%} ceiling{lowered}, never below '
+                     'the terminal discount rate; the convention panel shows the value at the terminal discount rate, '
+                     '4 points above it, and at 25%.')
     weights={name:(scenarios.get(name) or {}).get('probability') for name in DEFAULT_WEIGHTS}
-    if set(scenarios)==set(DEFAULT_WEIGHTS) and not supported and any(
-            not isinstance(weights[name],(int,float)) or abs(weights[name]-DEFAULT_WEIGHTS[name])>1e-9 for name in DEFAULT_WEIGHTS):
+    # A convention, not a correction of the plan: recorded once in the notes.
+    if set(scenarios)==set(DEFAULT_WEIGHTS):
         for name,weight in DEFAULT_WEIGHTS.items():
-            changes.append({'field':f'scenarios.{name}.probability','previous':weights[name],'pinned':weight,'source_refs':[],
-                            'reason':'scenario weights default to 25/50/25 without a cited weights_basis'})
             scenarios[name]['probability']=weight
-        locked.pop('weights_basis',None)
-        notes.append('Scenario weights are the house default of 25/50/25; the plan gave no cited basis for another split.')
+    locked.pop('weights_basis',None)
+    notes.append('The base case is the headline value; bear and bull are stress cases without probabilities.')
     return notes
+
+
+def _floor_terminal_return(locked, result, changes):
+    """Raise a house terminal return below its scenario's terminal discount rate to that rate; True when changed."""
+    raised=False
+    for name,scenario in (locked.get('scenarios') or {}).items():
+        rate=((result.get('scenarios') or {}).get(name) or {}).get('terminal_rate')
+        if isinstance(rate,(int,float)) and isinstance(scenario.get('terminal_roic'),(int,float)) and scenario['terminal_roic']<rate:
+            changes.append({'field':f'scenarios.{name}.terminal_roic','previous':scenario['terminal_roic'],'pinned':rate,
+                            'source_refs':[],'reason':'the house terminal return is never below the terminal discount rate'})
+            scenario['terminal_roic']=rate
+            raised=True
+    return raised
 
 
 def _history_rows(sources):
@@ -2093,7 +2143,7 @@ def _computed_exhibits(result,currency):
     repurchases=diagnostics.get('repurchase_tests')
     if isinstance(repurchases,list) and repurchases:
         lines += ['', '### Conditional repurchase economics', '',
-            '| Case / scope | Cash spent | Price / share | Shares retired | Weighted value / remaining share | Change from original |',
+            '| Case / scope | Cash spent | Price / share | Shares retired | Headline value / remaining share | Change from original |',
             '|---|---:|---:|---:|---:|---:|']
         for row in repurchases:
             refs=row['source_refs'] if isinstance(row['source_refs'],list) else [row['source_refs']]
@@ -2106,6 +2156,18 @@ def _computed_exhibits(result,currency):
             'Historical-price tests compare with current underwriting, not historical fair value or an observed historical loss. '
             'Forward illustrations are not repurchase forecasts; the same cash is not also counted as a dividend or future FCFF distribution.']
     return lines
+
+
+def _base_headline(result):
+    """True when the base case carries the whole weight (the house convention since 2026-11-26)."""
+    scenarios=(result or {}).get('scenarios') or {}
+    return all(abs(((scenarios.get(name) or {}).get('probability') or 0)-weight)<1e-9 for name,weight in DEFAULT_WEIGHTS.items())
+
+
+def _role(name, probability, headline):
+    if headline:
+        return 'headline' if name=='base' else 'stress case'
+    return f'{probability:.0%}'
 
 
 def _scale_exhibit(plan, result, currency):
@@ -2172,7 +2234,7 @@ def valuation_section(plan, result):
     currency = result.get('currency', plan['currency'])
     lines = ['\n## Executable valuation', '',
              'The following values are recomputed by Python from the editable assumptions; forecasts are house assumptions.', '',
-             '| Scenario | Probability | Discount rate | Terminal growth | Value per share | Value / price |',
+             f'| Scenario | {"Role" if _base_headline(result) else "Probability"} | Discount rate | Terminal growth | Value per share | Value / price |',
              '|---|---:|---:|---:|---:|---:|']
     for name in ('bear','base','bull'):
         scenario, inputs = result['scenarios'][name], plan['scenarios'][name]
@@ -2180,7 +2242,7 @@ def valuation_section(plan, result):
                 abs(scenario['initial_rate']-scenario['terminal_rate'])>1e-12 else f'{scenario.get("initial_rate", inputs.get("wacc", 0)):.2%}')
         growth = scenario.get('terminal_growth', inputs.get('terminal_growth'))
         ratio = f'{scenario["value_to_price"]:.2f}' if 'value_to_price' in scenario else 'n/a'
-        lines.append(f'| {name.title()} | {inputs["probability"]:.1%} | {rate} | {growth:.2%} | {currency} {scenario["per_share_value"]:,.2f} | {ratio} |')
+        lines.append(f'| {name.title()} | {_role(name,inputs["probability"],_base_headline(result))} | {rate} | {growth:.2%} | {currency} {scenario["per_share_value"]:,.2f} | {ratio} |')
     thin=[name for name in ('bear','base','bull') if 'terminal_rate' in result['scenarios'][name] and
           result['scenarios'][name].get('terminal_spread') is not None and result['scenarios'][name]['terminal_spread']<.02]
     if thin:
@@ -2216,7 +2278,7 @@ def valuation_section(plan, result):
     if cases:
         lines += ['', '### Conditional counterfactuals', '',
                   'These change specified base-case forecasts only. Reported actuals and the equity bridge stay fixed; '
-                  'house probabilities and weighted value do not change. These are computations, not forecasts.', '',
+                  'the headline value does not change. These are computations, not forecasts.', '',
                   '| Case | Value per share | Terminal value / enterprise value |',
                   '|---|---:|---:|']
         for name,case in cases.items():
@@ -2378,7 +2440,7 @@ def _market_consistency_exhibits(result, currency):
             lines.append(f'| {name.title()} | {cell(row.get("implied_return"),"{:.2%}")} | {cell(row.get("required_return_flat_equivalent"),"{:.2%}")} | '
                          f'{cell(row.get("gap_percentage_points"),"{:.2f} pt")} | {cell(spread,"{:.2%}")}{flag} |')
         weighted=implied['probability_weighted_value']
-        lines.append(f'| Probability-weighted value | {cell(weighted.get("implied_return"),"{:.2%}")} | '
+        lines.append(f'| {"Headline (base case)" if _base_headline(result) else "Probability-weighted value"} | {cell(weighted.get("implied_return"),"{:.2%}")} | '
                      f'{cell(weighted.get("required_return_flat_equivalent"),"{:.2%}")} | {cell(weighted.get("gap_percentage_points"),"{:.2f} pt")} | |')
         lines += ['', 'The implied return is the one discount rate, applied in every year and in the terminal value, at which value '
                       'equals the price; the required return is the same calculation at the house value. This describes what the '
@@ -2419,15 +2481,19 @@ def computed_summary(plan, result):
     currency=result.get('currency') or (plan or {}).get('currency','')
     def money(value):
         return f'{currency} {value:,.2f}'
+    headline=_base_headline(result)
     lines=['## Valuation summary (computed by Python)','',
-           '| Scenario | Probability | Value per share | Value / price |','|---|---:|---:|---:|']
+           f'| Scenario | {"Role" if headline else "Probability"} | Value per share | Value / price |','|---|---:|---:|---:|']
     for name in ('bear','base','bull'):
         row=result['scenarios'][name]
         ratio=f'{row["value_to_price"]:.2f}' if 'value_to_price' in row else 'n/a'
-        lines.append(f'| {name.title()} | {row["probability"]:.0%} | {money(row["per_share_value"])} | {ratio} |')
-    weighted=result['weighted_per_share_value']
-    lines.append(f'| Weighted | 100% | {money(weighted)} | '+
-                 (f'{result["weighted_value_to_price"]:.2f} |' if 'weighted_value_to_price' in result else 'n/a |'))
+        lines.append(f'| {name.title()} | {_role(name,row["probability"],headline)} | {money(row["per_share_value"])} | {ratio} |')
+    if headline:
+        lines+=['','The base case is the headline value: the expected path. Bear and bull are stress cases without probabilities.']
+    else:
+        weighted=result['weighted_per_share_value']
+        lines.append(f'| Weighted | 100% | {money(weighted)} | '+
+                     (f'{result["weighted_value_to_price"]:.2f} |' if 'weighted_value_to_price' in result else 'n/a |'))
     dates=(plan or {}).get('input_dates',{}) if isinstance((plan or {}).get('input_dates'),dict) else {}
     quoted=((dates.get('market_price') or {}).get('observed_at') or '')[:10]
     if result.get('market_price') is not None:
@@ -2435,7 +2501,8 @@ def computed_summary(plan, result):
                 (f'; valuation date {result["valuation_date"]}.' if result.get('valuation_date') else '.')]
     implied=(result.get('implied_return_at_price') or {}).get('probability_weighted_value') or {}
     if isinstance(implied.get('implied_return'),(int,float)) and isinstance(implied.get('required_return_flat_equivalent'),(int,float)):
-        lines+=['',f'What the price implies: one flat discount rate of {implied["implied_return"]:.2%} equates the weighted value '
+        lines+=['',f'What the price implies: one flat discount rate of {implied["implied_return"]:.2%} equates the '
+                   f'{"headline" if headline else "weighted"} value '
                    f'with the price; the house cash flows at the house rate path are equivalent to '
                    f'{implied["required_return_flat_equivalent"]:.2%} (difference {implied["gap_percentage_points"]:.2f} points).']
     requirements=(result.get('price_requirements') or {}).get('rows') or []

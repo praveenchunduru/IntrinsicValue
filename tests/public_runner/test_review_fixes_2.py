@@ -659,16 +659,32 @@ class HouseConventionPinTests(unittest.TestCase):
         self.assertEqual(len(notes), 2)
         self.assertIn('scenarios.base.terminal_roic', [c['field'] for c in changes])
 
-    def test_a_cited_weights_basis_keeps_the_plans_split(self):
+    def test_the_base_case_is_the_headline_whatever_basis_the_plan_states(self):
         value = plan()
         for name, weight in (('bear', .2), ('base', .5), ('bull', .3)):
             value['scenarios'][name]['probability'] = weight
         value['weights_basis'] = 'The signed contract backlog makes the bull path more likely than the bear path [S1].'
         pipeline._pin_house_conventions(value, [{'id': 'S1'}], [])
-        self.assertEqual(value['scenarios']['bull']['probability'], .3)
-        value['weights_basis'] = 'The signed contract backlog makes the bull path more likely than the bear path [S9].'
-        pipeline._pin_house_conventions(value, [{'id': 'S1'}], [])
-        self.assertEqual(value['scenarios']['bull']['probability'], .25)
+        self.assertEqual({n: s['probability'] for n, s in value['scenarios'].items()}, {'bear': 0, 'base': 1, 'bull': 0})
+        self.assertNotIn('weights_basis', value)
+        result = valuation.evaluate(value)
+        self.assertAlmostEqual(result['weighted_per_share_value'], result['scenarios']['base']['per_share_value'])
+
+    def test_the_reported_return_lowers_the_ceiling_and_the_terminal_rate_floors_it(self):
+        rows = [{'return_on_invested_capital': r} for r in (.08, .09, .10, .07, .09)]
+        sources = [{'id': 'S2', 'data': {}, 'historical_baseline': {'rows': rows}}]
+        reference = pipeline.terminal_return_reference(sources)
+        self.assertAlmostEqual(reference['median_return_on_capital'], .09)
+        self.assertAlmostEqual(pipeline._house_terminal_return(reference), .09)
+        self.assertEqual(pipeline._house_terminal_return({'median_return_on_capital': float('inf')}), .15)
+        value = plan()
+        for scenario in value['scenarios'].values():
+            scenario['terminal_roic'] = .05
+        result = valuation.evaluate(value)
+        changes = []
+        self.assertTrue(pipeline._floor_terminal_return(value, result, changes))
+        rate = result['scenarios']['base']['terminal_rate']
+        self.assertAlmostEqual(value['scenarios']['base']['terminal_roic'], rate)
 
     def test_the_panel_shows_25_percent_beside_the_house_rule(self):
         value = plan()
