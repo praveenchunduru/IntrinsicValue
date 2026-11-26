@@ -108,6 +108,18 @@ share a 1–15 year horizon. There are two supported earnings conventions:
 | `gross_profit_less_expenses` | Each component's `growth_rates` and `gross_margins`; whole-currency expense arrays including `research_and_development` and `selling_general_administrative` | Component revenue → gross profit → expenses → EBIT → consolidated growth and EBIT margins |
 | `aggregate_ebit_margins` | Each component's `growth_rates`; explicit main-scenario `ebit_margins` | Component revenue → total revenue; consolidated EBIT uses the supplied margin path |
 
+In the full pipeline the plan gives gross-profit-mode costs as `expense_shares`
+instead of dollar arrays: for each line a share of revenue (held), or `year1`,
+`target` and `target_year` (a straight line to the target, then held), or one share
+per forecast year. Python builds the dollar arrays from each scenario's own revenue
+before validation. An R&D or SG&A line left out holds its reported share; a scenario
+with neither shares nor expenses holds every reported operating cost share, with SG&A
+as selling and marketing plus general and administrative where those are reported
+instead and the rest of reported operating expenses as `other_operating_expenses`.
+Review corrections see the built dollars back as per-year shares, so a change in
+growth carries the costs with it. Plans supplied with `--forecast-plan` may still give
+dollar arrays.
+
 In the second mode omit component gross margins and expenses: undisclosed gross
 profit and expense allocation remain unknown. Optional component
 `gross_margin_group` and `disclosure` labels explain shared assumptions; they do
@@ -160,28 +172,38 @@ Two more anchors work the same way, each with its reference computed by Python f
 the reported history, shown to the plan author and printed in the exhibits:
 
 - **Reinvestment.** Net reinvestment is capital expenditure less depreciation and
-  amortization, plus acquisitions and finance-lease additions where reported. A
-  scenario whose year-1 net reinvestment is below two thirds of the last reported figure,
-  with sales-to-capital above 1.5 times the reported three-year incremental rate, needs
-  `capital_efficiency_basis`. Businesses whose depreciation exceeds capital spending, or
-  whose revenue fell, are not checked.
-- **Cost path.** R&D and SG&A grow with revenue at about the reported ratio of their
-  growth to revenue growth (capped at one for one, with 0.25 tolerance), and final-year
-  EBIT margins stay within 5 points of the highest reported operating margin, unless
-  `cost_path_basis` cites evidence. Plans had let expenses fall to half their share of
-  revenue, raising margins in every scenario.
+  amortization, plus acquisitions and finance-lease additions where reported. Over
+  forecast years 1-3, a scenario needs `capital_efficiency_basis` when either its net
+  reinvestment is below two thirds of three years at the last reported figure, or its
+  sales-to-capital is above 1.5 times the reported three-year incremental rate.
+  Businesses whose depreciation exceeds capital spending, or whose revenue fell, are not
+  checked. Leases signed but not yet commenced are disclosed in the evidence and not
+  deducted.
+- **Final-year margin ceilings.** Bear at most the reported five-year average
+  operating margin; base and bull at most the reported five-year peak plus 5 points
+  (40% of the peak when that is smaller, with a floor of 1.5 points, as in the year-1
+  band). No citation lifts a ceiling. A business with no profitable year in the history
+  has no ceiling. Plans had let expenses fall to half their share of revenue, raising
+  margins in every scenario.
 
 ## House conventions the plan does not choose
 
 - **Terminal return on new capital is 15%** in every scenario, about the market's
-  long-run return on new capital. The convention panel shows the value at the terminal
-  discount rate (no excess return) and at 25%.
-- **Scenario weights are 25/50/25** unless `weights_basis` (at least 40 characters)
-  cites evidence in the run that makes one state more likely. Plans may not cite
-  frequencies or base rates the evidence does not contain.
+  long-run return on new capital, lowered to the median reported return on invested
+  capital over the last five years where that is lower, and never below the scenario's
+  terminal discount rate. Return on invested capital is operating income after tax
+  (effective rate, else 25%) over the prior year's equity plus debt and finance leases
+  less cash and marketable securities; a year whose capital is at or below zero counts
+  as unbounded. The convention panel shows the value at the terminal discount rate (no
+  excess return), 4 points above it, at 15% and at 25%.
+- **The base case is the headline value.** Bear and bull are stress cases without
+  probabilities; Python sets the probabilities to 0, 1 and 0 and drops any
+  `weights_basis`. The summary table labels each case's role and has no weighted row.
 
-Both are owner choices made on 2026-11-15, after same-evidence plans set terminal
-returns of 20-30% and different weights, moving value by several percent between runs.
+Owner choices: the terminal return and weights on 2026-11-15, after same-evidence plans
+set terminal returns of 20-30% and different weights, moving value by several percent
+between runs; the return limit, the headline base case, cost shares, margin ceilings
+and the three-year reinvestment window on 2026-11-26.
 
 ## Date the required-return inputs
 
@@ -321,7 +343,7 @@ observed plus one-third), holding everything else fixed.
 
 Every plan with a market price reports:
 
-- `implied_return_at_price`: for each scenario and the weighted value, the single
+- `implied_return_at_price`: for each scenario and the headline value, the single
   discount rate, applied in every year and in the terminal value, at which value
   equals the price. Beside it is the same calculation at the house value, the
   flat-equivalent required return. This describes what the price implies about the
@@ -329,8 +351,10 @@ Every plan with a market price reports:
 - `convention_panel`: base value with one convention changed at a time: the current
   rate held constant, Damodaran's terminal rate, terminal growth at the risk-free rate,
   steady-state and terminal tax at the marginal rate, a terminal return equal to the
-  terminal rate, a 15% terminal return, terminal reinvestment that continues the
-  forecast's capital efficiency, and the whole rate path one point higher and lower.
+  terminal rate, a terminal return 4 points above it, the base-case margin held at or
+  below the reported five-year peak (when the history is profitable), a 15% and a 25%
+  terminal return, terminal reinvestment that continues the forecast's capital
+  efficiency, and the whole rate path one point higher and lower.
   Rows carry no probability. The largest convention row is named; the two rate shifts
   show scale and are not ranked. Rows that need the glide appear only under it.
 - `price_requirements`: for the base case, how far one input at a time would have to

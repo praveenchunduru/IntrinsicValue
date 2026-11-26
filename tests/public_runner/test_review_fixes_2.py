@@ -839,14 +839,6 @@ class OpusChangeSetFixTests(unittest.TestCase):
         self.assertIn('Refuted in review 1', carried[('M3', 'Revenue was USD 10 billion.')])
         self.assertEqual(pipeline._carried_refutations(state, 3, {'valuation_sha256': 'new'}), {})
 
-    def test_cost_path_compares_the_same_lines_and_needs_a_material_share_fall(self):
-        lines = ['research_and_development', 'selling_general_administrative']
-        arrays = pipeline._cost_lines({'research_and_development': [1], 'sales_and_marketing': [2],
-                                       'amortization_of_intangibles': [3]}, lines)
-        self.assertEqual(arrays, [[1], [2]])
-        self.assertEqual(pipeline._cost_lines({'research_and_development': [1], 'selling_general_administrative': [2]},
-                                              ['research_and_development']), [[1]])
-
     def test_prose_checks_skip_years_mixed_units_and_policy_rates(self):
         from investmentideas import quality
         def ids(text):

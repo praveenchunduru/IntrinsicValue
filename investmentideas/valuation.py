@@ -1468,7 +1468,9 @@ def evaluate(plan):
             result['reverse_dcf']['discount_rate'] = _reverse_wacc(actuals, definitions['base'], market, calibration)
         result['implied_return_at_price'] = _implied_return(actuals, definitions, scenarios, weighted, market, discounting)
         result['price_requirements'] = _price_requirements(actuals, definitions['base'], market)
-        result['convention_panel'] = _convention_panel(actuals, definitions, scenarios, discounting)
+        peak = (plan.get('cost_path_reference') or {}).get('max_operating_margin')
+        result['convention_panel'] = _convention_panel(actuals, definitions, scenarios, discounting,
+                                                       reported_peak_margin=peak if isinstance(peak, (int, float)) else None)
     if 'beta_cross_checks' in plan:
         result['beta_cross_checks'] = _beta_cross_checks(canonical_plan, actuals, definitions['base'], scenarios['base']['per_share_value'])
     result['computed_diagnostics']['valuation_multiples'] = _valuation_multiples(plan, actuals, scenarios, market)
@@ -1656,7 +1658,7 @@ def _implied_return(actuals, definitions, scenarios, weighted, market, discounti
     return output
 
 
-def _convention_panel(actuals, definitions, scenarios, discounting):
+def _convention_panel(actuals, definitions, scenarios, discounting, reported_peak_margin=None):
     """Base-case value under one alternative convention at a time; the same rows for every plan.
 
     Rows whose terminal rate is within two points of terminal growth are reported
@@ -1701,6 +1703,15 @@ def _convention_panel(actuals, definitions, scenarios, discounting):
     add('terminal_return_equals_terminal_rate', 'Terminal return on new capital = terminal discount rate: the company earns no excess return on new investment, while the market risk premium still assumes the market does',
         {'terminal_roic': terminal}, applies=terminal >= base['terminal_growth'] and abs(base['terminal_roic'] - terminal) > 1e-9,
         reason='House terminal return already equals the terminal rate')
+    # Damodaran's levels (owner choice, 2026-11-26): a lasting excess return of 4
+    # points over the terminal cost of capital, and margins held at the best year.
+    add('terminal_return_rate_plus_4_points', 'Terminal return on new capital = terminal discount rate + 4 points: a lasting but modest excess return on new investment',
+        {'terminal_roic': terminal + .04}, applies=abs(base['terminal_roic'] - terminal - .04) > 1e-9 and terminal + .04 >= base['terminal_growth'],
+        reason='House terminal return already equals the terminal rate plus 4 points')
+    held = [min(value, reported_peak_margin) for value in base['ebit_margins']] if reported_peak_margin is not None else None
+    add('base_margin_held_at_reported_peak', 'Base-case EBIT margin never above the reported five-year peak operating margin (no expansion beyond the best reported year)',
+        {'ebit_margins': held}, applies=held is not None and reported_peak_margin > 0 and held != list(base['ebit_margins']),
+        reason='No reported margin history, or the base case never exceeds the reported peak')
     add('terminal_return_15_percent', 'Terminal return on new capital 15% (Damodaran\'s override for durable advantages, used for Apple in 2024)',
         {'terminal_roic': .15}, applies=abs(base['terminal_roic'] - .15) > 1e-9 and .15 >= base['terminal_growth'],
         reason='House terminal return is already 15%')

@@ -97,7 +97,10 @@ cost of capital, moves to market-average business risk by year 10, and sets term
 growth to the risk-free rate unless a scenario gives a company-specific reason for
 less. Present values are dated at the valuation date when the reported balance sheet
 allows it. Year-1 margins must start from the last reported results unless the plan
-cites evidence for a step. The memo reports value relative to price, the
+cites evidence for a step. Costs are shares of revenue, final-year margins have
+ceilings from the reported history, the terminal return on new capital is at most 15%,
+and the base case is the headline value with bear and bull as unweighted stress cases.
+The memo reports value relative to price, the
 discount rate the price implies beside the required return, and the value under
 alternative conventions one change at a time. It sets no entry prices, margins of
 safety or position sizes. See
@@ -105,13 +108,13 @@ safety or position sizes. See
 
 The valuation includes operating growth/margins, taxes, incremental sales-to-capital,
 terminal reinvestment at terminal ROIC, discount rates, net debt and noncommon claims,
-scenario weighting, sensitivities and a reverse DCF where a market price is available.
+bear, base and bull cases, sensitivities and a reverse DCF where a market price is available.
 Optional company-specific operating schedules derive revenue and EBIT from sourced
 starting categories and explicit forward drivers. Dated required-return inputs can
 compute WACC; sector betas, issuer return history and debt-yield proxies retain their
 different conventions and dates. Computed counterfactuals, calibration comparisons
-and monitoring thresholds show conditional value changes without altering house
-scenario weights. See the [underwriting guide](docs/underwriting.md) for schemas,
+and monitoring thresholds show conditional value changes without altering the house
+cases. See the [underwriting guide](docs/underwriting.md) for schemas,
 accounting conventions, editable plans and limits. Forecasts remain house assumptions;
 this FCFF model does not suit every sector or security and has no detailed refinancing,
 NOL or lease-adjustment schedule.

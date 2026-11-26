@@ -458,6 +458,38 @@ $4.50).
 
 None of this has been run against a paid model. The suite has 613 offline tests.
 
+### Valuation conventions from an independent review (2026-11-26)
+
+Claude Fable 5.2, at extra-high reasoning effort, reviewed four open conventions against
+Damodaran's practice and the saved Apple and Microsoft plans. By owner choice its
+package is now the house rule, with Damodaran's levels shown as panel rows:
+
+- Terminal return on new capital: 15%, lowered to the median reported return on
+  invested capital over five years where that is lower, never below the terminal
+  discount rate. The panel adds the terminal rate plus 4 points.
+- Costs: plans give R&D and SG&A as shares of revenue and Python builds the dollars;
+  a line left out holds its reported share.
+- Final-year EBIT margin ceilings with no citation exception: bear at most the
+  five-year average, base and bull at most the five-year peak plus 5 points (less for
+  low-margin businesses). The panel adds the base margin held at the peak.
+- Headline: the base case. Bear and bull are stress cases without probabilities; no
+  Monte Carlo.
+- Reinvestment: the check covers forecast years 1-3 and either a low total or a high
+  sales-to-capital sends the plan back unless a cited basis explains it. Finance-lease
+  additions stay in reinvestment; leases signed but not commenced are disclosed and not
+  deducted.
+
+On the saved plans, before they were lost, the package moved the base value from about
+$204 to $196 for Apple and from $578 to $560 for Microsoft (offline estimates against
+prices of about $356 and $524). On real SEC data the ceilings are 44.2% (bear) and
+51.8% for Microsoft, 31.3% and 38.0% for Apple, 3.6% and 5.5% for Costco, and 25.3% and
+33.7% for Coca-Cola. Microsoft's reported net reinvestment is $106 billion a year at an
+incremental sales-to-capital of 0.57, so a Microsoft plan growing revenue in the low
+teens must hold sales-to-capital near 0.7 over years 1-3 or cite evidence that capital
+spending will slow.
+
+Not run against a paid model. The suite has 626 offline tests.
+
 ### Still open after 2026-11-14
 
 - No live run has produced an approved memo. The final run's first draft drew 4 major
@@ -465,9 +497,12 @@ None of this has been run against a paid model. The suite has 613 offline tests.
 - The plan-prompt evidence-tier rule and the rubric clarification have not been run live.
 - No paid run has yet shown a first draft with no surviving major finding; replay 2 does
   so only when the later fact-check is applied offline.
-- Plan forecasts vary by up to 4% in value between runs on the same evidence.
-- The terminal return on new capital is the plan author's judgment (25% for both Apple
-  and Microsoft) and the largest single sensitivity in both memos.
+- Plan forecasts vary by up to 4% in value between runs on the same evidence; the
+  2026-11-26 review traced most of Apple's spread to revenue growth, which nothing
+  anchors yet.
+- The terminal return on new capital was the plan author's judgment (25% for both Apple
+  and Microsoft) and the largest single sensitivity in both memos; since 2026-11-26 it
+  is a house convention.
 - The reinvestment check has run live once; the value it produced for Microsoft rests
   on judgments the review accepted.
 - Gap-attribution findings (M4) recur in every Sonnet draft and did not converge in a
