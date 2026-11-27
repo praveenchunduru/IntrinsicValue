@@ -83,6 +83,15 @@ from the valuation date. Optional scenario ``terminal_tax_rate`` applies to
 steady-state years and the terminal value. Plans without these fields keep the
 original constant-rate, integer-year conventions and reproduce exactly.
 
+Exhibits beside the convention panel leave every house value unchanged: rows for
+competitive advantage periods of 5, 15 and 20 years and for Mauboussin's industry
+fade (``cap_fade``), Treasury rates 1 and 2 points higher and lower with the debt
+cost moving alike, the lowest and highest base value across an optional
+``rate_history`` ``{"source_refs": [...], "months": [["YYYY-MM-01", rf, erp], ...]}``
+that ends at the plan's own pair, and ``index_benchmark``, a stylized S&P 500
+valued under the same conventions. Plans still state 1-15 explicit years; only
+exhibit rows run to 20.
+
 When net_debt_bridge.finance_leases_included_in_net_debt is true, its debt is a
 combined total. Same-date rate inputs split that total using separately reported
 finance leases. If that split is unavailable, financial_debt must declare
@@ -104,6 +113,7 @@ import re
 from .operating import apply as apply_operating, derive_counterfactual
 from .rates import calculate_discount_rate
 from .market_beta import operating_asset_beta
+from .cap_fade import industry_fade
 
 SCENARIOS = ('bear', 'base', 'bull')
 ACTUAL_FIELDS = ('revenue', 'net_debt', 'other_equity_claims', 'shares_outstanding')
@@ -121,6 +131,17 @@ GLIDE_END_YEAR = 10
 MIN_TERMINAL_SPREAD = .01
 FRAGILE_TERMINAL_SPREAD = .02
 GROWTH_CAP_TOLERANCE = 1e-6
+# Exhibits only (owner choice 2026-11-26: the house keeps 10 forecast years). Rows
+# value other competitive-advantage periods; plans themselves still state 1-15 years.
+CAP_HORIZONS = (5, 15, 20)
+MAX_EXHIBIT_YEARS = 20
+TREASURY_SHIFTS = (-.02, -.01, .01, .02)
+MAX_RATE_HISTORY_MONTHS = 240
+# The market's long-run return on new capital that the implied premium assumes the
+# index keeps earning (Damodaran, January 2026: 15.1% excluding financials); the same
+# figure as the 15% convention row. Damodaran's monthly ERP workbook carries no index
+# earnings or return on equity, so the index benchmark uses this house figure.
+MARKET_RETURN_ON_NEW_CAPITAL = .15
 
 
 def _number(value, name):
@@ -268,15 +289,20 @@ def _validated(plan):
 
 
 def _horizon(scenario):
+    # ``steady_state_through`` (exhibit scenarios only) keeps the house model years when
+    # an exhibit shortens the forecast, so its later years become steady-state years.
     explicit = len(scenario['growth_rates'])
-    return max(explicit, GLIDE_END_YEAR) if scenario.get('convention') == GLIDE else explicit
+    floor = GLIDE_END_YEAR if scenario.get('convention') == GLIDE else 0
+    return max(explicit, floor, scenario.get('steady_state_through', 0))
 
 
 def _rate_path(scenario, *, flat=None, shift=0.0, terminal=None):
     """(annual rates, terminal rate) for a validated scenario: the one rate source.
 
     ``flat`` applies one rate in every year and the terminal value; ``shift``
-    moves the whole path; ``terminal`` replaces the glide target.
+    moves the whole path; ``terminal`` replaces the glide target. A scenario with
+    ``house_rate_path`` (exhibits that extend the forecast past year 10) keeps the
+    house path: the current rate to year 5, the glide to year 10, the terminal rate after.
     """
     horizon = _horizon(scenario)
     if flat is not None:
@@ -289,8 +315,11 @@ def _rate_path(scenario, *, flat=None, shift=0.0, terminal=None):
     initial = scenario['initial_rate'] + shift
     final = (scenario['terminal_rate'] if terminal is None else terminal) + shift
     hold = max(GLIDE_HOLD_YEARS, horizon - (GLIDE_END_YEAR - GLIDE_HOLD_YEARS))
-    span = horizon - hold
-    return [initial if year <= hold else initial + (final - initial) * (year - hold) / span
+    end = horizon
+    if scenario.get('house_rate_path') and horizon > GLIDE_END_YEAR:
+        hold, end = GLIDE_HOLD_YEARS, GLIDE_END_YEAR
+    span = end - hold
+    return [initial if year <= hold else final if year > end else initial + (final - initial) * (year - hold) / span
             for year in range(1, horizon + 1)], final
 
 
@@ -1503,6 +1532,18 @@ def evaluate(plan):
             actuals, definitions, scenarios, discounting,
             reported_peak_margin=peak if isinstance(peak, (int, float)) else None,
             reported_median_roic=median if isinstance(median, (int, float)) and math.isfinite(median) else None)
+        # Exhibits beside the convention rows: other horizons and rate regimes. They are
+        # never ranked as convention steps and leave the house value unchanged.
+        baseline = scenarios['base']['per_share_value']
+        horizon_rows, horizon_notes = _horizon_rows(actuals, definitions['base'], baseline, _bottom_up_sectors(plan))
+        regime_rows, regime_notes, history = _rate_regime_rows(actuals, definitions['base'], baseline, plan)
+        panel = result['convention_panel']
+        panel['rows'].extend(horizon_rows + regime_rows)
+        panel['exhibit_notes'] = horizon_notes + regime_notes
+        panel['exhibit_basis'] = EXHIBIT_BASIS
+        if history is not None:
+            panel['rate_history'] = history
+        result['index_benchmark'] = _index_benchmark(plan, definitions['base'], scenarios['base'].get('value_to_price'))
     if 'beta_cross_checks' in plan:
         result['beta_cross_checks'] = _beta_cross_checks(canonical_plan, actuals, definitions['base'], scenarios['base']['per_share_value'])
     result['computed_diagnostics']['valuation_multiples'] = _valuation_multiples(plan, actuals, scenarios, market)
@@ -1775,6 +1816,314 @@ def _convention_panel(actuals, definitions, scenarios, discounting, reported_pea
             'basis': 'Base scenario, one convention changed at a time from the house case; every other input fixed. '
                      'Convention rows are alternatives a careful analyst could defend; sensitivity rows show scale only and '
                      'are not ranked. These carry no probability, are not forecasts and are never tuned to the price.'}
+
+
+EXHIBIT_BASIS = (
+    'Horizon rows change only how long the forecast-end margin and capital efficiency last before new capital earns '
+    'the terminal rate (Mauboussin and Callahan, "Competitive Advantage Period", April 2026); the house horizon and '
+    'value are unchanged. Rate-regime rows hold the cash flows fixed and change the Treasury rate, with the debt cost '
+    'moving by the same amount and the premium held, or use another month\'s Treasury rate and premium pair; where '
+    'terminal growth equals the risk-free rate it moves with it. Horizon and rate-regime rows are not ranked with the '
+    'convention rows, carry no probability and are never tuned to the price.')
+
+
+def _exhibit_row(actuals, baseline, name, label, kind, scenario=None, *, reason=None, project=None, **details):
+    """One exhibit row in the convention-panel format; the house value is never changed."""
+    row = {'name': name, 'label': label, 'kind': kind, 'per_share_value': None,
+           'dollar_delta': None, 'percent_delta': None, **details}
+    if scenario is None:
+        return dict(row, status='not_applicable', reason=reason)
+    project = project or {}
+    try:
+        result = _project(actuals, scenario, **project)
+        spread = _rate_path(scenario, **project)[1] - scenario['terminal_growth']
+        row.update(per_share_value=result['per_share_value'], terminal_spread=spread,
+                   status='fragile_spread' if spread < FRAGILE_TERMINAL_SPREAD else 'calculated',
+                   **_value_change(result['per_share_value'], baseline))
+    except (ValueError, ArithmeticError, KeyError) as error:
+        row.update(status='not_calculated', reason=str(error)[:300])
+    return row
+
+
+def _extended_forecast(base, years):
+    """The base case with ``years`` explicit years on the house rate path.
+
+    The added years hold the final margin and capital efficiency (sales-to-capital is
+    one figure per scenario), and growth moves in equal steps from the final forecast
+    growth to terminal growth, which the last added year reaches.
+    """
+    explicit = len(base['growth_rates'])
+    extra = years - explicit
+    last, terminal = base['growth_rates'][-1], base['terminal_growth']
+    growth = [*base['growth_rates'], *(last + (terminal - last) * step / extra for step in range(1, extra + 1))]
+    margins = [*base['ebit_margins'], *[base['ebit_margins'][-1]] * extra]
+    return dict(base, growth_rates=growth, ebit_margins=margins, house_rate_path=True)
+
+
+def _bottom_up_sectors(plan):
+    beta = (plan.get('discount_rate') or {}).get('unlevered_beta') if isinstance(plan.get('discount_rate'), dict) else None
+    if isinstance(beta, dict) and beta.get('calculation') == 'bottom_up_sector_weighted':
+        return beta.get('sectors')
+    return None
+
+
+def _horizon_rows(actuals, base, baseline, sectors=None):
+    """Base value under other competitive-advantage periods, and under the industry fade.
+
+    The house horizon is the plan's forecast (10 years in the pipeline); after it new
+    capital earns the terminal rate (in older plans, their stated terminal return).
+    These rows change only that length. Five years
+    keeps plan years 1-5 and turns the rest into steady-state years; 15 and 20 years,
+    and the industry fade converted to years (cap_fade), extend the forecast on the
+    house rate path. The terminal return still equals the terminal rate.
+    """
+    explicit = len(base['growth_rates'])
+    glide = base.get('convention') == GLIDE
+    model_years = _horizon(base)
+    after = ('the terminal rate' if base.get('terminal_roic_follows_rate') else
+             f'the plan\'s {base["terminal_roic"]:.0%} terminal return')
+    rows, notes = [], []
+
+    def extend(years):
+        if years <= explicit:
+            return None, f'The forecast already has {explicit} explicit years'
+        if years > MAX_EXHIBIT_YEARS:
+            return None, f'Horizon rows extend the forecast to at most {MAX_EXHIBIT_YEARS} years'
+        if glide and explicit > GLIDE_END_YEAR:
+            return None, 'The forecast runs past year 10, so its rate path is not the house 10-year glide'
+        return _extended_forecast(base, years), None
+    for years in CAP_HORIZONS:
+        name = f'competitive_advantage_period_{years}_years'
+        if years < explicit:
+            shortened = dict(base, growth_rates=list(base['growth_rates'][:years]),
+                             ebit_margins=list(base['ebit_margins'][:years]), steady_state_through=model_years)
+            label = (f'Competitive advantage period of {years} years: plan years 1-{years}, then steady-state years in which '
+                     f'new capital earns {after} (house: {explicit} years)')
+            rows.append(_exhibit_row(actuals, baseline, name, label, 'horizon', shortened, horizon_years=years))
+            continue
+        scenario, reason = extend(years)
+        label = (f'Competitive advantage period of {years} years: years {explicit + 1}-{years} hold the year-{explicit} margin '
+                 f'and capital efficiency, with growth moving in equal steps to terminal growth; rate path unchanged')
+        rows.append(_exhibit_row(actuals, baseline, name, label, 'horizon', scenario, reason=reason, horizon_years=years))
+    fade = industry_fade(sectors)
+    if fade['status'] != 'mapped':
+        notes.append('No industry-fade row: ' + fade['reason'] + '.')
+        return rows, notes
+    years = explicit + fade['extension_years']
+    scenario, reason = extend(years) if fade['extension_years'] > 0 else (None, 'The fade is equivalent to no added years')
+    groups = {}
+    for item in fade['sectors']:
+        rate, weight = groups.get(item['industry_group'], (item['fade_rate'], 0.0))
+        groups[item['industry_group']] = (rate, weight + item['weight'])
+    mix = ' and '.join(f'{group} {rate:.2f}' + (f' ({weight:.0%})' if len(groups) > 1 else '')
+                       for group, (rate, weight) in groups.items())
+    label = (f'Industry fade rate from Mauboussin\'s Exhibit 25, {mix}: {fade["equivalent_years"]:.1f} more years of the '
+             f'year-{explicit} margin and capital efficiency at 1 / fade rate, {years} years in all; rate path unchanged')
+    rows.append(_exhibit_row(actuals, baseline, 'competitive_advantage_period_industry_fade', label, 'horizon', scenario,
+                             reason=reason, horizon_years=years, fade=fade))
+    return rows, notes
+
+
+def _rate_history(history):
+    """Validated monthly (date, Treasury rate, implied premium) triples, oldest first, or None."""
+    if history is None:
+        return None
+    if not isinstance(history, dict) or not _reference(history.get('source_refs')):
+        raise ValueError('rate_history needs months and source_refs')
+    months = history.get('months')
+    if not isinstance(months, list) or not 1 <= len(months) <= MAX_RATE_HISTORY_MONTHS:
+        raise ValueError(f'rate_history.months must list 1-{MAX_RATE_HISTORY_MONTHS} monthly observations')
+    output, previous = [], None
+    for item in months:
+        if not isinstance(item, list) or len(item) != 3 or not isinstance(item[0], str):
+            raise ValueError('Each rate_history month is [YYYY-MM-01, Treasury rate, implied premium]')
+        try:
+            day = date.fromisoformat(item[0])
+        except ValueError:
+            raise ValueError('rate_history dates must be YYYY-MM-01') from None
+        if day.day != 1 or day.isoformat() != item[0] or (previous is not None and day <= previous):
+            raise ValueError('rate_history dates must be distinct start-of-month dates, oldest first')
+        rf, premium = _number(item[1], 'rate_history Treasury rate'), _number(item[2], 'rate_history premium')
+        if not -.05 <= rf <= .30 or not 0 <= premium <= .40:
+            raise ValueError('rate_history rates are outside their supported ranges')
+        output.append((item[0], rf, premium))
+        previous = day
+    return output
+
+
+def _regime_case(base, spec, valuation_date, rf, premium, day=None):
+    """The base case at another Treasury rate and premium, every other rate input fixed.
+
+    The pretax debt cost moves with the Treasury rate (credit spread held). Under the
+    rate glide, terminal growth that equals the risk-free rate moves with it, a stated
+    lower rate is kept unless it would exceed the new risk-free rate, and the terminal
+    return follows the new terminal rate. A constant-rate plan keeps its terminal growth.
+    """
+    # calculate_discount_rate never alters its input, so only the changed records are copied.
+    dated = {} if day is None else {'observed_at': day}
+    trial = dict(spec, risk_free_rate=dict(spec['risk_free_rate'], value=rf, **dated),
+                 equity_risk_premium=dict(spec['equity_risk_premium'], value=premium, **dated),
+                 pretax_cost_of_debt=dict(spec['pretax_cost_of_debt'],
+                                          value=spec['pretax_cost_of_debt']['value'] + rf - spec['risk_free_rate']['value']))
+    calculation = calculate_discount_rate(trial, as_of=valuation_date)
+    scenario = dict(base)
+    if base.get('convention') != GLIDE:
+        rule = 'held: constant-rate plan'
+    else:
+        if base.get('terminal_roic_follows_rate'):
+            scenario['terminal_roic'] = calculation['terminal_wacc']
+        if base.get('terminal_growth_source') == 'risk_free_rate':
+            rule = 'equals the risk-free rate'
+        elif base['terminal_growth'] > rf + GROWTH_CAP_TOLERANCE:
+            scenario['terminal_growth'], rule = rf, 'capped at the risk-free rate'
+        else:
+            rule = 'as stated'
+    return _with_calculation(scenario, calculation), calculation, rule
+
+
+def _rate_regime_rows(actuals, base, baseline, plan):
+    """Base value with the cash flows fixed under other Treasury rates and monthly rate pairs."""
+    rows, notes, summary = [], [], None
+    spec = plan.get('discount_rate') if isinstance(plan.get('discount_rate'), dict) else None
+    hurdle = spec is not None and spec.get('basis', 'market_wacc') == 'house_hurdle'
+    glide = base.get('convention') == GLIDE
+    valuation_date = plan.get('valuation_date')
+    initial, terminal = _rate_path(base)
+    initial = initial[0]
+    for delta in TREASURY_SHIFTS:
+        name = f'treasury_rate_{"minus" if delta < 0 else "plus"}_{abs(delta) * 1e4:.0f}_bp'
+        points = f'{delta * 100:+.0f} point' + ('s' if abs(delta) > .01 + 1e-12 else '')
+        if hurdle:
+            rows.append(_exhibit_row(actuals, baseline, name, f'Treasury rate {points}', 'rate_regime',
+                                     reason='The discount rate is a house hurdle, not built from the Treasury rate'))
+            continue
+        if spec is None:
+            # Without dated rate inputs the whole path moves one for one, as in the ±1 point rows.
+            rows.append(_exhibit_row(actuals, baseline, name, f'Treasury rate {points}: whole rate path {points}, terminal '
+                                     f'growth held at {base["terminal_growth"]:.2%} (no dated rate inputs)', 'rate_regime',
+                                     dict(base), project={'shift': delta}, risk_free_change=delta))
+            continue
+        rf = spec['risk_free_rate']['value'] + delta
+        try:
+            scenario, calculation, rule = _regime_case(base, spec, valuation_date, rf, spec['equity_risk_premium']['value'])
+        except (ValueError, ArithmeticError, KeyError) as error:
+            row = _exhibit_row(actuals, baseline, name, f'Treasury rate {points} ({rf:.2%})', 'rate_regime',
+                               reason=str(error)[:300], risk_free_rate=rf)
+            rows.append(dict(row, status='not_calculated'))
+            continue
+        moved_initial = calculation['applied_wacc']
+        moved_terminal = calculation.get('terminal_wacc', moved_initial) if glide else moved_initial
+        label = (f'Treasury rate {points} ({rf:.2%}), premium and debt spread held: rate path '
+                 f'{(moved_initial - initial) * 100:+.2f} points, terminal growth {scenario["terminal_growth"]:.2%} ({rule})')
+        row = _exhibit_row(actuals, baseline, name, label, 'rate_regime', scenario, risk_free_rate=rf,
+                           initial_rate=moved_initial, terminal_rate=moved_terminal,
+                           terminal_growth=scenario['terminal_growth'], terminal_growth_rule=rule)
+        if row['per_share_value'] is not None and abs(scenario['terminal_growth'] - base['terminal_growth']) > 1e-12:
+            # Separates the rate effect from the growth effect, like the calibration comparisons.
+            try:
+                row['per_share_value_at_house_terminal_growth'] = _project(
+                    actuals, dict(scenario, terminal_growth=base['terminal_growth']))['per_share_value']
+            except (ValueError, ArithmeticError):
+                row['per_share_value_at_house_terminal_growth'] = None
+        rows.append(row)
+    history = _rate_history(plan.get('rate_history'))
+    if history is None:
+        if spec is not None and not hurdle:
+            notes.append('No monthly Treasury rate and premium history in the plan, so the ten-year range is not shown.')
+        return rows, notes, summary
+    if spec is None or hurdle:
+        notes.append('The monthly rate history needs a dated market discount rate, so the ten-year range is not shown.')
+        return rows, notes, summary
+    own = (spec['equity_risk_premium'].get('observed_at'), spec['risk_free_rate']['value'], spec['equity_risk_premium']['value'])
+    last = history[-1]
+    if last[0] != own[0] or not math.isclose(last[1], own[1], abs_tol=1e-12) or not math.isclose(last[2], own[2], abs_tol=1e-12):
+        notes.append(f'The monthly rate history ends at {last[0]}, not at the plan\'s own Treasury rate and premium '
+                     f'({own[0]}), so the ten-year range is not shown.')
+        return rows, notes, summary
+    values, failed = [], []
+    for day, rf, premium in history:
+        try:
+            scenario, calculation, _ = _regime_case(base, spec, valuation_date, rf, premium, day)
+            value = _project(actuals, scenario)['per_share_value']
+        except (ValueError, ArithmeticError, KeyError) as error:
+            failed.append({'observed_at': day, 'reason': str(error)[:200]})
+            continue
+        rate = calculation.get('terminal_wacc', calculation['applied_wacc']) if glide else calculation['applied_wacc']
+        values.append({'observed_at': day, 'risk_free_rate': rf, 'equity_risk_premium': premium, 'per_share_value': value,
+                       'initial_rate': calculation['applied_wacc'], 'terminal_rate': rate,
+                       'terminal_growth': scenario['terminal_growth'], 'terminal_spread': rate - scenario['terminal_growth']})
+    summary = {'months': len(history), 'calculated': len(values), 'first': history[0][0], 'last': history[-1][0],
+               'not_calculated': failed,
+               'basis': 'Base cash flows fixed; each month\'s Treasury rate and implied premium replace the plan\'s pair, '
+                        'the debt cost moves with the Treasury rate and the other rate inputs stay fixed.'}
+    if not values:
+        notes.append('No month of the rate history gives a valid rate path for this plan.')
+        return rows, notes, summary
+    ordered = sorted(item['per_share_value'] for item in values)
+    middle = len(ordered) // 2
+    summary['median_per_share_value'] = ordered[middle] if len(ordered) % 2 else (ordered[middle - 1] + ordered[middle]) / 2
+    for which, item in (('lowest', min(values, key=lambda item: item['per_share_value'])),
+                        ('highest', max(values, key=lambda item: item['per_share_value']))):
+        label = (f'{which.title()} base value across {len(values)} monthly Treasury rate and premium pairs, '
+                 f'{history[0][0][:7]} to {history[-1][0][:7]}: {item["observed_at"][:7]} (Treasury '
+                 f'{item["risk_free_rate"]:.2%}, premium {item["equity_risk_premium"]:.2%}, terminal growth '
+                 f'{item["terminal_growth"]:.2%})')
+        rows.append({'name': f'rate_history_{which}', 'label': label, 'kind': 'rate_regime',
+                     'per_share_value': item['per_share_value'], **_value_change(item['per_share_value'], baseline),
+                     'status': 'fragile_spread' if item['terminal_spread'] < FRAGILE_TERMINAL_SPREAD else 'calculated',
+                     **{key: item[key] for key in ('observed_at', 'risk_free_rate', 'equity_risk_premium', 'initial_rate',
+                                                    'terminal_rate', 'terminal_growth', 'terminal_spread')}})
+    return rows, notes, summary
+
+
+def _index_benchmark(plan, base, company_value_to_price):
+    """A stylized S&P 500 valued under the house conventions at the plan's own rate pair.
+
+    Damodaran's implied premium prices the index with its earnings growing at the
+    risk-free rate forever while new capital keeps earning the index's return on
+    equity. His monthly workbook (ERPbymonth.xlsx) carries the index level, Treasury
+    rate, trailing cash yield and growth, but no index earnings or return on equity,
+    so its cash flows cannot be reproduced from it. This benchmark is the steady state
+    instead: an index growing at the risk-free rate, earning the market's return on
+    new capital, priced at the premium as the premium assumes (those returns forever).
+    House value: the same economics for as many years as this plan's forecast, then
+    new capital earns the cost of capital, valued by the engine's own projection.
+    """
+    spec = plan.get('discount_rate') if isinstance(plan.get('discount_rate'), dict) else None
+    output = {'name': 'S&P 500 under the house conventions (stylized steady state)', 'value_to_price': None,
+              'company_base_value_to_price': company_value_to_price}
+    if plan.get('currency') != 'USD' or spec is None or not all(isinstance(spec.get(key), dict) for key in
+                                                                  ('risk_free_rate', 'equity_risk_premium')):
+        return dict(output, status='not_applicable',
+                    reason='Needs a US-dollar plan with a dated Treasury rate and implied equity risk premium')
+    rf, premium = spec['risk_free_rate']['value'], spec['equity_risk_premium']['value']
+    rate, growth, ret = rf + premium, rf, MARKET_RETURN_ON_NEW_CAPITAL
+    years = len(base['growth_rates'])
+    output.update(observed_at=spec['risk_free_rate'].get('observed_at'), risk_free_rate=rf, equity_risk_premium=premium,
+                  discount_rate=rate, terminal_growth=growth, market_return_on_new_capital=ret, excess_return_years=years)
+    if not (0 < premium and rate < 1 and growth < ret and -.05 <= growth):
+        return dict(output, status='not_calculated', reason='The rate pair gives no meaningful steady state')
+    margin = .1
+    index = {'convention': 'constant', 'wacc': rate, 'growth_rates': [growth] * years, 'ebit_margins': [margin] * years,
+             'tax_rate': 0.0, 'sales_to_capital': ret / ((1 + growth) * margin), 'terminal_growth': growth,
+             'terminal_roic': rate, 'terminal_roic_follows_rate': True}
+    level = {'revenue': 1.0, 'net_debt': 0.0, 'other_equity_claims': 0.0, 'shares_outstanding': 1.0}
+    try:
+        house = _project(level, index)['per_share_value']
+    except (ValueError, ArithmeticError) as error:
+        return dict(output, status='not_calculated', reason=str(error)[:300])
+    # The premium's own pricing: next year's earnings, less reinvestment of growth / return, at rate - growth.
+    price = (1 + growth) * margin * (1 - growth / ret) / (rate - growth)
+    return dict(output, status='calculated', value_to_price=house / price,
+                value_to_price_with_no_excess_return_years=(rate - growth) / (rate * (1 - growth / ret)),
+                basis=('Stylized S&P 500 at the plan\'s Treasury rate and implied premium: earnings grow at the risk-free rate, '
+                       f'new capital earns {ret:.0%} (the market\'s long-run return on new capital, as in the 15% convention '
+                       'row), and the price is the value with those returns forever, the premium\'s own assumption. The '
+                       f'house value keeps them for {years} years, then new capital earns the cost of capital (risk-free rate '
+                       'plus premium); both are discounted at that rate. Damodaran\'s monthly workbook has no index earnings '
+                       'or return on equity, so this is not a reproduction of the cash flows behind his premium. His model '
+                       'adds five years of consensus growth and uses the index\'s own return on equity; growth above the '
+                       'risk-free rate in those years, or a return on equity above this figure, puts the ratio lower.'))
 
 
 def _beta_cross_checks(plan, actuals, base, baseline):

@@ -98,7 +98,8 @@ again. Explicitly justify growth/margin fade, capital efficiency, tax and WACC.
 Terminal reinvestment is g/ROIC of NOPAT;
 explain a material forecast-to-terminal capital-intensity transition. Terminal return on new
 capital is a house convention that Python sets: the terminal discount rate (Mauboussin's steady
-state). The 10 forecast years are the competitive advantage period: excess returns on new
+state). The 10 forecast years are a house horizon, not a measured competitive advantage period
+(Python values 5, 15 and 20 years and the industry fade beside it): excess returns on new
 investment come only from the forecast years' growth and capital efficiency, and after year 10
 growth adds no value.
 Optional counterfactuals map names to base-scenario forecast overrides (the same horizon).
@@ -1575,6 +1576,9 @@ def _pin_market_conventions(locked, sources, reported, valuation_day, changes):
     table=_calibration_source(sources,dataset='damodaran_us_sector_betas')
     regression=_calibration_source(sources,kind='historical_equity_beta')
     notes=[]
+    # Python's own copy of the premium's monthly history, set again below only when the
+    # plan's Treasury rate and premium are pinned from that same source.
+    locked.pop('rate_history',None)
     if 'discount_rate' in locked and locked['discount_rate'] is None:
         record('discount_rate',None,'omitted','an explicit null discount rate is treated as absent')
         locked.pop('discount_rate')
@@ -1609,6 +1613,12 @@ def _pin_market_conventions(locked, sources, reported, valuation_day, changes):
                 record(f'discount_rate.{key}',{k:current.get(k) for k in ('value','observed_at')},
                        {'value':pinned['value'],'observed_at':pinned['observed_at']},'pinned from the implied premium source')
             rate[key]=pinned
+        # The rate-regime exhibit values the same cash flows at each month's pair.
+        history=erp.get('monthly_history')
+        if isinstance(history,list) and history:
+            locked['rate_history']={'dataset':data.get('dataset'),'method':data.get('method'),'source_refs':[erp['id']],
+                                    'months':copy.deepcopy(history),
+                                    'basis':erp.get('monthly_history_basis') or 'Monthly Treasury rate and implied premium pairs.'}
     marginal=(rate.get('marginal_tax_rate') or {}).get('value') if isinstance(rate.get('marginal_tax_rate'),dict) else None
     if locked.get('currency')=='USD' and isinstance(marginal,(int,float)) and marginal<.21:
         raise ValueError(f'discount_rate.marginal_tax_rate {marginal:.1%} is below the 21% US federal statutory rate. The '
@@ -2055,7 +2065,8 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
 # same-evidence plans differed through invented scenario weights.
 # - Terminal return on new capital: the terminal discount rate (owner choice,
 #   2026-11-26, "follow Mauboussin"). Mauboussin's steady state: the 10-year
-#   forecast is the competitive advantage period, and afterwards new investment
+#   forecast is the house horizon for excess returns (his competitive advantage
+#   period is company-specific; the panel shows others), and afterwards new investment
 #   earns its cost of capital, so the continuing value is year-11 NOPAT over the
 #   terminal cost of capital whatever the terminal growth (Mauboussin and
 #   Callahan, "Return on Invested Capital", 2022, Appendix A; "Market-Expected
@@ -2145,10 +2156,11 @@ def _pin_terminal_return(locked, sources, changes):
                                      'Mauboussin\'s steady state)'})
         scenario['terminal_roic']=pinned
     return ['Terminal return on new capital equals the terminal discount rate (Mauboussin\'s steady state): the 10-year '
-            'forecast is the competitive advantage period, after which new investment earns its cost of capital, so growth '
+            'forecast is the house horizon for excess returns, after which new investment earns its cost of capital, so growth '
             'beyond it adds no value; rate alternatives keep this. The convention panel shows the value with a terminal '
             'return 4 points above the terminal rate, at 15% and 25%, and at the earlier house rule (the reported median '
-            'ROIC, at most 15%) where that differs from these.']
+            'ROIC, at most 15%) where that differs from these, and with horizons of 5, 15 and 20 years and at Mauboussin\'s '
+            'industry fade rate where the industry mapping has one.']
 
 
 def _history_rows(sources):
@@ -2230,7 +2242,7 @@ def _validate_plan_sources(plan, sources):
             for index, entry in enumerate(value):
                 nested_refs(entry, path + '.' + str(index))
     for field in ('operating_model', 'discount_rate', 'monitoring', 'calibration_comparisons',
-                  'counterfactuals','entry_policy','repurchase_tests'):
+                  'counterfactuals','entry_policy','repurchase_tests','rate_history'):
         if field in plan:
             nested_refs(plan[field], field)
     bridge = plan.get('net_debt_bridge')
@@ -2585,13 +2597,24 @@ def _market_consistency_exhibits(result, currency):
     if panel:
         lines += ['', '### Value under alternative conventions (base case, one change at a time)', '',
                   '| Alternative | Value per share | Change | Status |', '|---|---:|---:|---|']
+        kinds={'sensitivity':' (sensitivity)','horizon':' (horizon)','rate_regime':' (rate regime)'}
         for row in panel['rows']:
             value=f'{currency} {row["per_share_value"]:,.2f}' if row.get('per_share_value') is not None else '—'
             change=f'{row["dollar_delta"]:+,.2f}' if row.get('dollar_delta') is not None else '—'
-            status=row['status'].replace('_',' ')+(' (sensitivity)' if row.get('kind')=='sensitivity' else '')
+            status=row['status'].replace('_',' ')+kinds.get(row.get('kind'),'')
             lines.append(f'| {row["label"]} | {value} | {change} | {status} |')
         if panel.get('largest_meaningful_step'):
             lines += ['', f'Largest convention step: {panel["largest_meaningful_step"].replace("_"," ")}. Rows carry no probability and are never tuned to the price.']
+        if panel.get('exhibit_basis') and any(row.get('kind') in ('horizon','rate_regime') for row in panel['rows']):
+            lines += ['', panel['exhibit_basis']]
+        history=panel.get('rate_history') or {}
+        if isinstance(history.get('median_per_share_value'),(int,float)):
+            lines += ['', f'Across the {history["calculated"]} monthly pairs from {history["first"][:7]} to {history["last"][:7]} the '
+                          f'median base value is {currency} {history["median_per_share_value"]:,.2f}'+
+                          (f'; {len(history["not_calculated"])} months give no valid rate path' if history.get('not_calculated') else '')+'.']
+        notes=panel.get('exhibit_notes') or []
+        if notes:
+            lines += ['']+[f'- {note}' for note in notes]
     checks=result.get('beta_cross_checks') or []
     if checks:
         lines += ['', '| Beta cross-check | Unlevered beta | Initial discount rate | Base value | Change |', '|---|---:|---:|---:|---:|']
@@ -2623,17 +2646,30 @@ def computed_summary(plan, result):
         row=result['scenarios'][name]
         ratio=f'{row["value_to_price"]:.2f}' if 'value_to_price' in row else 'n/a'
         lines.append(f'| {name.title()} | {_role(name,row["probability"],headline)} | {money(row["per_share_value"])} | {ratio} |')
-    if headline:
-        lines+=['','The base case is the headline value: the expected path. Bear and bull are stress cases without probabilities.']
-    else:
+    if not headline:
         weighted=result['weighted_per_share_value']
         lines.append(f'| Weighted | 100% | {money(weighted)} | '+
                      (f'{result["weighted_value_to_price"]:.2f} |' if 'weighted_value_to_price' in result else 'n/a |'))
+    # The index under the same conventions, so the ratio is read against it and not
+    # only against 1.00 (the house pairing values the index itself below its price).
+    benchmark=result.get('index_benchmark') or {}
+    if isinstance(benchmark.get('value_to_price'),(int,float)):
+        lines.append(f'| S&P 500 under the same conventions | index benchmark | — | {benchmark["value_to_price"]:.2f} |')
+    if headline:
+        lines+=['','The base case is the headline value: the expected path. Bear and bull are stress cases without probabilities.']
     dates=(plan or {}).get('input_dates',{}) if isinstance((plan or {}).get('input_dates'),dict) else {}
     quoted=((dates.get('market_price') or {}).get('observed_at') or '')[:10]
     if result.get('market_price') is not None:
         lines+=['',f'Price {money(result["market_price"])}'+(f', observed {quoted}' if quoted else '')+
                 (f'; valuation date {result["valuation_date"]}.' if result.get('valuation_date') else '.')]
+    if isinstance(benchmark.get('value_to_price'),(int,float)):
+        lines+=['',f'Index benchmark: a stylized S&P 500 at the {benchmark["observed_at"]} Treasury rate of '
+                   f'{benchmark["risk_free_rate"]:.2%} and implied premium of {benchmark["equity_risk_premium"]:.2%} is worth '
+                   f'{benchmark["value_to_price"]:.2f} of its price under these conventions: new capital earns '
+                   f'{benchmark["market_return_on_new_capital"]:.0%} for {benchmark["excess_return_years"]} years and then its '
+                   f'cost, where the premium assumes {benchmark["market_return_on_new_capital"]:.0%} forever. It is a steady '
+                   'state, not a reproduction of Damodaran\'s cash flows: those add five years of consensus growth and need '
+                   'the index\'s earnings and return on equity, which his monthly workbook does not carry.']
     implied=(result.get('implied_return_at_price') or {}).get('probability_weighted_value') or {}
     if isinstance(implied.get('implied_return'),(int,float)) and isinstance(implied.get('required_return_flat_equivalent'),(int,float)):
         lines+=['',f'What the price implies: one flat discount rate of {implied["implied_return"]:.2%} equates the '
