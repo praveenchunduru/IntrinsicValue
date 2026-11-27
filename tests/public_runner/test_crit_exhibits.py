@@ -407,8 +407,8 @@ class PipelineTests(unittest.TestCase):
         ratio = result['index_benchmark']['value_to_price']
         # Changed 2026-11-27 (memo redesign): the index's basis is a method note.
         # Changed again 2026-11-27 (readability review): each ratio sits beside the index ratio.
-        self.assertIn(f'| Relative to the S&P 500 at {ratio:.2f} |', summary)
-        self.assertIn(f'values the S&P 500 at {ratio:.2f} of its price', summary)
+        self.assertIn(f'| Relative to the stylized S&P 500 benchmark at {ratio:.2f} |', summary)
+        self.assertIn(f'values a stylized S&P 500 benchmark at {ratio:.2f} of its constructed benchmark price', summary)
         panel = pipeline.valuation_section(value, result)
         self.assertIn('The S&P 500 ratio values a stylized index discounted at the 2026-03-01 Treasury rate of 4.50%', panel)
         # Changed again 2026-11-27 (readability review): one sensitivity table holds horizons and rate regimes.

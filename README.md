@@ -42,7 +42,7 @@ The rules follow best practice from leading investors and valuation experts.
 - **Growth:** paid for with reinvestment. R&D counts as investment.
 - **Terminal value:** new investment earns its cost of capital. Growth equals the risk-free rate.
 - **Cases:** the base case is the headline. Bear and bull are unweighted stress cases.
-- **Benchmark:** the S&P 500 values at about 0.80 of its price under the same rules (November 2026).
+- **Benchmark:** a stylized S&P 500 values at about 0.80 of its price under the same rules (November 2026).
 - **Review:** a model from a different lab checks the memo against the evidence.
 
 More: [method](docs/underwriting.md) · [commands and outputs](docs/reference.md) · [audit record](docs/audit-status.md)

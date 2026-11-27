@@ -3848,7 +3848,9 @@ def _exit_multiple_line(result):
         return text+f', because after year {year} the method lets new capital earn only its cost.'
     roic,rate=base.get('terminal_roic_applied'),base.get('terminal_rate')
     if _finite_number(roic) and _finite_number(rate):
-        return text+f'; after year {year}, new capital earns {memo_style.pct(roic)} against a {memo_style.pct(rate)} discount rate.'
+        shown=memo_style.pct(rate)
+        article='an' if shown.startswith(('8','11','18')) else 'a'
+        return text+f'; after year {year}, new capital earns {memo_style.pct(roic)} against {article} {shown} discount rate.'
     return text+'.'
 
 
@@ -3922,14 +3924,16 @@ def computed_summary(plan, result, brief=None, sources=()):
                    (f', a value / price of {_ratio_text(ratio)}' if _finite_number(ratio) else ''))
     sentence+='.'
     if index and _finite_number(ratio):
-        sentence+=(f' The same method values the S&P 500 at {index:.2f} of its price, which puts the '
-                   f'{"base case" if headline else "weighted value"} at {ratio/index:.2f} times the index ratio.')
+        # A stylized index against a constructed price; no observed index price is used (Walmart review, 2026-11-27).
+        sentence+=(f' The same method values a stylized S&P 500 benchmark at {index:.2f} of its constructed benchmark '
+                   f'price, which puts the {"base case" if headline else "weighted value"} at {ratio/index:.2f} times '
+                   'the benchmark.')
 
     lead+=['',sentence]
     if brief:
         lead+=['',brief.strip()]
     lead+=['']
-    relative=f'Relative to the S&P 500 at {index:.2f}' if index else None
+    relative=f'Relative to the stylized S&P 500 benchmark at {index:.2f}' if index else None
     header=(['Scenario']+([] if headline else ['Probability'])+[f'Value per share ({style.unit("")})','Value / price']+
             ([relative] if relative else []))
     rows=[]
@@ -4276,8 +4280,9 @@ def _stale_bridge_rows(plan, result, style, sources, scale, decimals):
     if _finite_number(first.get('fcff')) and _finite_number(stub) and stub>0:
         earned=first['fcff']*stub
         each=(f', {"-" if earned<0 else ""}{style.price(abs(earned/shares))} a share' if _finite_number(shares) and shares else '')
-        rows.append(['Free cash flow since then, left out',memo_style.scaled(earned,scale,decimals),
-                     f'the elapsed {stub:.0%} of year-1 free cash flow{each}; in neither the cash flows nor the bridge'])
+        rows.append(['Forecast year-1 free cash flow for the elapsed period, left out',memo_style.scaled(earned,scale,decimals),
+                     f'{stub:.0%} of forecast year-1 free cash flow{each}; in neither the cash flows nor the bridge. '
+                     'Cash actually generated since the balance-sheet date is not reconciled'])
     for label,later,date,bridge,source_id in _later_balances(plan,sources,anchor,when,base.get('shares_outstanding')):
         cite=_cite(source_id) if source_id else ''
         if label=='shares':
@@ -4991,7 +4996,9 @@ def _continuity_parts(result, style, history_rows=None):
         if on_net:
             history=(f'{memo_style.scaled(over,scale,decimals)} over {span}'+
                      (f' ({memo_style.scaled(latest,scale,decimals)} in {last})' if _finite_number(latest) else '')+', computed')
-            ratio=f'{capex_ratio:.2f} over {span}, computed'
+            ratio=(f'{capex_ratio:.2f} on net reinvestment'+
+                   (f'; {capital_ratio:.2f} on the change in invested capital' if _finite_number(capital_ratio) else '')+
+                   f'; over {span}, computed')
         elif _finite_number(capital_change):
             history=f'{memo_style.scaled(capital_change,scale,decimals)} over {span}, change in invested capital, computed'
             ratio=(f'{capital_ratio:.2f} over {span}, on the change in invested capital, computed' if _finite_number(capital_ratio)
@@ -5092,11 +5099,11 @@ def _rate_line(result, style):
         applied=calculation.get('applied_wacc')
         return f'Discount rate: {memo_style.pct(applied)} in every year.' if _finite_number(applied) else None
     shown=[memo_style.pct(rate) for rate in path]
-    held=next((index for index,text in enumerate(shown) if text!=shown[0]),len(shown))
+    held=next((index for index,rate in enumerate(path) if abs(rate-path[0])>1e-9),len(path))
     if held==len(shown):
         text=f'Discount rate: {shown[0]} in every forecast year'
     elif held>1:
-        text=f'Discount rate: {shown[0]} in years 1 to {held}, moving to {shown[-1]} by year {len(shown)}'
+        text=f'Discount rate: {shown[0]} in years 1 to {held}, moving from year {held+1} to {shown[-1]} by year {len(shown)}'
     else:
         text=f'Discount rate: {shown[0]} in year 1, moving to {shown[-1]} by year {len(shown)}'
     if _finite_number(terminal):
@@ -5392,7 +5399,9 @@ def _exit_parts(result, style):
     year=((next(iter(multiples.get('scenarios',{}).values()),{}).get('original_dcf_exit') or {}).get('period') or {}).get('model_year',10)
     out=['','### Entry and exit multiples','',
          'EBIT multiples and the annual return at today\'s price under two exits: the base method\'s terminal value, and '
-         'the market\'s entry multiple applied to year-'+str(year)+' EBIT.','']
+         'the market\'s entry multiple applied to year-'+str(year)+' EBIT. Each return is on a conditional cash stream: '
+         'net debt and other claims are settled at the start, each year\'s free cash flow to the firm is paid out, and the '
+         'stated exit applies in year '+str(year)+'. Neither column forecasts what shareholders will earn.','']
     out+=_table(['Scenario','Market EV / year-1 EBIT',f'Terminal value / year-{year} EBIT','Return at the terminal value',
                  'Return at the entry multiple'],rows)
     return out,notes

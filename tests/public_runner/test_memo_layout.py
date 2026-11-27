@@ -59,9 +59,12 @@ class FirstPageTests(unittest.TestCase):
         memo, _, result = rendered()
         index = result['index_benchmark']['value_to_price']
         base = result['scenarios']['base']['value_to_price']
-        self.assertIn(f'The same method values the S&P 500 at {index:.2f} of its price', memo)
-        self.assertIn(f'| Relative to the S&P 500 at {index:.2f} |', memo)
-        self.assertIn(f'at {base / index:.2f} times the index ratio', memo)
+        self.assertIn(f'The same method values a stylized S&P 500 benchmark at {index:.2f} of its constructed benchmark price', memo)
+        self.assertIn(f'| Relative to the stylized S&P 500 benchmark at {index:.2f} |', memo)
+        self.assertIn(f'at {base / index:.2f} times the benchmark.', memo)
+        # The benchmark is stylized and its price constructed; the memo never calls it the index's own price.
+        self.assertIn('a stylized S&P 500 benchmark', memo)
+        self.assertNotIn('values the S&P 500 at', memo)
         self.assertNotIn('(stylized)', memo.split('## 1.')[0])
 
     def test_exit_multiple_is_computed_from_the_run_or_left_out(self):
@@ -149,7 +152,8 @@ class AppendixTests(unittest.TestCase):
         rows = pipeline._stale_bridge_rows(value, result, style, SOURCES, 1e9, 1)
         self.assertEqual(rows[0][:2], ['Balance-sheet date', '2025-12-31'])
         self.assertIn('331 days before the valuation date', rows[0][2])
-        self.assertTrue(any(row[0] == 'Free cash flow since then, left out' for row in rows))
+        self.assertTrue(any(row[0] == 'Forecast year-1 free cash flow for the elapsed period, left out' and
+                            'not reconciled' in row[2] for row in rows))
         timing.update(elapsed_days=40)
         self.assertEqual(pipeline._stale_bridge_rows(value, result, style, SOURCES, 1e9, 1), [])
 
@@ -282,6 +286,24 @@ class SavedRunLayoutTests(unittest.TestCase):
                 self.assertNotIn('does not apply', memo + document)
                 self.assertIn('## Run record', document)
 
+
+class RateLineTests(unittest.TestCase):
+    """The year the discount rate starts to move comes from the unrounded path (Walmart review, 2026-11-27)."""
+
+    def line(self, path, terminal=None):
+        result = {'discounting': {'base_rate_path': path, 'terminal_rate': terminal if terminal is not None else path[-1]}}
+        return pipeline._rate_line(result, pipeline.memo_style.Style('USD'))
+
+    def test_a_move_too_small_to_show_is_still_dated_to_its_year(self):
+        # Year 6 moves from 8.46% to 8.49%: both print as 8.5%, and the rate is held only through year 5.
+        path = [0.0846] * 5 + [0.0849, 0.0858, 0.0868, 0.0877, 0.0884]
+        line = self.line(path)
+        self.assertIn('8.5% in years 1 to 5, moving from year 6 to 8.8% by year 10', line)
+        self.assertNotIn('years 1 to 6', line)
+
+    def test_a_flat_path_and_an_immediate_move(self):
+        self.assertIn('8.5% in every forecast year', self.line([0.085] * 10))
+        self.assertIn('8.5% in year 1, moving to 9.0% by year 10', self.line([0.085 + 0.0005 * year for year in range(10)] [:9] + [0.09]))
 
 if __name__ == '__main__':
     unittest.main()
