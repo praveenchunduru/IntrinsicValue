@@ -406,7 +406,7 @@ class PipelineTests(unittest.TestCase):
         summary = pipeline.computed_summary(value, result)
         ratio = result['index_benchmark']['value_to_price']
         # Changed 2026-11-27 (memo redesign): the index's basis is a method note.
-        self.assertIn(f'| S&P 500, stylized at the risk-free rate plus the premium |  |  | {ratio:.2f} |', summary)
+        self.assertIn(f'| S&P 500 valued under the same house conventions (stylized) |  |  | {ratio:.2f} |', summary)
         self.assertLess(summary.index('| Weighted |'), summary.index('| S&P 500'))
         panel = pipeline.valuation_section(value, result)
         self.assertIn('The S&P 500 row is a stylized index discounted at the 2026-03-01 Treasury rate of 4.50%', panel)

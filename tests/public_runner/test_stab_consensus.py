@@ -555,11 +555,12 @@ class ReaderTests(unittest.TestCase):
     def test_first_page_sentence_in_the_memo_number_style(self):
         style = pipeline.memo_style.Style('USD')
         self.assertEqual(consensus.first_page_sentence(self.record(), style),
-                         'The base case averages three samples of the same forecast request; their values ranged '
-                         'from $354 to $398.')
+                         'The base case combines three samples of the same forecast request, input by input; the '
+                         'samples\' own values ranged from $354 to $398.')
         edited = consensus.first_page_sentence(self.record(edited_after_consensus=True), style)
         self.assertEqual(edited, 'The forecast began as the average of three samples of the same forecast request, '
-                                 'valued at $354 to $398, and was revised after review.')
+                                 'input by input; the samples\' own values ranged from $354 to $398, and the forecast '
+                                 'was revised after review.')
         for record in (None, self.record(plan_used='representative_sample_fallback'),
                        self.record(plan_used='single_valid_sample', structure_decision={'group': [1]})):
             self.assertIsNone(consensus.first_page_sentence(record, style))
@@ -573,8 +574,8 @@ class ReaderTests(unittest.TestCase):
         self.assertIn('Segment growth, gross margins, expense shares, sales-to-capital and tax rates are averaged', notes[0])
         self.assertIn('industry weights behind the beta take the median', notes[0])
         self.assertIn('One of the four samples requested failed validation', notes[0])
-        self.assertIn('come from sample 2, the one closest to the per-year median revenue and EBIT paths, whose own base '
-                      'value was $388 against $371 for the combined plan.', notes[0])
+        self.assertIn('come from sample 2, the one closest to the per-year median revenue and EBIT paths. Its own base '
+                      'value was $388, against $371 for the combined plan.', notes[0])
         self.assertIn('$354 to $398 a share', notes[0])
         self.assertEqual(consensus.method_notes(None, style), [])
         self.assertEqual(consensus.method_notes({'requested_samples': 1}, style), [])
@@ -592,8 +593,8 @@ class CorrectionTests(unittest.TestCase):
         folder, state = self.run_plan(Transport([taxed(.20), taxed(.22), taxed(.30)]), 3)
         plan, result = state['plan'], state['valuation']
         summary = pipeline.computed_summary(plan, result)
-        self.assertIn('The base case averages three samples of the same forecast request; their values ranged from',
-                      summary)
+        self.assertIn('The base case combines three samples of the same forecast request, input by input; the samples\' '
+                      'own values ranged from', summary)
         corrected = copy.deepcopy(plan)
         corrected['scenarios']['base']['tax_rate'] = .27
         value = pipeline._evaluate(corrected)
@@ -602,7 +603,7 @@ class CorrectionTests(unittest.TestCase):
         self.assertTrue(record['edited_after_consensus'])
         self.assertAlmostEqual(record['current_values']['base'], value['scenarios']['base']['per_share_value'])
         text = pipeline.computed_summary(corrected, value)
-        self.assertIn('and was revised after review.', text)
+        self.assertIn('and the forecast was revised after review.', text)
         self.assertNotIn('their values ranged from', text)
         memo = pipeline._render('# Prose\nText [S1].\n', state['sources'], [], corrected, value, state)
         self.assertIn('**Forecast samples**', memo)
@@ -652,21 +653,30 @@ class AuditTextTests(unittest.TestCase):
     def test_the_left_out_sample_names_its_difference_and_its_value(self):
         _, record = self.coca_cola()
         note = consensus.method_notes(record, self.style)[0]
-        self.assertIn('Sample 3 modelled gross profit less expenses by segment (concentrate operations and finished '
+        self.assertIn('Sample 3 modelled gross profit less expenses by revenue line (concentrate operations and finished '
                       'product operations), gave $45.5, and was left out.', note)
         self.assertNotIn('segments or horizon', note)
         self.assertEqual(consensus.first_page_sentence(record, self.style),
-                         'The base case averages two samples of the same forecast request; their values ranged from '
-                         '$42.7 to $42.9; a third, structured differently, gave $45.5 and was left out.')
+                         'The base case combines two samples of the same forecast request, input by input; the samples\' '
+                         'own values ranged from $42.7 to $42.9; a third, structured differently, gave $45.5 and was left out.')
 
     def test_two_samples_tie_and_the_lower_number_is_used_and_named(self):
         plan, record = self.coca_cola()
         self.assertEqual(record['representative_sample'], 1)
         note = consensus.method_notes(record, self.style)[0]
-        self.assertIn('Samples 1 and 2 tied for closest to the per-year median revenue and EBIT paths; the rationales and '
-                      'named cases come from sample 1, whose own base value was $42.7 against $42.9 for the combined plan.',
-                      note)
+        # Changed 2026-11-27 (re-audit): two samples are equally close by construction.
+        self.assertIn('With two samples both are equally close to the median; sample 1 supplied the rationales and named '
+                      'cases. Its own base value was $42.7, against $42.9 for the combined plan.', note)
         self.assertNotIn('written independently', note)
+
+    def test_basis_donors_reach_the_saved_record_and_the_note(self):
+        # A basis taken from another sample is named (re-audit, 2026-11-27): GOOGL's capital-efficiency basis is sample 3's.
+        plan, record = self.coca_cola()
+        report = {'basis_donors': {'capital_efficiency_basis': {'bear': [3], 'base': [3], 'bull': [3]}}, 'samples': []}
+        self.assertIn('basis_donors', consensus.summary(dict(record, **report)))
+        saved = {key: value for key, value in record.items() if key != 'basis_donors'}
+        note = consensus.method_notes(consensus.enrich(saved, report), self.style)[0]
+        self.assertIn('The capital-efficiency basis comes from sample 3.', note)
 
     def test_the_structure_choice_does_not_depend_on_sample_order(self):
         plans = [consolidated(growth=.04), proposal(), consolidated(growth=.06)]

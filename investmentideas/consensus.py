@@ -884,7 +884,7 @@ def summary(report):
     """The part of a consensus report saved with the valuation and read by the memo."""
     keys = ('method', 'sector_weight_method', 'requested_samples', 'sample_count', 'plan_used', 'representative_sample',
             'structure_decision', 'consensus_values', 'sample_value_range', 'dropped', 'fallback',
-            'bases_from_other_samples', 'plan_fingerprint', 'combine_error', 'notes')
+            'bases_from_other_samples', 'basis_donors', 'plan_fingerprint', 'combine_error', 'notes')
     record = {key: copy.deepcopy(report[key]) for key in keys if key in report}
     record['samples'] = [{key: copy.deepcopy(row.get(key)) for key in
                           ('sample', 'values', 'in_consensus', 'structure', 'distance_to_median_paths')}
@@ -907,6 +907,8 @@ def enrich(record, report):
         for key in ('structure', 'distance_to_median_paths'):
             if row.get(key) is None and (full.get(row.get('sample')) or {}).get(key) is not None:
                 row[key] = copy.deepcopy(full[row['sample']][key])
+    if 'basis_donors' not in record and report.get('basis_donors'):
+        record['basis_donors'] = copy.deepcopy(report['basis_donors'])
     decision = record.setdefault('structure_decision', {})
     if 'structure' not in decision and (report.get('structure_decision') or {}).get('structure'):
         decision['structure'] = copy.deepcopy(report['structure_decision']['structure'])
@@ -970,10 +972,11 @@ def _difference(row, combined_structure):
     parts = []
     if own.get('earnings_mode') != other.get('earnings_mode'):
         mode = MODES.get(own.get('earnings_mode'), str(own.get('earnings_mode')).replace('_', ' '))
-        parts.append(f'modelled {mode}' + (f' by segment ({_names(own.get("components"))})'
+        # Components can be segments or product lines; "revenue line" is true of both (re-audit, 2026-11-27).
+        parts.append(f'modelled {mode}' + (f' by revenue line ({_names(own.get("components"))})'
                                            if own.get('components') else ''))
     elif own.get('components') != other.get('components'):
-        parts.append(f'used other segments ({_names(own.get("components"))})')
+        parts.append(f'used other revenue lines ({_names(own.get("components"))})')
     if own.get('horizon') != other.get('horizon'):
         parts.append('used a different forecast horizon')
     if own.get('beta_calculation') != other.get('beta_calculation') or own.get('discount_rate') != other.get('discount_rate'):
@@ -1009,14 +1012,27 @@ def _representative_text(record, style):
     combined_value = (record.get('consensus_values') or {}).get('base')
     value = ''
     if _number(own) and _number(combined_value):
-        value = (f', whose own base value was {style.per_share(own)} against {style.per_share(combined_value)} for the '
-                 'combined plan' + (' before the correction' if record.get('edited_after_consensus') else ''))
+        # Values that round alike are shown to the cent, so the comparison reads.
+        alike = style.per_share(own) == style.per_share(combined_value)
+        shown = (style.price if alike else style.per_share)
+        value = (f' Its own base value was {shown(own)}, against {shown(combined_value)} for the combined plan' +
+                 (' before the correction' if record.get('edited_after_consensus') else '') + '.')
+    donors = []
+    for field, scenarios in (record.get('basis_donors') or {}).items():
+        samples = sorted({sample for numbers in (scenarios or {}).values() for sample in numbers or []})
+        if samples and samples != [number]:
+            donors.append(f'the {field.replace("_", "-").replace("-basis", " basis")} comes from sample '
+                          + ' and '.join(map(str, samples)))
+    donor = (' ' + '; '.join(donors)[:1].upper() + '; '.join(donors)[1:] + '.') if donors else ''
+    if len(group) == 2:
+        return (f'With two samples both are equally close to the median; sample {number} supplied the rationales and '
+                f'named cases.{value}{donor}')
     if len(tied) > 1 and number in tied:
         names = ' and '.join(map(str, tied)) if len(tied) == 2 else ', '.join(map(str, tied[:-1])) + f' and {tied[-1]}'
-        return (f'Samples {names} tied for closest to the per-year median revenue and EBIT paths; the rationales and '
-                f'named cases come from sample {number}{value}.')
+        return (f'Samples {names} tied for closest to the per-year median revenue and EBIT paths; sample {number} '
+                f'supplied the rationales and named cases.{value}{donor}')
     return (f'The rationales and named cases come from sample {number}, the one closest to the per-year median revenue '
-            f'and EBIT paths{value}.')
+            f'and EBIT paths.{value}{donor}')
 
 
 def first_page_sentence(record, style):
@@ -1037,11 +1053,12 @@ def first_page_sentence(record, style):
         extra = ''
     if record.get('edited_after_consensus'):
         noun = 'average' if record.get('method') == 'mean' or count == 2 else 'median'
-        return (f'The forecast began as the {noun} of {_samples(count)}, valued at {style.per_share(low)} to '
-                f'{style.per_share(high)}, and was revised after review{extra}.')
-    kind = 'averages' if record.get('method') == 'mean' or count == 2 else 'is the median of'
-    return (f'The base case {kind} {_samples(count)}; their values ranged from {style.per_share(low)} to '
-            f'{style.per_share(high)}{extra}.')
+        return (f'The forecast began as the {noun} of {_samples(count)}, input by input; the samples\' own values '
+                f'ranged from {style.per_share(low)} to {style.per_share(high)}, and the forecast was revised after '
+                f'review{extra}.')
+    kind = 'combines' if record.get('method') == 'mean' or count == 2 else 'takes the median of'
+    return (f'The base case {kind} {_samples(count)}, input by input; the samples\' own values ranged from '
+            f'{style.per_share(low)} to {style.per_share(high)}{extra}.')
 
 
 def unavailable_note(requested):

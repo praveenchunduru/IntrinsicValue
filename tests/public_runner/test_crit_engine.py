@@ -325,7 +325,7 @@ class ImpliedReturnTests(unittest.TestCase):
         self.assertIn('No flat discount rate between 0.50% and 50% reaches the price', exhibit)
         from investmentideas import memo_style
         self.assertIn(f'range is {memo_style.Style("USD").per_share(bound["highest_value"])}', exhibit)
-        self.assertIn('equal one flat rate of', exhibit)
+        self.assertIn('is reproduced by one flat rate of', exhibit)
         self.assertIn('- Base: No flat discount rate between 0.50% and 50% reaches the price', exhibit)
 
     def test_a_solved_rate_keeps_the_summary_sentence(self):

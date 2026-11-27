@@ -203,7 +203,7 @@ class DataHookTests(unittest.TestCase):
         for entry, income in zip(source['breakdown_tables']['segment']['members'], (100e9, 40e9)):
             entry.update(operating_income=[income, income], operating_margin=[.3, .3])
         text = '\n'.join(pipeline.reported_tables_section([source]))
-        self.assertIn('| Average buyback price, share-note value / shares ($) |', text)
+        self.assertIn('| Average buyback price, repurchase value in the equity statement / shares ($) |', text)
         # The consolidated figure (120 in FY2025) is set beside the segment sum (140).
         self.assertIn('Segment operating income sums to $140B for the fiscal year ending 2025-12-31, against consolidated '
                       'operating income of $120B', text)
@@ -228,10 +228,11 @@ class NoteFactTests(unittest.TestCase):
             self.assertIn('| Terminal growth |', memo)
             self.assertIn('does not change the value', memo)
 
-    def test_changes_agree_with_the_rounded_values_shown(self):
-        self.assertEqual(pipeline._shown_change(203.2, 220.504), '-18')
-        self.assertEqual(pipeline._shown_change(41.44, 42.86), '-1.5')
-        self.assertEqual(pipeline._shown_change(220.6, 220.504), '0')
+    def test_changes_are_true_differences_rounded(self):
+        # Changes are the true difference, rounded (re-audit, 2026-11-27): 45.529 - 42.8625 is +2.7.
+        self.assertEqual(pipeline._change(45.529, 42.8625), '+2.7')
+        self.assertEqual(pipeline._change(203.2, 220.504), '-17')
+        self.assertIn(pipeline.CHANGE_NOTE.split(',')[0], pipeline.CHANGE_NOTE)
 
     def test_a_trailing_currency_code_is_restyled(self):
         self.assertEqual(memo_style.dollar_amounts('charges above 2.0bn USD [S4]'), 'charges above $2.0B [S4]')
@@ -254,6 +255,124 @@ class NoteFactTests(unittest.TestCase):
         rnd = pipeline._assumption_notes(label, {'scenarios': {'base': {'terminal_rnd_net_investment': 1e9}}}, {})
         self.assertIn('GAAP EBIT retains operating rent, SBC and R&D.', rnd)
         self.assertTrue(any('only through the net R&D add-back' in note for note in rnd))
+
+
+def wording_failures(case, memo, result, sources=()):
+    """The final wording round's computed notes hold for the run (re-audit of KO and GOOGL, 2026-11-27)."""
+    computed = outside_prose(memo)
+    failures = []
+    # Item 1: change columns carry the true change, and the note says so.
+    if re.search(r'\| Change \(', computed) and pipeline.CHANGE_NOTE not in computed:
+        failures.append(f'{case}: change column without the rounding note')
+    if '_shown_change' in dir(pipeline):
+        failures.append(f'{case}: changes still computed from rounded values')
+    # Item 4: "53-week" only when a fiscal year runs past 366 days.
+    if '53-week' in computed:
+        from datetime import date
+        ends = sorted({date.fromisoformat(row['fiscal_year_end'][:10]) for source in sources for row in
+                       (((source or {}).get('historical_baseline') or {}).get('rows') or []) if row.get('fiscal_year_end')})
+        if not any((later - earlier).days > 366 for earlier, later in zip(ends, ends[1:])):
+            failures.append(f'{case}: "53-week" without a fiscal year longer than 366 days')
+    # Item 5: the ceiling note states the ceilings the run used.
+    cost = result.get('cost_path_continuity') or {}
+    ceilings = cost.get('final_year_margin_ceilings') or {}
+    if ceilings:
+        note = pipeline._ceiling_note(cost)
+        if note not in computed:
+            failures.append(f'{case}: ceiling note missing')
+        if 'come from the operating margins of the last' in computed:
+            failures.append(f'{case}: old ceiling sentence')
+        latest = cost.get('latest_run_rate') or {}
+        peak, run = cost.get('max_operating_margin'), latest.get('operating_margin')
+        if isinstance(ceilings.get('base'), float) and isinstance(peak, float):
+            floor = max(peak, run) if isinstance(run, float) else peak
+            match = re.search(r'here ([0-9.]+)%, plus ([0-9.]+) points', note)
+            if isinstance(run, float) and not (match and abs(float(match.group(1)) - floor * 100) < .051 and
+                                               abs(floor + float(match.group(2)) / 100 - ceilings['base']) < .0006):
+                failures.append(f'{case}: ceiling note does not add up to the base ceiling')
+    # Item 6: the rate-test note names only exhibits shown, and unchanged terminal rates are said to be unchanged.
+    line = next((line for line in computed.split('\n') if 'the terminal rate the test sets' in line or
+                 'leave the terminal rate, and so the terminal return, unchanged' in line), '')
+    if 'Every rate test moves the terminal return' in computed:
+        failures.append(f'{case}: fixed rate-test sentence')
+    if line:
+        shown = {'the rate methods': '| Rate method' in computed, 'the beta checks': '### Beta cross-checks' in computed,
+                 'the country-risk row': '### Country risk' in computed,
+                 'the implied return': '### What the price implies' in computed}
+        for phrase, present in shown.items():
+            if phrase in line.lower() and not present:
+                failures.append(f'{case}: rate-test note names {phrase}, which the memo does not show')
+        house = ((result.get('scenarios') or {}).get('base') or {}).get('terminal_rate')
+        moving = line.split('the terminal return on new capital moves')[0]
+        for key, phrase in (('calibration_comparisons', 'the rate methods'), ('beta_cross_checks', 'the beta checks')):
+            rows = [row for row in result.get(key) or [] if isinstance(row.get('terminal_rate'), float)]
+            if rows and isinstance(house, float) and all(abs(row['terminal_rate'] - house) < 1e-9 for row in rows):
+                if phrase in moving:
+                    failures.append(f'{case}: {phrase} listed as moving the terminal rate, which they leave unchanged')
+    return failures
+
+
+class WordingRoundTests(unittest.TestCase):
+    """Items 1, 4, 5 and 6 of the final wording round, on synthetic shapes and on the saved runs."""
+
+    def test_changes_differ_from_rounded_differences_only_with_the_note(self):
+        # KO's calibration row: 45.529 - 42.8625 = 2.67 shows as +2.7, where the rounded values give 2.6.
+        self.assertEqual(pipeline._change(45.529, 42.8625), '+2.7')
+        self.assertEqual(pipeline._change(38.62, 42.8625), '-4.2')
+        self.assertFalse(hasattr(pipeline, '_shown_change'))
+        memo, result = render(headline_plan())
+        self.assertEqual(wording_failures('synthetic', memo, result), [])
+
+    def test_a_long_quarter_span_names_its_cause(self):
+        from investmentideas.evidence_tables import render_quarterly
+        table = {'rows': [{'fiscal_quarter': 3, 'period_end': '2026-10-02', 'revenue': 1e9, 'operating_income': 1e8,
+                           'operating_margin': .1, 'revenue_basis': 'reported', 'operating_income_basis': 'reported',
+                           'revenue_growth_basis': 'unequal_length', 'days': 98, 'prior_days': 91}],
+                 'currency': 'USD', 'trailing_twelve_months': {'period': {'start_date': '2025-09-27', 'end_date': '2026-10-02'},
+                                                               'days': 371, 'revenue': 4e9, 'operating_income': 1e9,
+                                                               'operating_margin': .25}}
+        calendar = {'quarterly': table, 'rows': [{'fiscal_year_end': '2024-12-31'}, {'fiscal_year_end': '2025-12-31'}]}
+        text = render_quarterly(calendar, 'S2')
+        self.assertNotIn('53-week', text)
+        self.assertIn('(371 days, because the quarter-end dates moved)', text)
+        self.assertIn('quarters of different length, this quarter\'s days against the year-earlier quarter\'s, because '
+                      'the quarter-end dates moved', text)
+        retail = {'quarterly': table, 'rows': [{'fiscal_year_end': '2024-01-28'}, {'fiscal_year_end': '2025-02-02'}]}
+        text = render_quarterly(retail, 'S2')
+        self.assertIn('(371 days, a 53-week year)', text)
+        self.assertIn('as in a 53-week year', text)
+
+    def test_the_ceiling_note_adds_up(self):
+        cost = {'years': 5, 'max_operating_margin': .28706, 'average_operating_margin': .25339,
+                'latest_run_rate': {'basis': 'trailing_twelve_months', 'operating_margin': .30041,
+                                    'period': {'start_date': '2025-09-27', 'end_date': '2026-10-02'}},
+                'final_year_margin_ceilings': {'bear': .25339, 'base': .35041, 'bull': .35041}}
+        self.assertEqual(pipeline._ceiling_note(cost),
+                         'The bear ceiling is the five-year average operating margin, 25.3%. The base and bull ceiling is '
+                         'the higher of the five-year peak and the twelve-month margin to 2026-10-02, here 30.0%, plus 5 points.')
+
+    def test_the_rate_test_note_follows_the_exhibits(self):
+        result = {'scenarios': {'base': {'terminal_rate': .0874}},
+                  'convention_panel': {'rows': [{'name': 'required_return_minus_100bp', 'status': 'calculated'},
+                                                {'name': 'rate_history_low', 'status': 'calculated'}]},
+                  'beta_cross_checks': [{'name': 'regression_beta', 'terminal_rate': .0874}],
+                  'implied_return_at_price': {'base': {}}}
+        text = pipeline._rate_test_note(result)
+        self.assertEqual(text, 'In the whole-path shifts, the month rows and the implied return, the terminal return on '
+                               'new capital moves with the terminal rate the test sets. The beta checks leave the terminal '
+                               'rate, and so the terminal return, unchanged.')
+        self.assertNotIn('rate methods', text)
+        result['calibration_comparisons'] = [{'name': 'historical_issuer_beta', 'terminal_rate': .0950}]
+        self.assertIn('the rate methods and the implied return, the terminal return', pipeline._rate_test_note(result))
+
+    def test_saved_runs_hold_the_wording_round(self):
+        runs = list(rerender_saved())
+        if not runs:
+            self.skipTest('INTRINSICVALUE_SAVED_RUNS names no saved run')
+        failures = []
+        for name, memo, state in runs:
+            failures += wording_failures(name, memo, state['valuation'], state.get('sources') or [])
+        self.assertEqual(failures, [])
 
 
 if __name__ == '__main__':

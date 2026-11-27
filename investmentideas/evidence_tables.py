@@ -1247,7 +1247,9 @@ def _basis_notes(rows, source_id, filing_id):
     depreciation = {row.get('depreciation_amortization_concept') for row in rows if row.get('depreciation_amortization_concept')}
     if len(depreciation) > 1 or any('extension' in concept or row.get('depreciation_only') for row in rows
                                     for concept in [row.get('depreciation_amortization_concept') or '']):
-        notes.append('D&A column: ' + by_concept('depreciation_amortization_concept', lambda row, concept: True) +
+        only = all(row.get('depreciation_only') for row in rows if row.get('depreciation_amortization') is not None)
+        notes.append(('Depreciation column: ' if only else 'D&A column: ') +
+                     by_concept('depreciation_amortization_concept', lambda row, concept: True) +
                      ('. us-gaap:Depreciation is depreciation only, reported where no depreciation-and-amortization '
                       'total is' if any(row.get('depreciation_only') for row in rows) else ''))
     text = by_concept('selling_general_administrative_concept', lambda row, concept: concept.startswith('derived'))
@@ -1258,15 +1260,18 @@ def _basis_notes(rows, source_id, filing_id):
         notes.append('Acquisitions column: ' + text + ', two cash-flow lines summed')
     text = by_concept('acquisitions_concept', lambda row, concept: 'extension' in concept)
     if text:
-        notes.append('Acquisitions column: ' + text + '. An issuer-extension line can include purchases of '
-                     'intangibles or investments, as its name states')
+        names = sorted({re.sub(r'\s*\(.*$', '', row['acquisitions_concept']).split(':')[-1] for row in rows
+                        if 'extension' in (row.get('acquisitions_concept') or '')})
+        scope = '; '.join(re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', name).lower() for name in names)
+        notes.append('Acquisitions column: ' + text + f'. The issuer line covers {scope}, as its name says, so it can '
+                     'include more than business acquisitions')
     text = by_concept('average_repurchase_price_concept', lambda row, concept: 'stated' in concept or 'annual filing' in concept)
     if text:
         notes.append('Average buyback price: ' + text)
     label, differing = repurchase_price_basis(rows)
     if differing:
-        notes.append(f'Average buyback price is the {label}, not cash buybacks divided by shares: ' +
-                     '; '.join(f'{end} {price:,.2f} against {cash:,.2f}' for end, price, cash in differing))
+        notes.append(f'Average buyback price is the {label}. Cash buybacks over the same shares give a different '
+                     'price: ' + '; '.join(f'{end} {price:,.2f} against {cash:,.2f}' for end, price, cash in differing))
     outside = {}
     for row in rows:
         for field in row.get('outside_filings_scanned') or []:
@@ -1276,11 +1281,11 @@ def _basis_notes(rows, source_id, filing_id):
             notes.append(f'{name} for the fiscal years ending {", ".join(outside[field])} is shown as outside filings '
                          f'scanned: the figure comes from the annual filing{f" [{filing_id}]" if filing_id else ""}, whose '
                          'periods do not include those years; older filings report it')
-    rounded = [f'{row["fiscal_year_end"]} ±{row["average_repurchase_price_tolerance"] * 100:.1f}%' for row in rows
+    rounded = [f'±{row["average_repurchase_price_tolerance"] * 100:.1f}% for FY{row["fiscal_year_end"][:4]}' for row in rows
                if row.get('average_repurchase_price') is not None and (row.get('average_repurchase_price_tolerance') or 0) > .005]
     if rounded:
-        notes.append('Average buyback price marked ~ divides by a share count the filing rounds, so it is good only to '
-                     + ', '.join(rounded))
+        notes.append('Average buyback price marked ~ divides by a share count the filing rounds, so it is accurate to '
+                     'within ' + (rounded[0] if len(rounded) == 1 else ', '.join(rounded[:-1]) + ' and ' + rounded[-1]))
     text = by_concept('shares_outstanding_concept', lambda row, concept: row.get('shares_outstanding_as_of') != row['fiscal_year_end']
                       or 'annual filing' in concept)
     if text:
@@ -1345,7 +1350,9 @@ def repurchase_price_basis(rows):
     if not concepts:
         return None, []
     kinds = {('stated price' if 'stated' in concept else
-              'program value / program shares' if 'repurchase-program axis' in concept else 'share-note value / shares')
+              'program value / program shares' if 'repurchase-program axis' in concept else
+              'treasury-stock cost in the equity note / shares' if 'TreasuryStock' in concept else
+              'repurchase value in the equity statement / shares')
              for concept in concepts}
     label = ' and '.join(sorted(kinds))
     differing = []
@@ -1515,15 +1522,21 @@ def render_quarterly(baseline, source_id=None, markdown=False, notes_out=None, s
     caption = (f'Reported fiscal quarters{ref}, {quarterly.get("currency", "")} billions; ratios computed by Python from '
                'reported values; n/a means not reported.')
     notes = []
+    # A 53-week year only when a fiscal year itself runs past 366 days; otherwise the quarter-end dates moved.
+    ends = [_day(row['fiscal_year_end']) for row in (baseline or {}).get('rows') or [] if row.get('fiscal_year_end')]
+    long_year = any((later - earlier).days > 366 for earlier, later in zip(ends, ends[1:]))
+    length_reason = 'as in a 53-week year' if long_year else 'because the quarter-end dates moved'
     derived = [row for row in rows if derived_operating(row)]
     if derived:
+        bases = {row["revenue_basis"] if row["revenue_basis"] != "reported" else row["operating_income_basis"] for row in derived}
         notes.append('Cells marked derived are computed from the filings; balances at the quarter end are reported. '
-                     + '; '.join(f'{row["period_end"]} is the {row["revenue_basis"] if row["revenue_basis"] != "reported" else row["operating_income_basis"]}'
-                                 for row in derived)
+                     + ('Each Q4 is the fiscal year less the first nine months' if bases == {'fiscal year less nine months'}
+                        else '; '.join(f'{row["period_end"]} is the {row["revenue_basis"] if row["revenue_basis"] != "reported" else row["operating_income_basis"]}'
+                                       for row in derived))
                      + '. The company facts do not tag these quarters on their own; an earnings release may still present them')
     if any(row.get('revenue_growth_basis') == 'unequal_length' for row in rows):
         notes.append('Growth marked n/m (a vs b days) compares quarters of different length, this quarter\'s days against '
-                     'the year-earlier quarter\'s, as in a 53-week year')
+                     f'the year-earlier quarter\'s, {length_reason}')
     notes.append('Growth compares figures from the same filing, or for a derived quarter the same two filings, so a '
                  'restatement between the years is not read as growth' +
                  ('; n/a where no filing reports both years' if any(row.get('revenue_growth_basis') == 'no_comparative'
@@ -1534,7 +1547,8 @@ def render_quarterly(baseline, source_id=None, markdown=False, notes_out=None, s
     ttm = quarterly.get('trailing_twelve_months')
     if ttm:
         days = ttm.get('days')
-        span = f' ({days} days, a 53-week year)' if isinstance(days, int) and days > 367 else ''
+        span = (f' ({days} days, ' + ('a 53-week year' if long_year else 'because the quarter-end dates moved') + ')'
+                if isinstance(days, int) and days > 367 else '')
         amount = (_money if notes_out is None else
                   (lambda value: memo_style.Style(quarterly.get('currency', '')).amount(value) if value is not None else 'n/a'))
         notes.append(f'Trailing twelve months to {ttm["period"]["end_date"]}{span}: revenue {amount(ttm["revenue"])}, operating '
@@ -1699,7 +1713,9 @@ def _roic_lines(rows, ref, scale=1e9):
                if adjusted and capitalization else
                '- ROIC with intangibles capitalized is not shown: ' + absent.get(status, 'the inputs are incomplete') + '.'),
               '- No adjustment is made for restructuring charges, impairments or one-time tax items, which the paper '
-              'removes. Years that contain them are shown as reported, and a tax rate outside 0-50% falls back as noted.',
+              'removes. Years that contain them are shown as reported' +
+              (', and a tax rate outside 0-50% falls back as noted.' if any(row.get('nopat_tax_basis') == 'statutory'
+                                                                            for row in rows) else '.'),
               '- Mauboussin and Callahan report a median 2021 ROIC of 8.8% for Russell 3000 companies outside financials '
               'and real estate, and 9.0% with intangibles capitalized ("ROIC and Intangible Assets", November 2022).']
     return lines

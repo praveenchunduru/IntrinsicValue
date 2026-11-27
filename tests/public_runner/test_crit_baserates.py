@@ -250,7 +250,7 @@ class Rendering(unittest.TestCase):
         self.assertIn('Exhibit 4, p25, with bin counts from its appendix, p32', exhibit)
         self.assertIn('the memo shows no margin percentile', exhibit)
         summary = pipeline.computed_summary(value, result)
-        self.assertIn('| Base-rate percentile, 10 years |', summary)
+        self.assertIn('| Base-rate percentile of real growth, 10 years |', summary)
         growth = next(line for line in summary.split('\n') if line.startswith('| Revenue growth, 10-year compound'))
         self.assertRegex(growth, r'house \d+(st|nd|rd|th), needed \d+(st|nd|rd|th) \|$')
         margin = next(line for line in summary.split('\n') if line.startswith('| EBIT margin, 10-year average'))
