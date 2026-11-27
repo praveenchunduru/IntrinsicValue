@@ -150,9 +150,9 @@ class ValuationTests(unittest.TestCase):
         inputs['scenarios']['base']['sales_to_capital']=3
         inputs['counterfactuals']={'competing_case':{'growth_rates':[.15]*7,'ebit_margins':[.36]*7,'wacc':.08}}
         result=evaluate(inputs)['counterfactuals']['competing_case']
-        self.assertAlmostEqual(result['per_share_value'],342.44040004457236)
+        self.assertAlmostEqual(result['per_share_value'],334.7998725388415)
         self.assertAlmostEqual(result['cashflows'][-1]['revenue']/1e12,1.2737079594443728)
-        self.assertAlmostEqual(result['terminal_value_fraction'],.7746640534032645)
+        self.assertAlmostEqual(result['terminal_value_fraction'],.7694624270720177)
         # The complete unchanged bridge, not just revenue growth, supports this value.
         self.assertEqual(result['net_debt'],-56_824_000_000)
         self.assertEqual(result['other_equity_claims'],1_456_000_000)
@@ -205,16 +205,17 @@ class ValuationTests(unittest.TestCase):
                 evaluate(inputs)
 
 
-    def test_wacc_diagnostic_reproduces_actual_24_dollar_effect(self):
+    def test_wacc_diagnostic_reproduces_the_actual_dollar_effect(self):
+        # Values use the assets-in-place continuing value (year-T NOPAT capitalized), 2026-11-26.
         result=evaluate(audit_plan())
-        self.assertAlmostEqual(result['weighted_per_share_value'],163.86094905235066)
+        self.assertAlmostEqual(result['weighted_per_share_value'],160.37336492936748)
         diagnosis=result['computed_diagnostics']['base_wacc']
-        self.assertAlmostEqual(diagnosis['baseline_per_share_value'],156.57848046332927)
+        self.assertAlmostEqual(diagnosis['baseline_per_share_value'],153.44193525959707)
         raised=next(row for row in diagnosis['changes'] if row['wacc_change_percentage_points']==1)
         self.assertEqual(raised['status'],'calculated')
         self.assertEqual(raised['wacc'],.095)
-        self.assertAlmostEqual(raised['per_share_value'],132.5839490183144)
-        self.assertAlmostEqual(raised['dollar_delta'],-23.99453144501487)
+        self.assertAlmostEqual(raised['per_share_value'],130.09503314850878)
+        self.assertAlmostEqual(raised['dollar_delta'],-23.346902111088298)
         self.assertLess(raised['percent_delta'],-15)
         self.assertGreater(raised['percent_delta'],-16)
         # This directly catches the prior memo's erroneous $6–7 assertion.
@@ -225,10 +226,10 @@ class ValuationTests(unittest.TestCase):
         diagnosis=evaluate(inputs)['computed_diagnostics']['uniform_tax']
         twenty,twenty_four=diagnosis['changes']
         self.assertEqual((twenty['tax_rate'],twenty_four['tax_rate']),(.20,.24))
-        self.assertAlmostEqual(twenty['weighted_per_share_value'],157.479088046242)
-        self.assertAlmostEqual(twenty['percent_delta'],-3.8946808516712395)
-        self.assertAlmostEqual(twenty_four['weighted_per_share_value'],149.28579532036224)
-        self.assertAlmostEqual(twenty_four['percent_delta'],-8.894830535451081)
+        self.assertAlmostEqual(twenty['weighted_per_share_value'],154.12471708519732)
+        self.assertAlmostEqual(twenty['percent_delta'],-3.896312736795308)
+        self.assertAlmostEqual(twenty_four['weighted_per_share_value'],146.0991429073698)
+        self.assertAlmostEqual(twenty_four['percent_delta'],-8.900618895341134)
         self.assertEqual(inputs,original)
         self.assertIn('probability weights',diagnosis['fixed_assumptions'])
         self.assertEqual(set(twenty['scenario_per_share_values']),{'bear','base','bull'})
@@ -238,20 +239,22 @@ class ValuationTests(unittest.TestCase):
         base=result['computed_diagnostics']['terminal_transition']['base']
         self.assertAlmostEqual(base['implied_forecast_incremental_roic'],.6225)
         self.assertEqual(base['terminal_roic'],.18)
-        self.assertAlmostEqual(base['equivalent_terminal_sales_to_capital'],.18/(.30*.83*1.03))
+        # Year-T NOPAT is capitalized, so the equivalent ratio has no (1 + g) factor.
+        self.assertAlmostEqual(base['equivalent_terminal_sales_to_capital'],.18/(.30*.83))
         self.assertAlmostEqual(base['terminal_reinvestment_if_forecast_sales_to_capital_continued']/1e9,8.554555090271924)
-        self.assertAlmostEqual(base['terminal_reinvestment']/1e9,30.47203811113935)
-        self.assertAlmostEqual(base['reinvestment_step_vs_continuing_forecast_sales_to_capital']/1e9,21.91748302086743)
+        self.assertAlmostEqual(base['terminal_reinvestment']/1e9,29.58450302052364)
+        self.assertAlmostEqual(base['reinvestment_step_vs_continuing_forecast_sales_to_capital']/1e9,21.02994793025174)
         self.assertLess(base['terminal_fcff'],base['last_forecast_fcff'])
         self.assertLess(base['fcff_step_percent'],0)
-        self.assertGreater(base['alternative_per_share_value_if_forecast_sales_to_capital_continued'],156.57848046332927)
-        self.assertAlmostEqual(result['scenarios']['base']['per_share_value'],156.57848046332927)
+        self.assertGreater(base['alternative_per_share_value_if_forecast_sales_to_capital_continued'],153.44193525959707)
+        self.assertAlmostEqual(result['scenarios']['base']['per_share_value'],153.44193525959707)
         self.assertIn('not observed market inputs',result['computed_diagnostics']['basis'])
 
     def test_matching_terminal_capital_efficiency_has_no_reinvestment_step(self):
         inputs=plan()
         for case in inputs['scenarios'].values():
-            case.update(ebit_margins=[.2]*5,tax_rate=.25,sales_to_capital=2,terminal_roic=.3*1.02)
+            # After-tax margin times sales-to-capital: year-T NOPAT is capitalized, so no (1 + g) factor.
+            case.update(ebit_margins=[.2]*5,tax_rate=.25,sales_to_capital=2,terminal_roic=.3)
         result=evaluate(inputs)
         for name,row in result['computed_diagnostics']['terminal_transition'].items():
             self.assertAlmostEqual(row['reinvestment_step_vs_continuing_forecast_sales_to_capital'],0,delta=1e-6)
@@ -279,7 +282,7 @@ class ValuationTests(unittest.TestCase):
                         sales_to_capital=12,wacc=.1,terminal_growth=.02,terminal_roic=.15)
         original=json.loads(json.dumps(inputs))
         result=evaluate(inputs)
-        self.assertAlmostEqual(result['scenarios']['base']['per_share_value'],-1.0727603305785123)
+        self.assertAlmostEqual(result['scenarios']['base']['per_share_value'],-1.07297520661157)
         changes=result['computed_diagnostics']['base_capital_efficiency']['changes']
         unavailable=next(row for row in changes if row['sales_to_capital']==1)
         self.assertEqual(unavailable['status'],'not_calculated')
@@ -303,7 +306,8 @@ class ValuationTests(unittest.TestCase):
             case.update(growth_rates=[0],ebit_margins=[.1],tax_rate=0,
                         sales_to_capital=2,wacc=.01,terminal_growth=-.1,terminal_roic=1)
         result=evaluate(inputs)
-        self.assertAlmostEqual(result['scenarios']['base']['per_share_value'],.9900990099009902)
+        # Year-1 NOPAT 0.1 per share, continuing value 0.1 * 1.1 / 0.11, both discounted one year at 1%.
+        self.assertAlmostEqual(result['scenarios']['base']['per_share_value'],(.1+.1*1.1/.11)/1.01)
         alternative=result['computed_diagnostics']['base_terminal_return_at_wacc']
         self.assertEqual(alternative['terminal_roic'],.01)
         self.assertEqual(alternative['status'],'not_calculated')
@@ -315,13 +319,15 @@ class ValuationTests(unittest.TestCase):
 
     def test_zero_forecast_investment_diagnostic_overflow_is_explicit(self):
         inputs=plan()
-        inputs['actuals'].update(revenue=1e308,net_debt=0,other_equity_claims=0,
+        # Revenue sits where the house value is finite and the zero-investment diagnostic is not.
+        inputs['actuals'].update(revenue=9.33e307,net_debt=0,other_equity_claims=0,
                                 shares_outstanding=1e308)
         for case in inputs['scenarios'].values():
             case.update(growth_rates=[.5],ebit_margins=[.92],tax_rate=0,
                         sales_to_capital=1,wacc=.7,terminal_growth=-.1,terminal_roic=1)
         result=evaluate(inputs)
-        self.assertAlmostEqual(result['scenarios']['base']['per_share_value'],1.5222058823529412)
+        # Year-1 FCFF 0.88 and continuing value 1.38 * 1.1 / 0.8 per unit of revenue, discounted at 70%.
+        self.assertAlmostEqual(result['scenarios']['base']['per_share_value'],(.88+1.38*1.1/.8)/1.7*.933)
         capital=result['computed_diagnostics']['base_capital_efficiency']
         self.assertIsNone(capital['zero_explicit_forecast_net_investment_per_share_value'])
         self.assertEqual(capital['zero_explicit_forecast_net_investment_status'],'not_calculated')

@@ -682,13 +682,17 @@ class HouseConventionPinTests(unittest.TestCase):
     def returns(*values):
         return [{'id': 'S2', 'data': {}, 'historical_baseline': {'rows': [{'return_on_invested_capital': r} for r in values]}}]
 
-    def test_the_continuing_value_is_next_year_nopat_over_the_terminal_rate(self):
-        # Mauboussin: after the competitive advantage period, value = NOPAT(T+1) / WACC
-        # whatever the growth, because new investment earns exactly its cost.
+    def test_the_continuing_value_is_final_year_nopat_over_the_terminal_rate(self):
+        # Mauboussin: after the competitive advantage period, value = NOPAT / WACC whatever
+        # the growth, because new investment earns exactly its cost. Reinvestment pays for
+        # the same year's growth, so the capital in place at year T supports year-T NOPAT,
+        # not year-T NOPAT grown once more (2026-11-26).
         value = plan()
         pipeline._pin_terminal_return(value, [], [])
         result = valuation.evaluate(value)['scenarios']['base']
-        self.assertAlmostEqual(result['terminal_enterprise_value'], result['terminal_nopat'] / result['terminal_rate'])
+        final = result['cashflows'][-1]
+        self.assertAlmostEqual(result['terminal_nopat'], final['nopat'])
+        self.assertAlmostEqual(result['terminal_enterprise_value'], final['nopat'] / result['terminal_rate'])
 
     def test_the_reported_return_is_kept_and_the_panel_shows_the_earlier_rule(self):
         sources = self.returns(.10, .11, .12, .10, .11)

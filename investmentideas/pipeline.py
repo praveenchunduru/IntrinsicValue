@@ -36,7 +36,8 @@ from .market_beta import gather_weekly_beta
 from .prompt_context import valuation_context as render_valuation_context
 from .primary_debt import classify_primary_debt
 from .operating import derive as derive_operating
-from .valuation import _timing as _valuation_timing, evaluate, materialize, save_valuation, terminal_rates
+from .valuation import (_timing as _valuation_timing, evaluate, materialize, sales_to_capital_path, save_valuation,
+                        terminal_rates)
 from .companyfacts import CONCEPT_SELECTION_SHA256
 
 VERSION = 'full-2'
@@ -76,6 +77,8 @@ FORECAST_SCHEMA = """Return ONLY compact JSON for house forecasts:
  "scenario_rationales":{"bear":"Evidence and economic mechanism for this scenario [S#]","base":"...","bull":"..."},
  "scenarios":{"bear":{"probability":<decimal>,"tax_rate":<decimal>,"sales_to_capital":<number>},
  "base":{<same fields>},"bull":{<same fields>}}} (Python sets terminal_roic)
+sales_to_capital is one ratio for every forecast year, or {"year1":x,"target":y,"target_year":n}
+(a straight line to the target, then held) when capital intensity changes, as in a capex cycle.
 plus EITHER an operating_model (preferred when the evidence reports revenue by product, service or
 segment; see below), in which case Python derives each scenario's growth and margins from its drivers
 and any stated growth_rates or ebit_margins are dropped, OR, without one, "growth_rates":[<10 annual
@@ -98,12 +101,10 @@ The unlevered operating-company model uses GAAP EBIT less operating taxes and
 incremental revenue / sales-to-capital reinvestment. Maintenance investment offsets
 D&A; GAAP EBIT already expenses SBC, R&D and operating rent. Do not deduct those
 again. Explicitly justify growth/margin fade, capital efficiency, tax and WACC.
-Terminal reinvestment is g/ROIC of NOPAT;
-explain a material forecast-to-terminal capital-intensity transition. Terminal return on new
-capital is a house convention that Python sets: the terminal discount rate (Mauboussin's steady
-state). The 10 forecast years are the competitive advantage period: excess returns on new
-investment come only from the forecast years' growth and capital efficiency, and after year 10
-growth adds no value.
+Terminal return on new capital is a house convention that Python sets: the terminal discount
+rate (Mauboussin's steady state). The 10 forecast years are the competitive advantage period:
+excess returns on new investment come only from the forecast years' growth and capital
+efficiency, and after year 10 growth adds no value.
 Optional counterfactuals map names to base-scenario forecast overrides (the same horizon).
 They are separate diagnostic cases, never probability weights or reported facts; Python computes
 their values. A plausible competing market-pricing case can be included without claiming its
@@ -184,7 +185,7 @@ and exactly one of counterfactual(name) or calibration_comparison(name); the lin
 value in that direction.
 Python supplies each conditional value and change.
 These are analyst-selected decision thresholds, not company guidance or automatic forecasts.
-Justify reinvestment; avoid a hidden terminal cash discontinuity.
+Justify reinvestment.
 This is valuation research only: do not supply entry thresholds, margins of safety or other
 trading rules.
 Optional "repurchase_tests":[{"name":"historical_price_comparison","amount":<whole currency units>,
@@ -1862,6 +1863,10 @@ def _proposal_view(proposal):
     the margins without saying so; shares keep costs tied to the new revenue.
     """
     view=copy.deepcopy(proposal)
+    for scenario in (view.get('scenarios') or {}).values():
+        if isinstance(scenario,dict):
+            # Python rebuilds the per-year ratios from sales_to_capital on every lock.
+            scenario.pop('sales_to_capital_path',None)
     model=view.get('operating_model')
     if not isinstance(model,dict) or model.get('earnings_mode')!='gross_profit_less_expenses':
         return view
@@ -1996,6 +2001,144 @@ def _expenses_from_shares(locked, changes):
                         'source_refs':[],'reason':'Python builds dollar expenses from shares of the scenario\'s revenue'})
 
 
+def _forecast_horizon(locked, scenario):
+    """Explicit forecast years of a scenario: its operating revenue path, else its growth array."""
+    model=locked.get('operating_model') if isinstance(locked.get('operating_model'),dict) else {}
+    operating=((model.get('scenarios') or {}).get(scenario) if isinstance(model.get('scenarios'),dict) else None)
+    if isinstance(operating,dict):
+        bases={item.get('name'):item.get('base_revenue') for item in model.get('components') or [] if isinstance(item,dict)}
+        revenue=_scenario_revenue(bases,operating)
+        if revenue:
+            return len(revenue)
+    growth=((locked.get('scenarios') or {}).get(scenario) or {}).get('growth_rates')
+    return len(growth) if isinstance(growth,list) and growth else None
+
+
+def _sales_to_capital_paths(locked, changes):
+    """Per-year sales-to-capital from a year1/target/target_year path, written beside it.
+
+    A capex cycle cannot be carried by one ratio for ten years (Druckenmiller and
+    Damodaran critiques, 2026-11-26: Microsoft's reinvestment). The path is rebuilt
+    on every lock, so a revision that edits the path spec never keeps a stale path.
+    """
+    for name,scenario in (locked.get('scenarios') or {}).items():
+        if not isinstance(scenario,dict):
+            continue
+        stale=scenario.pop('sales_to_capital_path',None)
+        spec=scenario.get('sales_to_capital')
+        if not isinstance(spec,(dict,list)):
+            continue
+        horizon=_forecast_horizon(locked,name)
+        if horizon is None:
+            raise ValueError(f'scenarios.{name}.sales_to_capital gives a path, but the scenario has no forecast horizon')
+        path=sales_to_capital_path(spec,horizon,name)
+        if path:
+            scenario['sales_to_capital_path']=path
+        if path!=stale:
+            changes.append({'field':f'scenarios.{name}.sales_to_capital_path','previous':stale,'pinned':path,'source_refs':[],
+                            'reason':'Python builds the per-year sales-to-capital from the stated path'})
+
+
+def _pin_terminal_rnd(locked, sources, changes):
+    """Each forecast year's R&D share of revenue, for the net R&D investment the continuing value adds back.
+
+    Owner choice (2026-11-26, Damodaran critique F3): R&D is expensed in the margin
+    and the continuing value also charges reinvestment at the terminal return, so
+    new R&D after the forecast earned below its cost forever. R&D only, not selling
+    or administrative costs. The shares are the plan's own R&D line; a plan without
+    one (aggregate margins) holds the reported share, and a company that reports no
+    R&D (Costco) gets none. The continuing value amortizes the forecast's own R&D,
+    so the reported history is kept only for forecasts shorter than six years.
+    """
+    model=locked.get('operating_model') if isinstance(locked.get('operating_model'),dict) else {}
+    reported=_reported_expense_shares(locked).get('research_and_development') or 0.0
+    bases={item.get('name'):item.get('base_revenue') for item in model.get('components') or [] if isinstance(item,dict)}
+    for name,scenario in (locked.get('scenarios') or {}).items():
+        if not isinstance(scenario,dict):
+            continue
+        operating=((model.get('scenarios') or {}).get(name) if isinstance(model.get('scenarios'),dict) else None) or {}
+        spend=((operating.get('expenses') or {}).get('research_and_development')
+               if model.get('earnings_mode')=='gross_profit_less_expenses' else None)
+        revenue=_scenario_revenue(bases,operating) if spend is not None else None
+        previous=(scenario.get('rnd_share_path'),scenario.get('rnd_basis'))
+        if (isinstance(spend,list) and revenue and len(revenue)==len(spend) and
+                all(isinstance(x,(int,float)) and not isinstance(x,bool) for x in spend) and all(x>0 for x in revenue)):
+            shares,basis=[value/amount for value,amount in zip(spend,revenue)],'plan_rnd_line'
+        else:
+            horizon=_forecast_horizon(locked,name)
+            shares,basis=([reported]*horizon if horizon else []),'reported_share'
+        if not any(shares):
+            # No R&D: the field is left out, which the engine reads as zero.
+            scenario.pop('rnd_share_path',None)
+            scenario.pop('rnd_basis',None)
+            if previous[0]:
+                changes.append({'field':f'scenarios.{name}.rnd_share_path','previous':previous[0],'pinned':None,
+                                'source_refs':[],'reason':'no R&D line in the plan or the reported results'})
+            continue
+        scenario['rnd_share_path'],scenario['rnd_basis']=shares,basis
+        if previous!=(shares,basis):
+            changes.append({'field':f'scenarios.{name}.rnd_share_path','previous':previous[0],'pinned':shares,
+                            'source_refs':[],
+                            'reason':('R&D share of revenue in each forecast year from the plan; the continuing value adds back '
+                                      'net R&D investment' if basis=='plan_rnd_line' else
+                                      'reported R&D share of revenue, held (the plan has no R&D line); the continuing value adds '
+                                      'back net R&D investment')})
+    history=reported_rnd_history(sources,(locked.get('actuals') or {}).get('revenue'))
+    if history and any(isinstance(item,dict) and item.get('rnd_share_path') for item in (locked.get('scenarios') or {}).values()):
+        locked['reported_rnd_history']=history
+    else:
+        locked.pop('reported_rnd_history',None)
+
+
+def reported_rnd_history(sources, anchor_revenue):
+    """Reported R&D for consecutive fiscal years ending at the forecast anchor year, oldest first, or None.
+
+    The last history year must be the anchor: its revenue matches the pinned revenue.
+    """
+    if not isinstance(anchor_revenue,(int,float)) or anchor_revenue<=0:
+        return None
+    for sid,rows in _grouped_history(sources).items():
+        if not rows or not isinstance(rows[-1].get('revenue'),(int,float)) or \
+                abs(rows[-1]['revenue']-anchor_revenue)>1e-6*anchor_revenue:
+            continue
+        run=[]
+        for row in reversed(rows):
+            amount=row.get('research_and_development')
+            if (not isinstance(amount,(int,float)) or isinstance(amount,bool) or amount<0 or
+                    (run and not _consecutive_years(row,run[0]))):
+                break
+            run.insert(0,row)
+        if run:
+            return {'amounts':[row['research_and_development'] for row in run],
+                    'fiscal_year_ends':[row.get('fiscal_year_end') for row in run],'source_refs':[sid],
+                    'basis':'Reported R&D for consecutive fiscal years ending at the forecast anchor year, oldest first; '
+                            'the continuing value amortizes it only where the forecast is shorter than six years.'}
+    return None
+
+
+def _consecutive_years(earlier, later):
+    try:
+        days=(date.fromisoformat(later['fiscal_year_end'])-date.fromisoformat(earlier['fiscal_year_end'])).days
+    except (KeyError,TypeError,ValueError):
+        return False
+    return 350<=days<=380
+
+
+def forecast_capital_reference(sources):
+    """Operating invested capital (Mauboussin and Callahan method) at the last reported year end, or None.
+
+    Only the last reported year counts: an earlier year's capital would start the
+    roll-forward from the wrong balance sheet.
+    """
+    for sid,rows in _grouped_history(sources).items():
+        capital=rows[-1].get('invested_capital') if rows else None
+        if isinstance(capital,(int,float)) and not isinstance(capital,bool) and math.isfinite(capital):
+            return {'invested_capital':capital,'fiscal_year_end':rows[-1].get('fiscal_year_end'),'source_refs':[sid],
+                    'basis':'Operating-approach invested capital at the last reported fiscal year end, including '
+                            'goodwill and acquired intangibles (Mauboussin and Callahan, October 2022).'}
+    return None
+
+
 def _lock_plan(plan, sources, *, apply_conventions=True):
     if not isinstance(plan,dict):
         raise ValueError('Forecast plan must be an object')
@@ -2034,6 +2177,7 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
     proposal['valuation_date']=valuation_day
     locked,changes=pin_reported_inputs(proposal,sources)
     _expenses_from_shares(locked,changes)
+    _sales_to_capital_paths(locked,changes)
     operating=locked.get('operating_model')
     if (isinstance(operating,dict) and operating.get('amount_unit')==reported['currency'] and
             operating.get('currency')==reported['currency']):
@@ -2099,6 +2243,12 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
         convention_notes=_pin_market_conventions(locked,sources,reported,valuation_day,changes)
         if apply_conventions:
             convention_notes=[*convention_notes,*_pin_house_conventions(locked,sources,changes)]
+            _pin_terminal_rnd(locked,sources,changes)
+            if any(isinstance(scenario,dict) and scenario.get('rnd_share_path')
+                   for scenario in (locked.get('scenarios') or {}).values()):
+                convention_notes.append('The continuing value adds net R&D investment (final-year R&D less six-year '
+                                        'amortization of the forecast\'s own R&D) back to NOPAT, so R&D after the forecast is '
+                                        'investment that earns the terminal return.')
     else:
         convention_notes=['This supplied plan keeps its own rate and timing conventions; the market-consistent rate path '
                           'and valuation-date stub apply only when a plan opts in with discount_rate.term_structure or valuation_timing.']
@@ -2123,6 +2273,11 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
         locked['country_risk_reference']=country
     else:
         locked.pop('country_risk_reference',None)
+    capital=forecast_capital_reference(sources)
+    if capital:
+        locked['invested_capital_reference']=capital
+    else:
+        locked.pop('invested_capital_reference',None)
     if 'entry_policy' in locked:
         # Valuation research only (settled owner decision): no entry thresholds.
         changes.append({'field':'entry_policy','previous':locked.pop('entry_policy'),'pinned':None,'source_refs':[],
@@ -2190,7 +2345,8 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
 # - Terminal return on new capital: the terminal discount rate (owner choice,
 #   2026-11-26, "follow Mauboussin"). Mauboussin's steady state: the 10-year
 #   forecast is the competitive advantage period, and afterwards new investment
-#   earns its cost of capital, so the continuing value is year-11 NOPAT over the
+#   earns its cost of capital, so the continuing value is year-10 NOPAT (which the
+#   capital in place at year 10 supports, plus net R&D investment) over the
 #   terminal cost of capital whatever the terminal growth (Mauboussin and
 #   Callahan, "Return on Invested Capital", 2022, Appendix A; "Market-Expected
 #   Return on Investment", 2021). The rate comes from the rate inputs, which do not
@@ -2574,6 +2730,7 @@ def valuation_section(plan, result):
             gross=f'{row["gross_profit"]:,.0f}' if row['gross_profit'] is not None else 'not modeled'
             expenses=f'{row["operating_expenses"]:,.0f}' if row['operating_expenses'] is not None else 'not modeled'
             lines.append(f'| {row["year"]} | {row["revenue"]:,.0f} | {gross} | {expenses} | {row["ebit"]:,.0f} | {row["ebit_margin"]:.2%} |')
+    lines += _forecast_roic_lines(result, currency)
     calibration=result.get('discount_rate_calculation')
     if calibration:
         lines += ['', '### Dated required-return calculation', '',
@@ -2618,6 +2775,47 @@ def valuation_section(plan, result):
                          f'{row["conditional_per_share_value"]:,.2f} / {row["value_change"]["dollar_delta"]:+,.2f} |')
     lines += _computed_exhibits(result,currency)
     return '\n'.join(lines)+'\n'
+
+
+def _forecast_roic_lines(result, currency):
+    """Forecast ROIC and 3-year incremental ROIC per scenario, then the return on new capital after the forecast.
+
+    Mauboussin critique F3 (2026-11-26): forecast returns held near 100% for ten
+    years and fell to the terminal rate in one, with nothing in the memo showing it.
+    """
+    returns=result.get('forecast_return_on_capital')
+    if not returns or not returns.get('scenarios'):
+        return []
+    years=max(len(entry['years']) for entry in returns['scenarios'].values())
+    def pct(value):
+        return f'{value:.1%}' if isinstance(value,(int,float)) else 'n/m'
+    lines=['', '### Forecast return on invested capital (computed by Python)', '',
+           '| Measure | '+' | '.join(f'Year {year}' for year in range(1,years+1))+' | After the forecast |',
+           '|---|'+'---:|'*(years+1)]
+    for name in ('bear','base','bull'):
+        entry=returns['scenarios'].get(name)
+        if not entry:
+            continue
+        cells=[pct(row['return_on_invested_capital']) for row in entry['years']]
+        lines.append(f'| {name.title()} ROIC | '+' | '.join(cells)+' | |')
+        incremental=['n/a' if index<3 else pct(row['incremental_return_3y']) for index,row in enumerate(entry['years'])]
+        lines.append(f'| {name.title()} 3-year incremental ROIC | '+' | '.join(incremental)+
+                     f' | {pct(entry["return_on_new_capital_after_forecast"])} |')
+    refs=', '.join(returns.get('source_refs') or [])
+    rnd=any(entry.get('continuing_value_nopat_includes_rnd') for entry in returns['scenarios'].values())
+    opening=returns['opening_invested_capital']
+    amount=f'{opening/1e9:,.1f} billion' if abs(opening)>=1e8 else f'{opening:,.0f}'
+    lines += ['', f'Invested capital starts at {currency} {amount}, the reported '
+                  f'operating-approach invested capital including goodwill and acquired intangibles at the fiscal year end '
+                  f'{returns.get("fiscal_year_end") or "of the last report"}'+(f' [{refs}]' if refs else '')+', and adds each '
+                  'year\'s net reinvestment. ROIC is NOPAT over average capital; 3-year incremental ROIC is the NOPAT change '
+                  'over three years over the capital change over the three years ending a year earlier, so it starts in year '
+                  '4 (n/a before; n/m where capital fell). Forecast NOPAT is EBIT after the plan\'s tax rate, while the history '
+                  'table uses EBITA after the cash tax rate, so the definitions differ slightly. The last column is the return '
+                  'on new capital after the forecast, the terminal return'+
+                  (', earned on NOPAT and capital that include net R&D investment, which the forecast years expense' if rnd else '')+
+                  '. Display only; no check uses these figures.']
+    return lines
 
 
 def _terminal_growth_sentence(result, risk_free):
@@ -2723,7 +2921,15 @@ def _market_consistency_exhibits(result, currency):
         lines += ['', 'The implied return is the one discount rate, applied in every year and in the terminal value, at which value '
                       'equals the price; the required return is the same calculation at the house value. This describes what the '
                       'price implies, not a forecast of shareholder returns. A terminal spread under two points marks a fragile '
-                      'result.']
+                      'result, except where the terminal return follows the rate: the continuing value is then NOPAT over the '
+                      'rate, so rates from 0.50% are searched, below terminal growth.']
+        money=lambda value: f'{currency} {value:,.2f}'
+        headline_name='headline' if _base_headline(result) else 'weighted'
+        for name,row in [*implied['scenarios'].items(),(headline_name,weighted)]:
+            if not isinstance(row.get('implied_return'),(int,float)):
+                sentence=_implied_return_sentence(row,name,money)
+                if sentence:
+                    lines.append('- '+name.title()+': '+sentence.replace('What the price implies: ','',1))
     panel=result.get('convention_panel')
     if panel:
         lines += ['', '### Value under alternative conventions (base case, one change at a time)', '',
@@ -2748,6 +2954,37 @@ def _market_consistency_exhibits(result, currency):
             else:
                 lines.append(f'| {row["label"]} | — | — | not calculated | — |')
     return lines
+
+
+def _implied_return_sentence(row, which, money):
+    """What one flat rate says about the price, including when no rate in the searched range gives it.
+
+    The summary sentence was dropped without explanation when no rate solved (Apple
+    restatement, Druckenmiller critique F5, 2026-11-26).
+    """
+    implied,required=row.get('implied_return'),row.get('required_return_flat_equivalent')
+    house=(f' The house cash flows at the house rate path are equivalent to one flat rate of {required:.2%}.'
+           if isinstance(required,(int,float)) else '')
+    if isinstance(implied,(int,float)) and isinstance(required,(int,float)):
+        return (f'What the price implies: one flat discount rate of {implied:.2%} equates the {which} value '
+                f'with the price; the house cash flows at the house rate path are equivalent to '
+                f'{required:.2%} (difference {row["gap_percentage_points"]:.2f} points).')
+    solutions=row.get('implied_return_solutions') or []
+    if len(solutions)>1:
+        return ('What the price implies: more than one flat discount rate equates the '+which+' value with the price ('+
+                ', '.join(f'{rate:.2%}' for rate in solutions)+'), so no single implied rate is reported.'+house)
+    bound=row.get('price_bound')
+    if isinstance(bound,dict):
+        low,high=bound['search_range']
+        if bound['price_position']=='above_highest_value':
+            return (f'What the price implies: no flat discount rate between {low:.2%} and {high:.0%} reconciles the price; the '
+                    f'highest {which} value any rate in that range gives is {money(bound["highest_value"])}, at '
+                    f'{bound["rate_at_highest_value"]:.2%}.'+house)
+        if bound['price_position']=='below_lowest_value':
+            return (f'What the price implies: no flat discount rate between {low:.2%} and {high:.0%} reconciles the price; the '
+                    f'lowest {which} value any rate in that range gives is {money(bound["lowest_value"])}, at '
+                    f'{bound["rate_at_lowest_value"]:.2%}.'+house)
+    return None
 
 
 def computed_summary(plan, result):
@@ -2781,11 +3018,9 @@ def computed_summary(plan, result):
         lines+=['',f'Price {money(result["market_price"])}'+(f', observed {quoted}' if quoted else '')+
                 (f'; valuation date {result["valuation_date"]}.' if result.get('valuation_date') else '.')]
     implied=(result.get('implied_return_at_price') or {}).get('probability_weighted_value') or {}
-    if isinstance(implied.get('implied_return'),(int,float)) and isinstance(implied.get('required_return_flat_equivalent'),(int,float)):
-        lines+=['',f'What the price implies: one flat discount rate of {implied["implied_return"]:.2%} equates the '
-                   f'{"headline" if headline else "weighted"} value '
-                   f'with the price; the house cash flows at the house rate path are equivalent to '
-                   f'{implied["required_return_flat_equivalent"]:.2%} (difference {implied["gap_percentage_points"]:.2f} points).']
+    sentence=_implied_return_sentence(implied,'headline' if headline else 'weighted',money)
+    if sentence:
+        lines+=['',sentence]
     requirements=(result.get('price_requirements') or {}).get('rows') or []
     if requirements:
         lines+=['','What the price requires (base case, one input at a time, all others fixed; rows are alternatives):','',
@@ -2803,11 +3038,14 @@ def computed_summary(plan, result):
             if row['input']!='revenue_growth' or not isinstance(path,dict):
                 return ''
             return base_rates.summary_note(result.get('base_rates'),which,path.get('years'))
+        def capital_path(row):
+            path=row.get('house_sales_to_capital_path')
+            return f'{path[0]:.2f} in year 1 to {path[-1]:.2f} in year {len(path)}' if path else f'{row["house"]:.2f}'
         for row in requirements:
             house=(f'{row["house"]:.1%} in year 1'+(f', {over(row.get("house_path"))}'+base_rate(row,'house',row.get('house_path'))
                                                     if row.get('house_path') else '')
                    if row['kind']=='shift' else
-                   f'{row["house"]:.2f}' if row['input']=='sales_to_capital' else f'{row["house"]:.2%}')
+                   capital_path(row) if row['input']=='sales_to_capital' else f'{row["house"]:.2%}')
             if row['status']=='solved':
                 needed=(shifted(row['needed'],row.get('needed_path'),base_rate(row,'needed',row.get('needed_path')))
                         if row['kind']=='shift' else
@@ -2829,7 +3067,7 @@ def computed_summary(plan, result):
             if row['kind']=='shift':
                 return f'{row["needed"]*100:+.1f} points in every explicit year'
             if row['input']=='sales_to_capital':
-                return f'{row["house"]:.2f} to {row["needed"]:.2f}'
+                return f'{capital_path(row)} to {row["needed"]:.2f}'+(' in every year' if row.get('house_sales_to_capital_path') else '')
             return f'{row["house"]:.2%} to {row["needed"]:.2%}'
         closes=[row for row in requirements if row['status']=='solved']
         cannot=[row for row in requirements if row['status']=='not_reachable']
