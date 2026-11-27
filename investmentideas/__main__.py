@@ -49,6 +49,11 @@ def main():
             from .pipeline import attach_diagnostics
             assumptions = json.loads(args.revalue.read_text(encoding='utf-8'))
             results = attach_diagnostics(assumptions, evaluate(assumptions))
+            # The forecast-sample record of the saved valuation beside it, marked edited if the inputs changed.
+            previous = args.revalue.parent / 'valuation.json'
+            if previous.is_file() and previous.stat().st_size <= 20_000_000:
+                from .consensus import carry
+                carry(json.loads(previous.read_text(encoding='utf-8')), assumptions, results)
             folder = Path(args.output)
             folder.mkdir(parents=True, exist_ok=True)
             save_valuation(folder, assumptions, results)

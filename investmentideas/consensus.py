@@ -1,4 +1,4 @@
-"""One forecast plan from several plans written independently on the same evidence.
+"""One forecast plan from several samples of the same forecast request.
 
 Four plan samples on identical evidence and an identical prompt at temperature 0
 (2026-11-27) valued Apple at 138-151 and Microsoft at 354-398 a share. Every
@@ -217,8 +217,18 @@ def _closest(indices, paths):
         return indices[0], {index: None for index in indices}
     reference = _median_paths([paths[index] for index in usable])
     distances = {index: (_distance(paths[index], reference) if paths[index] else None) for index in indices}
-    best = min(usable, key=lambda index: (distances[index], index))
+    # Distances equal to rounding (two samples always sit at the same distance from their mean) are a tie,
+    # broken by the lower sample number rather than by floating-point noise.
+    nearest = min(distances[index] for index in usable)
+    best = min(index for index in usable if _tied(distances[index], nearest))
     return best, distances
+
+
+TIE = 1e-9
+
+
+def _tied(distance, nearest):
+    return distance is not None and nearest is not None and abs(distance - nearest) <= TIE * max(1.0, abs(nearest))
 
 
 # ---------------------------------------------------------------- the inputs
@@ -788,23 +798,23 @@ def method_note(report, currency=''):
     spread = (f'; their base values ranged from {min(row["values"]["base"] for row in rows):,.2f} to '
               f'{max(row["values"]["base"] for row in rows):,.2f}{unit} a share' if len(rows) > 1 else '')
     dropped = report.get('dropped') or []
-    tail = (f' {WORDS.get(len(dropped), len(dropped)).capitalize()} further forecast'
+    tail = (f' {WORDS.get(len(dropped), len(dropped)).capitalize()} further sample'
             f'{"s" if len(dropped) > 1 else ""} failed validation after {"their" if len(dropped) > 1 else "its"} '
             'repairs and {} left out.'.format('were' if len(dropped) > 1 else 'was') if dropped else '')
     count = report['sample_count']
     if report.get('method') == 'single_sample':
-        return (f'{WORDS.get(requested, requested).capitalize()} forecasts were requested from the same evidence; only '
-                'one passed validation, and it is the forecast valued.' + tail)
+        return (f'The run requested {_samples(requested)}; only one passed validation, and it is the forecast '
+                'valued.' + tail)
     total = WORDS.get(count, str(count))
     if whole:
         why = ('the combined plan failed a forecast check the individual forecasts passed' if report.get('fallback')
                else 'their inputs could not be combined' if report.get('method') == 'uncombinable_closest_sample'
                else 'no two forecasts shared a structure')
-        return (f'{total.capitalize()} forecasts were written independently from the same evidence{spread}. The forecast '
+        return (f'The forecast was built from {_samples(count)}{spread}. The forecast '
                 f'valued is the one closest to their per-year median revenue and EBIT paths, because {why}.' + tail)
     used = len(report['structure_decision']['group'])
-    which = (f'{total} forecasts written independently from the same evidence' if used == count else
-             f'the {WORDS.get(used, used)} of {total} independently written forecasts that share one structure')
+    which = (_samples(count) if used == count else
+             f'the {WORDS.get(used, used)} of {_samples(count)} that share one structure')
     if report.get('method') == 'mean' and report.get('sector_weight_method') == 'median' and used > 2:
         head = (f'The forecast averages {which}, input by input, with the median of their industry weights for the '
                 'beta')
@@ -867,10 +877,63 @@ def combined(record):
         len((record.get('structure_decision') or {}).get('group') or []) > 1
 
 
+ORDINALS = {2: 'second', 3: 'third', 4: 'fourth', 5: 'fifth'}
+
+
+def summary(report):
+    """The part of a consensus report saved with the valuation and read by the memo."""
+    keys = ('method', 'sector_weight_method', 'requested_samples', 'sample_count', 'plan_used', 'representative_sample',
+            'structure_decision', 'consensus_values', 'sample_value_range', 'dropped', 'fallback',
+            'bases_from_other_samples', 'plan_fingerprint', 'combine_error', 'notes')
+    record = {key: copy.deepcopy(report[key]) for key in keys if key in report}
+    record['samples'] = [{key: copy.deepcopy(row.get(key)) for key in
+                          ('sample', 'values', 'in_consensus', 'structure', 'distance_to_median_paths')}
+                         for row in report.get('samples', [])]
+    impact = (report.get('value_impact') or {}).get('groups') or []
+    record['value_impact'] = [{key: row[key] for key in ('group', 'min_base_value', 'max_base_value', 'range')}
+                              for row in impact]
+    record['basis'] = ('Each sample is the same plan request sent again in one cache session; the plan valued combines '
+                       'the valid samples input by input (plan-consensus.json). Nothing in it reads the market price.')
+    return record
+
+
+def enrich(record, report):
+    """A saved valuation record completed from the run's full report (records saved before a field existed)."""
+    if not record or not report:
+        return record
+    record = copy.deepcopy(record)
+    full = {row.get('sample'): row for row in report.get('samples') or []}
+    for row in record.get('samples') or []:
+        for key in ('structure', 'distance_to_median_paths'):
+            if row.get(key) is None and (full.get(row.get('sample')) or {}).get(key) is not None:
+                row[key] = copy.deepcopy(full[row['sample']][key])
+    decision = record.setdefault('structure_decision', {})
+    if 'structure' not in decision and (report.get('structure_decision') or {}).get('structure'):
+        decision['structure'] = copy.deepcopy(report['structure_decision']['structure'])
+    return record
+
+
+def carry(previous, plan, result):
+    """Attach a saved valuation's record to a re-valued plan, marked edited if its forecast inputs changed."""
+    record = (previous or {}).get('forecast_consensus') if isinstance(previous, dict) else None
+    if not isinstance(record, dict) or not isinstance(result, dict):
+        return result
+    record = copy.deepcopy(record)
+    if record.get('plan_fingerprint') and isinstance(plan, dict) and fingerprint(plan) != record['plan_fingerprint']:
+        record['edited_after_consensus'] = True
+        record['current_values'] = {name: ((result.get('scenarios') or {}).get(name) or {}).get('per_share_value')
+                                    for name in SCENARIOS}
+    result['forecast_consensus'] = record
+    return result
+
+
+def _whole(record):
+    return record.get('method') in SINGLE_METHODS or record.get('plan_used') == 'representative_sample_fallback'
+
+
 def _range(record):
-    whole = record.get('method') in SINGLE_METHODS or record.get('plan_used') == 'representative_sample_fallback'
     values = [row['values']['base'] for row in record.get('samples') or []
-              if (whole or row.get('in_consensus')) and _number((row.get('values') or {}).get('base'))]
+              if (_whole(record) or row.get('in_consensus')) and _number((row.get('values') or {}).get('base'))]
     return (min(values), max(values)) if len(values) > 1 else None
 
 
@@ -878,66 +941,160 @@ def _count(record):
     return len((record.get('structure_decision') or {}).get('group') or [])
 
 
+def _left_out(record):
+    """Samples valued but left out of the combination for their structure, with their base values."""
+    excluded = set((record.get('structure_decision') or {}).get('excluded') or [])
+    return [row for row in record.get('samples') or [] if row.get('sample') in excluded and
+            _number((row.get('values') or {}).get('base'))]
+
+
+def _samples(count):
+    return f'{WORDS.get(count, count)} sample{"s" if count != 1 else ""} of the same forecast request'
+
+
+def _names(components):
+    names = [str(name).replace('_', ' ') for name in components or []]
+    return names[0] if len(names) == 1 else ', '.join(names[:-1]) + ' and ' + names[-1] if names else ''
+
+
+MODES = {'gross_profit_less_expenses': 'gross profit less expenses', 'aggregate_ebit_margins': 'segment revenue with '
+         'EBIT margins', 'consolidated': 'consolidated growth and EBIT margins'}
+
+
+def _difference(row, combined_structure):
+    """What a left-out sample did differently from the samples combined."""
+    own = row.get('structure') or {}
+    other = combined_structure or {}
+    if not own or not other:
+        return 'used a different structure'
+    parts = []
+    if own.get('earnings_mode') != other.get('earnings_mode'):
+        mode = MODES.get(own.get('earnings_mode'), str(own.get('earnings_mode')).replace('_', ' '))
+        parts.append(f'modelled {mode}' + (f' by segment ({_names(own.get("components"))})'
+                                           if own.get('components') else ''))
+    elif own.get('components') != other.get('components'):
+        parts.append(f'used other segments ({_names(own.get("components"))})')
+    if own.get('horizon') != other.get('horizon'):
+        parts.append('used a different forecast horizon')
+    if own.get('beta_calculation') != other.get('beta_calculation') or own.get('discount_rate') != other.get('discount_rate'):
+        parts.append('built its discount rate differently')
+    return ' and '.join(parts) or 'used a different structure'
+
+
+def _inputs_text(record, count):
+    """The forecast inputs the combined structure has, in a sentence."""
+    structure = (record.get('structure_decision') or {}).get('structure') or {}
+    mode = structure.get('earnings_mode')
+    head = {'gross_profit_less_expenses': 'Segment growth, gross margins, expense shares',
+            'aggregate_ebit_margins': 'Segment growth, EBIT margins',
+            'consolidated': 'Growth, EBIT margins'}.get(mode, 'The forecast inputs')
+    how = 'averaged' if record.get('method') == 'mean' or count == 2 else 'the medians of the samples'
+    text = f'{head}, sales-to-capital and tax rates are {how} year by year'
+    if structure.get('beta_calculation') == 'bottom_up_sector_weighted' and count > 2:
+        text += ('; the industry weights behind the beta take the median, so an industry only one sample used drops out'
+                 if record.get('sector_weight_method') == 'median' else '; the industry weights behind the beta are averaged')
+    return text + '.'
+
+
+def _representative_text(record, style):
+    """Which sample supplied the rationales and named cases, its own base value, and any tie."""
+    number = record.get('representative_sample')
+    rows = {row.get('sample'): row for row in record.get('samples') or []}
+    group = [row for row in record.get('samples') or [] if row.get('in_consensus')]
+    distances = [row.get('distance_to_median_paths') for row in group if _number(row.get('distance_to_median_paths'))]
+    nearest = min(distances) if distances else None
+    tied = [row['sample'] for row in group if _number(row.get('distance_to_median_paths')) and
+            _tied(row['distance_to_median_paths'], nearest)]
+    own = ((rows.get(number) or {}).get('values') or {}).get('base')
+    combined_value = (record.get('consensus_values') or {}).get('base')
+    value = ''
+    if _number(own) and _number(combined_value):
+        value = (f', whose own base value was {style.per_share(own)} against {style.per_share(combined_value)} for the '
+                 'combined plan' + (' before the correction' if record.get('edited_after_consensus') else ''))
+    if len(tied) > 1 and number in tied:
+        names = ' and '.join(map(str, tied)) if len(tied) == 2 else ', '.join(map(str, tied[:-1])) + f' and {tied[-1]}'
+        return (f'Samples {names} tied for closest to the per-year median revenue and EBIT paths; the rationales and '
+                f'named cases come from sample {number}{value}.')
+    return (f'The rationales and named cases come from sample {number}, the one closest to the per-year median revenue '
+            f'and EBIT paths{value}.')
+
+
 def first_page_sentence(record, style):
-    """One sentence under the scenario table, or None when no combination of forecasts is valued."""
+    """One sentence under the scenario table, or None when no combination of samples is valued."""
     if not combined(record) or not _range(record):
         return None
     low, high = _range(record)
-    count = WORDS.get(_count(record), str(_count(record)))
-    kind = 'averages' if record.get('method') == 'mean' or _count(record) == 2 else 'is the median of'
+    count = _count(record)
+    out = _left_out(record)
+    if len(out) == 1:
+        extra = (f'; a {ORDINALS.get(count + 1, "further")}, structured differently, gave '
+                 f'{style.per_share(out[0]["values"]["base"])} and was left out')
+    elif out:
+        extra = (f'; {WORDS.get(len(out), len(out))} others, structured differently, gave ' +
+                 ', '.join(style.per_share(row['values']['base']) for row in out[:-1]) +
+                 f' and {style.per_share(out[-1]["values"]["base"])} and were left out')
+    else:
+        extra = ''
     if record.get('edited_after_consensus'):
-        return (f'The forecast began as the {"average" if kind == "averages" else "median"} of {count} forecasts '
-                f'written from the same evidence, valued at {style.per_share(low)} to {style.per_share(high)}, and was '
-                'revised after review.')
-    return (f'The base case {kind} {count} forecasts written from the same evidence; their values ranged from '
-            f'{style.per_share(low)} to {style.per_share(high)}.')
+        noun = 'average' if record.get('method') == 'mean' or count == 2 else 'median'
+        return (f'The forecast began as the {noun} of {_samples(count)}, valued at {style.per_share(low)} to '
+                f'{style.per_share(high)}, and was revised after review{extra}.')
+    kind = 'averages' if record.get('method') == 'mean' or count == 2 else 'is the median of'
+    return (f'The base case {kind} {_samples(count)}; their values ranged from {style.per_share(low)} to '
+            f'{style.per_share(high)}{extra}.')
 
 
-def method_notes(record, style):
-    """The Method notes on how the forecast was built from several samples; [] for one requested forecast."""
-    if not record or record.get('requested_samples', record.get('sample_count', 1)) == 1:
+def unavailable_note(requested):
+    """The note for a run that asked for several samples but carries no record of them."""
+    return (f'This run requested {_samples(requested)}, but the record of those samples is not available for this '
+            'valuation, so their values and how they were combined are not shown.')
+
+
+def method_notes(record, style, requested=None):
+    """The Method notes on how the forecast was built from several samples.
+
+    ``requested`` is the sample count the run asked for, from its budget record:
+    with more than one and no record, the note says the record is unavailable.
+    """
+    if not record:
+        return [unavailable_note(requested)] if isinstance(requested, int) and requested > 1 else []
+    requested = record.get('requested_samples', record.get('sample_count', 1))
+    if requested == 1:
         return []
-    count, requested = _count(record), record.get('requested_samples', record.get('sample_count'))
+    count = _count(record)
     dropped = record.get('dropped') or []
     span = _range(record)
     values = (f' Their base values ranged from {style.per_share(span[0])} to {style.per_share(span[1])} a share.'
               if span else '')
     left = (f' {WORDS.get(len(dropped), len(dropped)).capitalize()} of the {WORDS.get(requested, requested)} '
-            f'forecasts requested failed validation after {"their" if len(dropped) > 1 else "its"} repairs and '
+            f'samples requested failed validation after {"their" if len(dropped) > 1 else "its"} repairs and '
             f'{"were" if len(dropped) > 1 else "was"} left out.' if dropped else '')
-    excluded = (record.get('structure_decision') or {}).get('excluded') or []
-    other = (f' {WORDS.get(len(excluded), len(excluded)).capitalize()} of the others used a different set of segments or '
-             f'horizon and {"were" if len(excluded) > 1 else "was"} left out.' if excluded and combined(record) else '')
-    written = (f'{WORDS.get(count, count)} of the {WORDS.get(requested, requested)}'
-               if isinstance(requested, int) and requested > count else WORDS.get(count, count))
+    other = ''
     if combined(record):
-        if record.get('method') == 'mean' or count == 2:
-            how = ('Growth, gross margins, expense shares, sales-to-capital and tax rates are averaged year by year'
-                   + ('; the industry weights behind the beta take the median, so an industry only one forecast used '
-                      'drops out' if record.get('sector_weight_method') == 'median' and count > 2 else '') + '.')
-        else:
-            how = 'Each forecast input is the median of the forecasts, year by year.'
-        note = (f'The forecast combines {written} forecasts written independently from the same evidence '
-                f'and request. {how} The rationales and named cases come from the forecast closest to the per-year '
-                f'median revenue and EBIT paths.{values}{left}{other}')
+        structure = (record.get('structure_decision') or {}).get('structure')
+        other = ''.join(f' Sample {row["sample"]} {_difference(row, structure)}, gave '
+                        f'{style.per_share(row["values"]["base"])}, and was left out.' for row in _left_out(record))
+    written = (f'{WORDS.get(count, count)} of the {_samples(requested)}' if isinstance(requested, int) and requested > count
+               else _samples(count))
+    if combined(record):
+        note = (f'The forecast combines {written}. {_inputs_text(record, count)} {_representative_text(record, style)}'
+                f'{values}{left}{other}')
     elif record.get('plan_used') == 'representative_sample_fallback':
-        note = (f'{WORDS.get(count, count).capitalize()} forecasts were written independently from the same evidence. '
-                'Their combination failed a forecast check the individual forecasts passed, so the forecast valued is '
-                f'the one closest to their per-year median revenue and EBIT paths.{values}{left}')
+        note = (f'The forecast was built from {_samples(count)}. Their combination failed a forecast check the '
+                'individual samples passed, so the forecast valued is the sample closest to their per-year median '
+                f'revenue and EBIT paths, sample {record.get("representative_sample")}.{values}{left}')
     elif record.get('method') == 'uncombinable_closest_sample':
-        note = (f'{WORDS.get(requested, requested).capitalize()} forecasts were written independently from the same '
-                'evidence, but their inputs could not be combined, so the forecast valued is the one closest to their '
-                f'per-year median revenue and EBIT paths.{values}{left}')
+        note = (f'The forecast was built from {_samples(requested)}, but their inputs could not be combined, so the '
+                f'forecast valued is the sample closest to their per-year median revenue and EBIT paths, sample '
+                f'{record.get("representative_sample")}.{values}{left}')
     elif record.get('method') == 'closest_single_sample':
-        note = (f'{WORDS.get(requested, requested).capitalize()} forecasts were written independently from the same '
-                'evidence, but no two used the same segments and horizon, so the forecast valued is the one closest to '
-                f'their median path.{values}{left}')
+        note = (f'The forecast was built from {_samples(requested)}, but no two used the same structure, so the '
+                'forecast valued is the sample closest to their per-year median revenue and EBIT paths, sample '
+                f'{record.get("representative_sample")}.{values}{left}')
     else:
-        note = (f'{WORDS.get(requested, requested).capitalize()} forecasts were requested from the same evidence; one '
-                f'passed validation and is the forecast valued.{left}')
+        note = (f'The run requested {_samples(requested)}; one passed validation and is the forecast valued.{left}')
     notes = [note]
     if record.get('edited_after_consensus'):
         notes.append('A forecast correction after review then edited the plan valued. The values above are those of the '
-                     'forecasts before the correction; the scenario table shows the corrected plan.')
+                     'samples before the correction; the scenario table shows the corrected plan.')
     return notes
-
