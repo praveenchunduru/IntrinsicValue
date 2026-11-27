@@ -105,9 +105,10 @@ def bare_change(value, reference):
 
 
 def table_scale(values):
-    """('B', 1e9, decimals) or ('M', 1e6, 0) for a column set, so cells stay short."""
+    """('B', 1e9, 1), ('M', 1e6, 0) or whole units ('', 1, 0) for a column set, so cells stay short."""
     finite = [abs(value) for value in values if _finite(value)]
-    return ('B', 1e9, 1) if finite and max(finite) >= 1e10 else ('M', 1e6, 0)
+    largest = max(finite) if finite else 0
+    return ('B', 1e9, 1) if largest >= 1e10 else ('M', 1e6, 0) if largest >= 1e7 else ('', 1, 0)
 
 
 def scaled(value, scale, decimals=1):

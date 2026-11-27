@@ -362,7 +362,7 @@ def _source(title, url, document, *, kind, source_tier, metadata, max_chars=MAX_
         raise RuntimeError('Official source is missing or exceeds its archive size limit')
     text = html_to_text(document)
     if any(marker in text[:2000].lower() for marker in ('access denied', 'undeclared automated tool', 'request rate threshold exceeded')):
-        raise RuntimeError('Official source returned an access-control page, not a reviewed document')
+        raise RuntimeError('Official source returned an access-control page instead of the document')
     if len(text) < 200:
         raise RuntimeError('Official source has insufficient readable text')
     excerpts = select_excerpts(text, max_chars, opening_chars)

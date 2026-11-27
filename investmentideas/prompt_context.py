@@ -148,7 +148,7 @@ def valuation_context(plan, result, *, significant=None):
         'context_metadata': {
             'format': 'valuation-context-v1',
             'full_math_artifacts_authoritative': True,
-            'authority': 'The full original plan and result artifacts are authoritative; this is a deterministic presentation, not new valuation math.',
+            'authority': 'The full original plan and result artifacts are authoritative; this is a deterministic presentation with no new valuation math.',
             'plan_sha256': plan_hash,
             'result_sha256': result_hash,
             'references_enabled': references_enabled,

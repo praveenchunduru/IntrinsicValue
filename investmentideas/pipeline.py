@@ -24,7 +24,7 @@ from .costs import cost_summary
 from .analytics import annual_metrics
 from .fundamentals import yahoo_financials
 from .inputs import canonical_reported_inputs, operating_company_gate, pin_reported_inputs
-from .quality import (DIAGNOSTIC_SCOPE, HOUSE_ATTRIBUTION, RUBRIC, TRADING_TERMS, assessment_findings, claim_ledger,
+from .quality import (WRITING_STANDARD, dollar_amounts, style_added, DIAGNOSTIC_SCOPE, HOUSE_ATTRIBUTION, RUBRIC, TRADING_TERMS, assessment_findings, claim_ledger,
                       inspect_memo, parse_json, parse_review, prereview_checks, prose_words, trace_pools, untraced_figures)
 from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_breakdown_facts, inline_facts, archive_focus_excerpts
 from .evidence_tables import (breakdown_markdown, breakdown_tables, filing_supplement_for, historical_baseline,
@@ -80,9 +80,9 @@ figure that only an unverified excerpt supports.'''
 # Memo stages rewrite the full memo. A live revision overran a 14,000-token
 # limit as the memo grew, so the limit leaves room above the word budget.
 MEMO_TOKENS = 18000
-MEMO_WORDS = 'about 3,000 words of prose in total; Python adds the tables, and a revision replaces text rather than adding to it'
+MEMO_WORDS = 'about 3,000 words of prose in total; Python adds the tables, and a revision replaces text and adds none'
 FORECAST_SCHEMA = """Return ONLY compact JSON for house forecasts:
-{"assumptions_label":"House forecasts, not reported facts or guidance",
+{"assumptions_label":"House forecasts",
  "scenario_rationales":{"bear":"Evidence and economic mechanism for this scenario [S#]","base":"...","bull":"..."},
  "scenarios":{"bear":{"probability":<decimal>,"tax_rate":<decimal>,"sales_to_capital":<number>},
  "base":{<same fields>},"bull":{<same fields>}}} (Python sets terminal_roic)
@@ -113,10 +113,9 @@ incremental revenue / sales-to-capital reinvestment. Maintenance investment offs
 D&A; GAAP EBIT already expenses SBC, R&D and operating rent. Do not deduct those
 again. Explicitly justify growth/margin fade, capital efficiency, tax and WACC.
 Terminal return on new capital is a house convention that Python sets: the terminal discount
-rate (Mauboussin's steady state). The 10 forecast years are a house horizon, not a measured
-competitive advantage period (Python values 5, 15 and 20 years and the industry fade beside it):
-excess returns on new investment come only from the forecast years' growth and capital
-efficiency, and after year 10 growth adds no value.
+rate (Mauboussin's steady state). The 10 forecast years are a house horizon. Python values horizons
+of 5, 15 and 20 years and the industry fade beside it. Excess returns on new investment come only
+from the forecast years' growth and capital efficiency, and after year 10 growth adds no value.
 Optional counterfactuals map names to base-scenario forecast overrides (the same horizon).
 They are separate diagnostic cases, never probability weights or reported facts; Python computes
 their values. A plausible competing market-pricing case can be included without claiming its
@@ -184,7 +183,7 @@ Only when no industry in the table fits the business, the unlevered_beta
 record may instead omit value and include calculation:"historical_issuer_cash_corrected" and
 historical_equity_beta:<measured value>, with observed_at, source_refs and label retained.
 Python uses the explicit nonoperating cash bridge and dated financing inputs to derive the
-operating-asset proxy. Adopting it for future risk is a house judgment, not a future measurement.
+operating-asset proxy. Adopting it for future risk is a house judgment.
 Adjudicate issuer-history window, sector mapping and normalization alternatives when rate choice
 drives the conclusion; an exact formula alone does not justify the selected forward-risk input.
 Optional calibration_comparisons is a list of name, label and overrides, with each override a
@@ -198,7 +197,7 @@ source_refs, direction ("lowers_value" or "raises_value": what crossing the thre
 and exactly one of counterfactual(name) or calibration_comparison(name); the linked case must move
 value in that direction.
 Python supplies each conditional value and change.
-These are analyst-selected decision thresholds, not company guidance or automatic forecasts.
+These are analyst-selected decision thresholds. They are neither company guidance nor automatic forecasts.
 Justify reinvestment.
 This is valuation research only: do not supply entry thresholds, margins of safety or other
 trading rules.
@@ -391,7 +390,11 @@ EDIT_INSTRUCTIONS = (
     'finding names, do not reword for style, and keep every heading. Where a finding is wrong, keep the text or make '
     'the correct reading plain; do not copy an invalid accusation into the memo. Copy figures exactly from the '
     'computed summary, the exhibits or a source, calculate no new figures, and place each [S#] after the sourced '
-    'figure it supports. If a figure you need is not there, make the point without it.')
+    'figure it supports. If a figure you need is not there, make the point without it. Every replacement follows the '
+    'writing standard in the quality standard below; Python rejects a replacement that adds "USD" for a dollar filer, a '
+    'number of seven or more digits, an em dash, a ", not" contrast or a sentence narrating an exhibit.')
+# The writer prompt's opening; tests and offline harnesses route the draft call on it.
+WRITER_OPENING = 'Write the prose sections of the intrinsic-value memo for '
 
 
 def _edit_response(text):
@@ -409,7 +412,7 @@ def _edit_response(text):
     return edits,flags
 
 
-def _apply_finding_edits(memo, edits, finding_ids, pools):
+def _apply_finding_edits(memo, edits, finding_ids, pools, dollars=True):
     """Apply edits that each answer a named finding; return (memo, one record per edit).
 
     An edit is rejected when it names no finding, when its quote is not exactly
@@ -421,6 +424,10 @@ def _apply_finding_edits(memo, edits, finding_ids, pools):
         record={'finding':edit.get('finding') if isinstance(edit,dict) else None,'applied':False}
         quote=edit.get('quote') if isinstance(edit,dict) else None
         replacement=edit.get('replacement') if isinstance(edit,dict) else None
+        if dollars and isinstance(replacement,str) and dollar_amounts(replacement)!=replacement:
+            # A dollar amount written with the code is restyled ($36.3B); its figure is unchanged.
+            replacement=dollar_amounts(replacement)
+            record['restyled']=True
         record.update(quote=quote if isinstance(quote,str) else None,
                       replacement=replacement if isinstance(replacement,str) else None)
         if not isinstance(quote,str) or not quote.strip() or not isinstance(replacement,str):
@@ -438,11 +445,17 @@ def _apply_finding_edits(memo, edits, finding_ids, pools):
                 record['reason']='replacement adds figures that trace to no source or computed value: '+', '.join(added[:5])
             elif TRADING_TERMS.search(replacement) and not TRADING_TERMS.search(quote):
                 record['reason']='replacement adds a trading-layer term'
+            elif style_added(quote,replacement,dollars,memo):
+                record['reason']='replacement breaks the writing standard: '+', '.join(style_added(quote,replacement,dollars,memo))
             else:
                 memo=memo.replace(quote,replacement)
                 record['applied']=True
         records.append(record)
     return memo,records
+
+
+def _dollar_filer(plan, result):
+    return str((result or {}).get('currency') or (plan or {}).get('currency') or '').upper()=='USD'
 
 
 def _carried_refutations(state, iteration, manifest):
@@ -582,7 +595,7 @@ def _date_by_evidence(plan, sources):
         return plan,[]
     plan=copy.deepcopy(plan)
     changes=[]
-    reason='the valuation is dated at the run\'s latest evidence retrieval (UTC calendar date), not a model-written date'
+    reason='the valuation is dated at the run\'s latest evidence retrieval (UTC calendar date)'
     if plan.get('valuation_date',day)!=day:
         changes.append({'field':'valuation_date','previous':plan['valuation_date'],'pinned':day,'source_refs':[],'reason':reason})
     plan['valuation_date']=day
@@ -1654,8 +1667,8 @@ def _last_edits(response):
     return found
 
 
-def _apply_edits(memo, edits):
-    """Apply quote-and-replacement edits whose quote occurs exactly once; report the rest."""
+def _apply_edits(memo, edits, dollars=True):
+    """Apply quote-and-replacement edits whose quote occurs exactly once and keep the writing standard; report the rest."""
     applied,skipped=0,[]
     for edit in edits if isinstance(edits,list) else []:
         quote=edit.get('quote') if isinstance(edit,dict) else None
@@ -1672,6 +1685,12 @@ def _apply_edits(memo, edits):
             continue
         if count!=1:
             skipped.append(f'quote found {count} times: {quote[:80]}')
+            continue
+        if dollars:
+            replacement=dollar_amounts(replacement)
+        broken=style_added(quote,replacement,dollars,memo)
+        if broken:
+            skipped.append('replacement breaks the writing standard ('+', '.join(broken)+'): '+quote[:80])
             continue
         memo=memo.replace(quote,replacement)
         applied+=1
@@ -2662,22 +2681,21 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
         'Reported finance leases are deducted once in other equity claims, outside the selected financial net-debt subtotal. ')
     if bridge.get('short_term_financing',{}).get('basis')=='identified_categories_house_assumption':
         lease_allocation+=('Short-term financing beyond the identified reported categories is assumed zero because the scanned SEC '
-            'record reports no other short-term borrowing amount; an absent concept is not a reported zero, and undisclosed '
-            'borrowings would lower equity value. ')
+            'record reports no other short-term borrowing amount. Undisclosed borrowings would lower equity value. ')
     locked['assumptions_label']=(
         'Growth, margins, taxes, discount rates, capital efficiency, terminal returns and '+
         ('the bear and bull stress cases ' if apply_conventions else 'scenario weights ')+
-        'are house forecasts, not reported facts or company guidance. Historical actuals use the '
+        'are house forecasts. Historical actuals use the '
         'reported-input snapshot. Only the cash and investment assets selected in the pinned bridge are '
-        'classified as nonoperating under an explicit house policy. Omitted investment categories are '
-        'not reported zeros. All selected cash and investments are treated as nonoperating; any part the business '
+        'classified as nonoperating under an explicit house policy. An omitted investment category counts as zero by '
+        'assumption. All selected cash and investments are treated as nonoperating; any part the business '
         'needs to operate would lower equity value. '+lease_allocation+
         ('Non-operating investments outside the selected cash are added, and noncontrolling interests, preferred stock '
          'and unfunded pension and postretirement obligations are deducted, at carrying value; pension obligations '
          'are taken before tax. Value per share divides by outstanding shares plus the latest fiscal year\'s dilutive '
          'increment. ' if locked.get('nonoperating_assets_bridge') or locked.get('share_count_bridge') else '')+
-        'Additional unidentified '
-        'claims are assumed zero, not established absent. GAAP EBIT retains operating rent, SBC and R&D. '+
+        'Unidentified claims '
+        'are assumed zero. GAAP EBIT retains operating rent, SBC and R&D. '+
         ('Discount rates move from the current cost of capital toward market-average business risk over years 6-10, and '
          'terminal growth equals the risk-free rate, the long-run growth the equity risk premium assumes, unless a '
          'scenario states a lower rate with a company-specific basis. '
@@ -2789,12 +2807,12 @@ def _pin_terminal_return(locked, sources, changes):
                             'reason':'terminal return on new capital equals the terminal discount rate (house convention: '
                                      'Mauboussin\'s steady state)'})
         scenario['terminal_roic']=pinned
-    return ['Terminal return on new capital equals the terminal discount rate (Mauboussin\'s steady state): the 10-year '
-            'forecast is the house horizon for excess returns, after which new investment earns its cost of capital, so growth '
-            'beyond it adds no value; rate alternatives keep this. The convention panel shows the value with a terminal '
-            'return 4 points above the terminal rate, at 15% and 25%, and at the earlier house rule (the median ROIC '
-            'computed from reported values, at most 15%) where that differs from these, and with horizons of 5, 15 and 20 years and at Mauboussin\'s '
-            'industry fade rate where the industry mapping has one.']
+    return ['Terminal return on new capital equals the terminal discount rate, Mauboussin\'s steady state. The 10-year '
+            'forecast is the house horizon for excess returns. After year 10, new investment earns its cost of capital, so '
+            'growth adds no value. The rate alternatives keep this rule. The convention panel shows the value with a terminal '
+            'return 4 points above the terminal rate, at 15% and 25%, and at the earlier house rule where that differs from '
+            'these. The earlier rule is the median ROIC computed from reported values, at most 15%. The panel also shows '
+            'horizons of 5, 15 and 20 years and Mauboussin\'s industry fade rate where the industry mapping has one.']
 
 
 def _history_rows(sources):
@@ -3294,7 +3312,10 @@ def _equity_bridge_parts(plan, result, style):
     shares=(plan or {}).get('share_count_bridge') or {}
     day=((dates.get('net_debt') or {}).get('instant')) or 'the balance-sheet date'
     unit,scale,decimals=memo_style.table_scale([base['enterprise_value'],base.get('equity_value')])
+    amounts=[]
     def money(value):
+        # The raw amount is kept beside each money line, so a line rounds to 0 only when it is not exactly zero.
+        amounts.append(value or 0)
         return memo_style.scaled(value or 0,scale,decimals)
     rows=[['Enterprise value',money(base['enterprise_value']),'present value of base-case free cash flow']]
     if _finite_number(base.get('net_debt')) and base['net_debt']<0:
@@ -3348,6 +3369,12 @@ def _equity_bridge_parts(plan, result, style):
         rows.append(['Plus dilutive shares (M)',count(base.get('dilutive_shares',0)),basis+_cite(refs.get('dilutive_shares'))])
         rows.append(['Diluted shares (M)',count(base.get('diluted_shares',base['shares_outstanding'])),''])
     rows.append([f'Value per share ({style.unit("")})',memo_style.bare_per_share(base['per_share_value']),''])
+    # Lines with nothing reported are named once in a note; the table keeps the lines that carry an amount.
+    empty=[row for row,amount in zip(rows,amounts) if amount==0 and not row[0].startswith(('Enterprise','Equity'))]
+    rows=[row for row in rows if row not in empty]
+    if empty:
+        notes.insert(0,'Bridge lines with nothing to add or deduct: '+'; '.join(
+            row[0][0].lower()+row[0][1:]+('' if row[2]=='none reported' else f', {row[2]}') for row in empty)+'.')
     lines=['','### From enterprise value to value per share','',f'Base case, {style.unit(unit)} unless the line says otherwise.','']
     lines+=_table(['Line',style.unit(unit),'Basis'],rows,['---','---:','---'])
     quoted=assets.get('reported_quoted_market_value_not_used')
@@ -3650,7 +3677,7 @@ def _monitoring_parts(result, style):
         rows=[]
         for row in monitoring:
             rows.append([str(row['name']).replace('_',' '),row.get('review_by',''),
-                         f'{row["threshold"]}'+_cite(row.get('source_refs')),
+                         (dollar_amounts(row['threshold']) if style.code=='USD' else row['threshold'])+_cite(row.get('source_refs')),
                          memo_style.bare_per_share(row['conditional_per_share_value']),
                          memo_style.bare_change(row['value_change']['dollar_delta'],row['conditional_per_share_value'])])
         lines+=['','### Monitoring tests','']+_table(['Observation','Review by','Threshold',f'Value per share ({u})',
@@ -3700,7 +3727,8 @@ def _multiples_parts(result, style):
         unit,scale,decimals=memo_style.table_scale([row.get('amount') for row in repurchases])
         for row in repurchases:
             refs=row['source_refs'] if isinstance(row['source_refs'],list) else [row['source_refs']]
-            rows.append([f'{row["label"]}'+_cite(refs),str(row.get('interpretation','')).replace('_',' '),
+            label=dollar_amounts(row['label']) if style.code=='USD' else row['label']
+            rows.append([label+_cite(refs),str(row.get('interpretation','')).replace('_',' '),
                          memo_style.scaled(row['amount'],scale,decimals),f'{row["price"]:,.2f}',f'{row["shares_repurchased"]/1e6:,.1f}',
                          memo_style.bare_per_share(row['post_repurchase_weighted_per_share_value']),
                          memo_style.bare_change(row['weighted_value_change']['dollar_delta'],
@@ -4038,6 +4066,20 @@ def _with_summary(memo, plan, result, sources=(), ticker=''):
     return title+'\n\n'+(summary+'\n' if summary else '')+prose+'\n'
 
 
+def reader_view(memo, sources, plan, result, ticker=''):
+    """The delivered memo up to the sources: title, first page, prose, valuation detail, reported history, method notes.
+
+    The reviewer and the finding check read this same text, so a finding quotes
+    what the reader sees (memo layout joined to the review loop, 2026-11-27).
+    """
+    detail,groups=_valuation_parts(plan,result)
+    history,history_notes=_reported_parts(sources)
+    groups=groups+[('Reported history',history_notes),
+                   ('Review',['Software checks and model reviews do not establish investment truth or forecast accuracy.'])]
+    return _label_unverified(_with_summary(memo,plan,result,sources,ticker).rstrip()+'\n'+'\n'.join(detail)+
+                             '\n'+'\n'.join(history+_notes_lines(groups)),sources)
+
+
 def _render(memo, sources, gaps, plan, result, state):
     """The reader's memo: title, first page, prose, valuation detail, reported history, method notes, sources, review."""
     refs='\n'.join(f'- [{s["id"]}{" unverified" if s.get("source_tier") in UNVERIFIED_TIERS else ""}] '
@@ -4067,12 +4109,7 @@ def _render(memo, sources, gaps, plan, result, state):
         note+=(f"\n\nReview model: {latest['review_model']}"+
                (f"; author model: {latest['author_model']}" if latest.get('author_model') else '')+
                ('. The same model wrote and reviewed this memo.' if same else '.'))
-    detail,groups=_valuation_parts(plan,result)
-    history,history_notes=_reported_parts(sources)
-    groups=groups+[('Reported history',history_notes),
-                   ('Review',['Software checks and model reviews do not establish investment truth or forecast accuracy.'])]
-    body=_label_unverified(_with_summary(memo,plan,result,sources,state.get('ticker','')).rstrip()+'\n'+'\n'.join(detail)+
-                           '\n'+'\n'.join(history+_notes_lines(groups)),sources)
+    body=reader_view(memo,sources,plan,result,state.get('ticker',''))
     limits=('\n\nRetrieval gaps:\n'+'\n'.join('- '+g for g in gaps)) if gaps else '\n\nNo retrieval gap is recorded.'
     return (body+'\n\n## Sources\n'+refs+limits+
             '\n\n## Review status\n'+state.get('quality_status','in_progress')+'\n\n'+note+'\n')
@@ -4452,7 +4489,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             checkpoint()
             suggested=preflight['suggested_total_allowance_usd']
             action=(f'Rerun the same settings with --budget {suggested:g} '
-                '(planning allowance, not a promised charge or completion), or choose --quick. '
+                '(a planning allowance; the run can cost less), or choose --quick. '
                 if suggested is not None else
                 'This floor exceeds the CLI $100 allowance limit; choose --profile economy or --quick, or supply focused evidence. ')
             error=core.BudgetExceeded('Initial budget preflight stopped before paid research: '
@@ -4506,7 +4543,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
     if not state.get('web_research_complete'):
         for lane,question in [
             ('business','latest annual filing and official earnings releases: segments, revenue/margins, nonrecurring gross-profit benefits or refunds, inventory by type, operating working-capital cash movements and procurement commitments. Preserve exact passages, periods, definitions, reported amounts versus approximations, and which forecast driver each material item affects'),
-            ('challenge','strongest credible named outside bull and bear economic arguments, original fund letters/research notes or attributable public reporting, dates, disclosed positions and access scope. When available find a valuation on the other side of the saved quote '+str(reported.get('market_price','unavailable'))+' '+str(reported.get('currency',''))+'; preserve its causal demand/supply/price/mix/margin/capital-allocation case, not just a target. Do not reconstruct an inaccessible broker model'),
+            ('challenge','strongest credible named outside bull and bear economic arguments, original fund letters/research notes or attributable public reporting, dates, disclosed positions and access scope. When available find a valuation on the other side of the saved quote '+str(reported.get('market_price','unavailable'))+' '+str(reported.get('currency',''))+'; preserve its causal demand/supply/price/mix/margin/capital-allocation case as well as any target. Do not reconstruct an inaccessible broker model'),
             ('expectations','current fiscal-year consensus revenue, margins and earnings, exact fiscal/calendar and accounting basis, analyst counts/ranges and observation dates; compare like periods and definitions. Distinguish already-known costs from a genuine house disagreement, and allow the honest conclusion that no differentiated operating view is supported'),
             ('claims','latest proxy incentives, insider transaction types/dates, equity awards, debt/lease/tax/purchase commitments and actual repurchase prices. Match repurchase dollars and shares within the same disclosure/period; distinguish cash-flow payments, share retirements and EPS accretion from value creation. Identify changed operating drivers or claims without deducting ordinary procurement costs twice')]:
             answer=call('web_'+lane,easy,
@@ -4663,28 +4700,28 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         'basis':'Deterministic presentation size, not a token count or a promised cost saving. Full saved math remains authoritative.'}
     if not state.get('current_memo'):
         draft=call('full_draft',strong,
-            'Write the prose of an investment-committee equity research memo for '+ticker+', '+MEMO_WORDS+'. '+SECTIONS+
-            '\nPython places the COMPUTED SUMMARY below at the top of the memo and appends the full computed exhibits '
-            'after your text. Do not re-type their tables. Copy any computed or reported figure exactly as it appears in '
-            'the summary, the COMPUTED FROM REPORTED FILINGS tables, the valuation output or a source. Do not calculate '
-            'new figures (growth rates, margins, per-share amounts, differences or sums); if a figure you need is not '
-            'shown, make the point without it. Cite every factual claim with [S#] from the evidence; a causal claim '
-            '(driven by, reflected, helped by) needs a source that states that cause. Attribute model '
-            'outputs (values, price requirements, implied returns, monitoring cases) to the computed summary or exhibits '
-            'in words, and place each [S#] directly after the reported or sourced figure it supports, not after a model output.\n'+
+            WRITER_OPENING+ticker+', '+MEMO_WORDS+'. '+SECTIONS+
+            '\nThe FIRST PAGE below is placed above your text; the valuation detail, reported history and method notes '
+            'follow it. Copy any computed or reported figure exactly as the first page, the COMPUTED FROM REPORTED '
+            'FILINGS tables, the valuation output or a source shows it, rounded to the memo\'s number style. Calculate '
+            'no new figures (growth rates, margins, per-share amounts, differences or sums); if a figure you need is '
+            'missing, make the point without it. Cite every factual claim with [S#] from the evidence; a causal claim '
+            '(driven by, reflected, helped by) needs a source that states that cause. Name a model output as a house or '
+            'computed figure ("the base-case value is $139", "the house forecast"), and place each [S#] directly after '
+            'the reported or sourced figure it supports. A model output carries no [S#].\n'+
             EVIDENCE_TIER_RULE+'\n'+RUBRIC+'\n'
             'Engage the strongest sourced opposing economic case and answer it with evidence; a target or rating alone '
             'is not an argument. Use the computed monitoring cases, counterfactuals, multiples and repurchase tests for '
             'those topics and say which inputs they hold fixed; reverse-DCF and implied-return figures are conditional '
-            'on named fixed assumptions, not market beliefs. GAAP EBIT already expenses stock compensation, which is a '
+            'on named fixed assumptions and describe no market belief. GAAP EBIT already expenses stock compensation, which is a '
             'real cost. Missing evidence narrows the conclusion; state each gap once instead of repeating caveats. '
             'Do not invent transcripts, guidance, consensus, dates or quotes. Valuation research only: no ratings, '
             'target prices, entry levels, margins of safety, upside or downside, or position sizing; write value / '
             'price. Do not reproduce outside ratings, price targets or recommendations either, even attributed or '
-            'labelled unverified; give an outside view as its economic argument. Plain analytical prose without slogans, superlatives or rhetorical contrast formulas. Refer to the '
-            'computed summary, exhibits and reported tables by name; never mention Python, prompts or instructions, and '
-            'add no tables of your own.'
-            '\nCOMPUTED SUMMARY (placed above your text):\n'+computed_summary(plan,result)+
+            'labelled unverified; give an outside view as its economic argument. Write plain analytical prose without '
+            'slogans or superlatives. Name a table only where the argument needs the reader to find it; never mention '
+            'Python, prompts or instructions, and add no tables of your own.'
+            '\nFIRST PAGE (placed above your text):\n'+computed_summary(plan,result)+
             evidence_above()+'\nSynthesis:\n'+thesis+'\nValuation:\n'+valuation_context+'\nGaps:\n'+gaps,tokens=MEMO_TOKENS,
             prefix=_evidence_prefix(context))
         state['current_memo']=_label_unverified(draft,state['sources'])
@@ -4702,8 +4739,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         checkpoint()
         corrected=call(f'revise_{iteration+1}',strong,
             'Revise the complete memo to address every material finding below. Do not hide missing evidence '
-            'or change actuals/valuation numbers to make a review disappear. Use the newly recomputed model below, '
-            'not stale values from the prior draft. Explain material valuation changes and why the evidence '
+            'or change actuals/valuation numbers to make a review disappear. Use the newly recomputed model below '
+            'and drop stale values from the prior draft. Explain material valuation changes and why the evidence '
             'or house assumptions justified them. Retain all required decision sections and specific citations. '
             'Correct verified defects and preserve legitimate disclosed assumptions; do not copy invalid reviewer '
             'accusations or unsupported fixes into reader prose. A valid narrative finding still needs correction '
@@ -4719,9 +4756,9 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'and consistent return comparisons, and repurchase economics against current house value. '
             'Adopt a reviewer-proposed number only when it appears in the computed output or a source; otherwise '
             'keep the computed figure. Copy computed and reported figures exactly and do not calculate new ones; '
-            'attribute model outputs to the computed summary in words and place each [S#] after the sourced figure '
-            'it supports. Python places the computed summary above your text and the exhibits after it; do not '
-            're-type their tables. Do not resolve a finding by inventing '
+            'name a model output as a house or computed figure, never narrating the exhibit, and place each [S#] after '
+            'the sourced figure it supports. Python places the first page above your text and the valuation detail '
+            'after it; do not re-type their tables. Do not resolve a finding by inventing '
             'a policy discount, nonrecurring adjustment, source passage or double-counted cash distribution. '
             'Return the full revised memo only, '+MEMO_WORDS+'. The current prose is '+str(prose_words(memo))+
             ' words; the revision must not be longer, and should be shorter where the current prose exceeds 3,000 words. '
@@ -4749,7 +4786,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'forecast proposal in the schema below. Do not change source-supported actuals just to get a pass. '
             'First verify each reviewer accusation against the actual memo, sources and model. Reject unsupported '
             'accusations or suggested fixes instead of replacing one unsupported story with another. A valid '
-            'prose-only finding may leave forecasts unchanged; label it memo_only rather than rejecting it. Include compact '
+            'prose-only finding may leave forecasts unchanged; label it memo_only and keep it. Include compact '
             'finding_dispositions mapping finding IDs to accepted/rejected/clarified with source-backed reasons. '
             'Preserve or explicitly rejustify the repurchase illustrations when forecasts change; '
             'do not silently drop their scope or invent a discount to satisfy a review. '
@@ -4944,11 +4981,11 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             return edit_round(iteration,memo,combined,adjudication,required,manifest)
         computed=(result,plan,_computed_tables(state['sources']))+_rounded_inputs(plan,result)
         edited,records=_apply_finding_edits(memo,edits or [],{f.get('id') for f in combined if isinstance(f,dict)},
-                                            trace_pools(state['sources'],computed))
+                                            trace_pools(state['sources'],computed),_dollar_filer(plan,result))
         edited=_label_unverified(edited,state['sources'])
         answered={item['finding'] for item in records if item['applied']}
         missing=[identifier for identifier in required if identifier not in answered]
-        after=prereview_checks(_with_summary(edited,plan,result),state['sources'],computed) if result else []
+        after=prereview_checks(_with_summary(edited,plan,result,state['sources'],ticker),state['sources'],computed) if result else []
         log={'iteration':iteration,'round':number,'edits':records,'forecast':flags,'required':list(required),
              'unanswered':missing,'free_checks_after':[issue['id'] for issue in after],
              'outcome':'rewrite' if missing else 'edited'}
@@ -4989,7 +5026,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         # find defects (untraced or unlabelled figures, added convention rows,
         # length). Edits are exact quote replacements applied by Python.
         computed_inputs=(result,plan,_computed_tables(state['sources']))+_rounded_inputs(plan,result)
-        issues=prereview_checks(_with_summary(memo,plan,result),state['sources'],computed_inputs) if result else []
+        issues=prereview_checks(_with_summary(memo,plan,result,state['sources'],ticker),state['sources'],computed_inputs) if result else []
         fixed=state.setdefault('prereview_fixes',{})
         # Keyed by the draft's own text: a contract refresh can replace the draft
         # within one iteration, and the new draft must be checked and fixed.
@@ -5022,8 +5059,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'the computed summary, the COMPUTED FROM REPORTED FILINGS tables, the valuation output or a primary source, '
                 'or remove the figure. For a figure found only in unverified excerpts, cite the primary source that contains '
                 'it, label it as unverified context, or remove it. Describe convention rows separately, never as adding up. '
-                'Change nothing else.\n'+
-                EVIDENCE_TIER_RULE+'\nProblems:\n'+json.dumps(fixable)+'\nCOMPUTED SUMMARY:\n'+computed_summary(plan,result)+
+                'For a style problem, rewrite the sentence to the writing standard below. Change nothing else.\n'+
+                EVIDENCE_TIER_RULE+'\n'+WRITING_STANDARD+'\nProblems:\n'+json.dumps(fixable)+'\nCOMPUTED SUMMARY:\n'+computed_summary(plan,result)+
                 evidence_above()+'\nComputed exhibits:\n'+valuation_section(plan,result)+'\nMemo:\n'+memo,tokens=8000,
                 prefix=_evidence_prefix(context))
             except core.IncompleteResponse as exc:
@@ -5035,7 +5072,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             # re-read", and gave corrected edits. The last complete block is the
             # model's answer; each edit is still applied only on an exact match.
             edits=_last_edits(response) if response else []
-            memo,applied,skipped=_apply_edits(memo,edits)
+            memo,applied,skipped=_apply_edits(memo,edits,_dollar_filer(plan,result))
             memo=_label_unverified(memo,state['sources'])
             if not response:
                 skipped=['the fix response was incomplete and was not used']
@@ -5045,14 +5082,13 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                                              'issues':[issue['id'] for issue in issues],'edits_applied':applied,'edits_skipped':skipped[:20]}
             state['current_memo']=memo
             checkpoint()
-            issues=prereview_checks(_with_summary(memo,plan,result),state['sources'],computed_inputs)
+            issues=prereview_checks(_with_summary(memo,plan,result,state['sources'],ticker),state['sources'],computed_inputs)
             if response and edits is not None:
                 # A complete answer that left these problems is not asked again.
                 fixed[f'{iteration}:{memo_key}'].update(cycle=state.get('revision_base',0),
                     remaining_sha256=_digest([issue for issue in issues if issue['id']!='length']))
                 checkpoint()
-        visible=_label_unverified(_with_summary(memo,plan,result)+'\n'+valuation_section(plan,result)+
-                                  '\n'.join(reported_tables_section(state['sources'])),state['sources'])
+        visible=reader_view(memo,state['sources'],plan,result,ticker)
         (revisions/f'memo-{iteration}.md').write_text(visible,encoding='utf-8')
         # A review can fail after a new draft/model is saved. Keep the reader
         # download consistent with those artifacts even before review succeeds.
@@ -5078,16 +5114,16 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         prompt=('Review this equity memo against its supplied evidence and the Python valuation, using the shared quality '
                 'standard below, and classify each defect as blocker, major or minor by that standard. Rounding within '
                 'the last displayed digit is never material; an unverified excerpt used only as attributed outside view '
-                'or context is not material, but a company fact or number resting only on one is (rule M1); style '
-                'preferences are not findings. Check: (1) every figure in the prose against the computed summary, the computed tables, the '
+                'or context is not material, but a company fact or number resting only on one is (rule M1); a breach '
+                'of the writing standard is minor (N2), and other style preferences are no finding. Check: (1) every figure in the prose against the computed summary, the computed tables, the '
                 'valuation output or the cited source, and every comparison with the price by arithmetic; (2) that the '
                 'memo does not contradict the computed account of which inputs alone can and cannot bring value to the '
-                'price (explaining why the house forecast differs from what the price requires is the variant view, not '
-                'a contradiction; the conclusion need not restate the account); (3) that company facts rest on primary sources and unverified '
+                'price (explaining why the house forecast differs from what the price requires is the variant view and '
+                'contradicts nothing; the conclusion need not restate the account); (3) that company facts rest on primary sources and unverified '
                 'excerpts are labelled context; (4) that the strongest sourced opposing case is answered with evidence; '
                 '(5) that no trading-layer language appears; (6) that convention rows are never added together; (7) that '
                 'repurchase, multiple and monitoring statements use the computed diagnostics and their fixed inputs. A '
-                'disclosed house forecast is a judgment, not a defect, unless primary evidence contradicts it or it is '
+                'disclosed house forecast is a judgment and is a defect only when primary evidence contradicts it or it is '
                 'unexplained. Never write a fix that asks the author to compute a value the engine has not computed. '
                 'Before flagging an omission, check the whole memo. Report every material defect you find and at most '
                 'three minor ones; there is no target number of findings. '

@@ -228,7 +228,7 @@ class MemoDiagnosticsTests(unittest.TestCase):
         self.assertEqual(tests[1]['post_repurchase_shares'], 90_000_000)
         self.assertAlmostEqual(tests[1]['scenarios']['base']['post_repurchase_per_share_value'], 1_480 / 90)
         self.assertEqual(tests[1]['post_repurchase_nonoperating_cash'], 100_000_000)
-        self.assertIn('not observed historical value destruction', tests[1]['basis'])
+        self.assertIn('retrospective conditional comparison with current underwriting', tests[1]['basis'])
 
     def test_repurchase_bounds_and_cash_bridge_reconciliation(self):
         invalid = [None, {}, [repurchase(amount=200_000_001)], [repurchase(amount=0)],
@@ -299,7 +299,7 @@ class MemoDiagnosticsTests(unittest.TestCase):
         self.assertEqual(calibration['included_debt'], 120_000_000)
         self.assertEqual(calibration['financial_debt'], 120_000_000)
         self.assertEqual(calibration['finance_lease_debt'], 0)
-        self.assertIn('zero is an allocation, not reported absence',
+        self.assertIn('finance_lease_debt zero is an allocation. The separate lease amount is unknown.',
                       calibration['conventions']['financial_debt_input'])
         self.assertIsNone(calibration['valuation_input_reconciliations'][0]['reported_finance_lease_liabilities'])
         self.assertTrue(calibration['valuation_input_reconciliations'][1][

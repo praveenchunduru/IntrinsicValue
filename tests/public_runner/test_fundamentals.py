@@ -65,7 +65,7 @@ class YahooFinancialsTests(unittest.TestCase):
         self.assertEqual(data['series']['annualChangeInWorkingCapital'][-1]['reportedValue']['raw'], -10)
         notes = ' '.join(data['notes'])
         self.assertIn('never add the two series', notes)
-        self.assertIn('not shares verified as current', notes)
+        self.assertIn('unverified as current on the market-quote date', notes)
         self.assertIn('missing evidence, never zero', notes)
 
     def test_absent_optional_actuals_are_not_defaulted_to_zero(self):

@@ -228,7 +228,7 @@ class AAParserTests(unittest.TestCase):
         self.assertAlmostEqual(result['value'], .0551)
         self.assertEqual(result['series'], 'BAMLC0A2CAAEY')
         self.assertEqual(result['provenance']['missing_observation_count'], 1)
-        self.assertIn('not an issuer bond yield', result['caveats'][0])
+        self.assertIn('a proxy for the issuer bond yield', result['caveats'][0])
         prior = parse_fred_aa(aa_csv(), as_of='2024-12-31')
         self.assertEqual(prior['observed_at'], '2024-12-30')
         self.assertAlmostEqual(prior['value'], .056)

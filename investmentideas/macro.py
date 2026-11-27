@@ -406,7 +406,7 @@ def parse_sector_betas(data, *, as_of=None):
             'provenance': {'required_headers': list(_BETA_HEADERS), 'source_sha256': hashlib.sha256(raw).hexdigest()},
             'caveats': ['No issuer-to-sector assignment or automatic beta selection is performed.',
                         'Month precision is preserved; no exact beta measurement day is asserted.',
-                        'Sector averages are proxies, not measured issuer betas; aggregate rows are labeled separately.',
+                        'Sector averages are proxies for the issuer beta; aggregate rows are labeled separately.',
                         'Cash-corrected and uncorrected asset betas are distinct; the analyst must choose a consistent asset convention.',
                         'This table does not establish peer lease conventions or a normalized issuer marginal tax rate.']}
 
@@ -629,7 +629,7 @@ def parse_regional_risk_premiums(data, *, as_of=None):
             'regions': regions, 'countries': countries,
             'provenance': {'sheet': _REGIONAL_SHEET, 'worksheet_part': path, 'modified': stamp,
                            'required_headers': _REGIONAL_HEADERS, 'source_sha256': hashlib.sha256(raw).hexdigest()},
-            'caveats': ['Regional premiums are weighted by country GDP, not by any company\'s sales.',
+            'caveats': ['Regional premiums are weighted by country GDP; company sales play no part.',
                         'Region totals are the workbook\'s cached formula results, checked against the GDP-weighted average '
                         'of the listed countries.',
                         'The date is the file\'s last-modified time; a row revised later on the dated country page can '
@@ -677,7 +677,7 @@ def parse_fred_aa(data, *, as_of=None):
             'label': 'ICE BofA AA US Corporate Index Effective Yield, debt-cost proxy',
             'provenance': {'raw_percentage_points': raw_value, 'missing_observation_count': missing,
                            'source_sha256': hashlib.sha256(raw).hexdigest()},
-            'caveats': ['Observed AA corporate-index yield is a proxy, not an issuer bond yield or borrowing quote.',
+            'caveats': ['Observed AA corporate-index yield is a proxy for the issuer bond yield and borrowing cost.',
                         'Index rating, maturity and composition may differ from the issuer debt being valued.',
                         'Yield is converted from percentage points to a decimal rate; coupon rates are not substituted.',
                         'No issuer-specific spread, sovereign spread or country-risk premium is inferred.']}

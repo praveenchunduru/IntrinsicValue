@@ -251,7 +251,7 @@ def parse_review(text, memo=None, *, anchor_embellished=False):
         if not isinstance(refs, list) or any(not isinstance(ref, str) or not SOURCE_ID.fullmatch(ref) for ref in refs):
             raise ValueError('Finding source_refs must be a list of source IDs such as S1')
         if finding.get('status', 'open') != 'open':
-            raise ValueError('Review findings must describe current unresolved issues, not archived dispositions')
+            raise ValueError('Review findings must describe current unresolved issues only; archived dispositions are excluded')
         excerpt = finding.get('current_excerpt')
         material = severity in {'blocker', 'major'}
         excerpt_match, reviewer_excerpt = None, None
@@ -672,6 +672,47 @@ _LONG_NUMBER = re.compile(r'(?<![\w,.])\d{1,3}(?:,\d{3}){2,}(?![\d,])|(?<![\w,.]
 def _sentences(text):
     clean = re.sub(r'\[[^\]\n]*\]|https?://\S+', '', text)
     return [part.strip() for part in re.split(r'(?<=[.!?])\s+|\n+', clean) if part.strip() and not part.startswith('#')]
+
+
+_USD_SCALED = re.compile(r'\bUSD\s?(-?\d[\d,]*(?:\.\d+)?)\s?(billion|bn|million|mn|mm|trillion)\b', re.I)
+_USD_PLAIN = re.compile(r'\bUSD\s?(-?\d[\d,]*(?:\.\d+)?)')
+
+
+def dollar_amounts(text):
+    """'USD 36.3 billion' as '$36.3B', 'USD 850 million' as '$850M', 'USD 12.40' as '$12.40'; figures unchanged."""
+    def scaled(match):
+        unit = match.group(2).lower()
+        if unit == 'trillion':
+            return f'${match.group(1)} trillion'
+        return f'${match.group(1)}' + ('B' if unit in ('billion', 'bn') else 'M')
+    return _USD_PLAIN.sub(lambda match: f'${match.group(1)}', _USD_SCALED.sub(scaled, text))
+
+
+def style_counts(text, dollars=True):
+    """Raw counts of the style rules in a passage, for comparing an edit's replacement with its quote."""
+    clean = re.sub(r'\[[^\]\n]*\]|https?://\S+', '', text or '')
+    return {'currency-code': len(_CODE_USD.findall(clean)) if dollars else 0,
+            'long-number': len(_LONG_NUMBER.findall(clean)), 'em-dash': clean.count('\u2014'),
+            'contrast-formula': len(_ANTITHESIS.findall(clean)), 'exhibit-narration': len(_NARRATION.findall(clean))}
+
+
+COUNTED_RULES = {'contrast-formula': ANTITHESIS_ALLOWANCE, 'exhibit-narration': NARRATION_ALLOWANCE}
+
+
+def style_added(quote, replacement, dollars=True, memo=None):
+    """The style rules a replacement breaks more often than the text it replaces.
+
+    "USD", long numbers and em dashes count on any increase. A contrast or an exhibit
+    narration counts only when the edited ``memo`` would then exceed the allowance the
+    free check uses, so an edit is held to the same standard as the draft.
+    """
+    before, after = style_counts(quote, dollars), style_counts(replacement, dollars)
+    added = [rule for rule, count in after.items() if count > before[rule]]
+    if memo is not None:
+        total = style_counts(memo, dollars)
+        added = [rule for rule in added if rule not in COUNTED_RULES or
+                 total[rule] - before[rule] + after[rule] > COUNTED_RULES[rule]]
+    return added
 
 
 def style_findings(prose, dollars=True):

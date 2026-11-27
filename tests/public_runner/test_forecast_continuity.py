@@ -138,7 +138,7 @@ class ReinvestmentContinuityTests(unittest.TestCase):
         pipeline._check_continuity(value, result, SOURCES)
         text = '\n'.join(pipeline._continuity_parts(result, memo_style.Style('USD'))[0])
         self.assertIn('- Base reinvestment basis: Management guided capital spending', text)
-        self.assertRegex(text, r'\| Net reinvestment, years 1-3 \(\$[BM]\) \| [\d,.]+ a year \|')
+        self.assertRegex(text, r'\| Net reinvestment, years 1-3 \(\$[BM]?\) \| [\d,.]+ a year \|')
 
     def test_a_basis_citing_an_unknown_source_is_rejected(self):
         value = self.locked({name: 'Management guided capital spending to fall as construction completes [S999].'

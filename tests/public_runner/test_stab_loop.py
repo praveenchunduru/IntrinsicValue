@@ -192,7 +192,8 @@ class EditApplicationTests(unittest.TestCase):
         memo, records = self.apply([{'finding': 'F1', 'quote': 'The outlook is steady.', 'replacement': ''},
                                     {'finding': 'F2', 'quote': 'Revenue was USD 1,000 million [S1].',
                                      'replacement': 'Revenue was USD 1,000 million in fiscal 2026 [S1].'}])
-        self.assertEqual(memo, 'Revenue was USD 1,000 million in fiscal 2026 [S1]. Margins held. Margins held.\n')
+        # A dollar amount in a replacement is restyled for a dollar filer (memo number style, 2026-11-27).
+        self.assertEqual(memo, 'Revenue was $1,000M in fiscal 2026 [S1]. Margins held. Margins held.\n')
         self.assertEqual([(r['finding'], r['applied']) for r in records], [('F1', True), ('F2', True)])
 
     def test_unanchored_unnamed_and_untraced_edits_are_rejected(self):
@@ -408,7 +409,7 @@ class RoundingTests(unittest.TestCase):
                 for item in value:
                     yield from floats(item)
         self.assertTrue(any(float(f'{x:.6g}') != x for x in floats(saved)))
-        draft = next(p for p in fixture.requests if instructions(p).startswith('Write the prose of'))
+        draft = next(p for p in fixture.requests if instructions(p).startswith(pipeline.WRITER_OPENING))
         shown = json.loads(instructions(draft).split('\nValuation:\n', 1)[1].split('\nGaps:\n', 1)[0])
         self.assertTrue(all(float(f'{x:.6g}') == x for x in floats(shown)))
         self.assertIn('6 significant figures', shown['context_metadata']['number_precision'])

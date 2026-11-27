@@ -39,7 +39,7 @@ QUANTILES = (10, 25, 50, 75, 90)
 # collects no inflation expectation, so growth is converted at this stated rate.
 INFLATION = 0.02
 INFLATION_BASIS = ("a stated 2.0% a year, the Federal Reserve's longer-run inflation goal (FOMC, Statement on "
-                   "Longer-Run Goals and Monetary Policy Strategy), not a market measure")
+                   "Longer-Run Goals and Monetary Policy Strategy), a policy goal")
 
 # US CPI-U, all items, US city average, not seasonally adjusted (BLS series CUUR0000SA0):
 # annual averages of the monthly index, retrieved from the BLS public data API on
@@ -175,8 +175,8 @@ SALES_GROWTH_2026 = (
      'horizons': {5: {'mean': .057, 'standard_deviation': .096, 'observations': 4385}}},
 )
 
-MARGIN_NOTE = ('The Base Rate Book reports how persistent operating margins are by sector (Exhibit 5, p62), not a '
-               'distribution of company margins, so no margin percentile is shown.')
+MARGIN_NOTE = ('The Base Rate Book reports how persistent operating margins are by sector (Exhibit 5, p62). It '
+               'gives no distribution of company margins, so no margin percentile is shown.')
 MEMO_MARGIN_NOTE = ('The Base Rate Book reports how persistent operating margins are by sector (Exhibit 5, p62). It '
                     'gives no distribution of company margins, so the memo shows no margin percentile.')
 _NORMAL = NormalDist()
@@ -510,7 +510,7 @@ def memo_exhibit(comparison, style=None):
     if requirement:
         shift = f'{requirement["growth_shift"] * 100:+.1f} points a year'
         label = (f'Growth the price needs ({shift})' if requirement['status'] == 'solved' else
-                 f'Closest to the price ({shift}, not reachable)')
+                 f'Closest to the price ({shift}; it cannot reach the price)')
         lines.append(row(label, requirement['horizons']))
     lines.append('| Reference class mean, standard deviation | ' + ' | '.join(
         f'{refs[key]["mean"]:.1%}, {refs[key]["standard_deviation"]:.1%}' for key in keys) + ' |')

@@ -41,8 +41,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#18242e;padding:20px;
 <label for="sec-contact">SEC requester contact email</label><input id="sec-contact" type="email" autocomplete="off" placeholder="you@example.com">
 <small>SEC requires a real requester contact for filing access. This value stays in memory and is sent only to SEC; SEC_CONTACT_EMAIL can also supply it.</small>
 <label for="ticker">Ticker</label><input id="ticker" required value="AAPL" maxlength="15">
-<label for="mode">Research depth</label><select id="mode"><option value="full" __FULL_SELECTED__>Full memo — research, editable valuation, review and revision</option><option value="quick" __QUICK_SELECTED__>Quick financial overview — four model calls</option></select>
-<label for="profile">Model profile</label><select id="profile"><option value="balanced">Balanced — Claude Opus analysis, GPT-6.2 review</option><option value="economy">Economy — open-weight DeepSeek analysis, Kimi review</option></select>
+<label for="mode">Research depth</label><select id="mode"><option value="full" __FULL_SELECTED__>Full memo: research, editable valuation, review and revision</option><option value="quick" __QUICK_SELECTED__>Quick financial overview: four model calls</option></select>
+<label for="profile">Model profile</label><select id="profile"><option value="balanced">Balanced: Claude Opus analysis, GPT-6.2 review</option><option value="economy">Economy: open-weight DeepSeek analysis, Kimi review</option></select>
 <label for="budget">Total spending allowance (USD)</label><input id="budget" type="number" min="1" max="50" step="0.01" value="__DEFAULT_BUDGET__" required>
 <small>Full research starts with a $20 allowance (a ceiling: each call reserves conservatively before it is sent; a full run is expected to cost far less); quick overview starts with $2. This is not a promised charge or completion. Free evidence collection precedes a budget preflight. Requests stop before the next reservation exceeds your allowance; prior charges and uncertain requests count when resuming. Also set a provider credit limit on your dedicated key.</small>
 <details><summary>Additional evidence</summary><label for="evidence">Optional dated source text or filing excerpt</label><textarea id="evidence" rows="5" maxlength="100000" placeholder="Include source URLs, dates and units. Useful if public sources are unavailable."></textarea></details>
@@ -304,7 +304,7 @@ def create_server(port=8765, directory='research-output', default_mode='full', *
 
 def serve(port=8765, directory='research-output', default_mode='full', *, sec_contact=None):
     server = create_server(port, directory, default_mode,sec_contact=sec_contact)
-    print(f'InvestmentIdeas: http://127.0.0.1:{server.server_address[1]} — press Ctrl+C to stop', flush=True)
+    print(f'InvestmentIdeas: http://127.0.0.1:{server.server_address[1]}; press Ctrl+C to stop', flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

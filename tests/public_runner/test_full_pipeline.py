@@ -1008,7 +1008,7 @@ class ComputedMemoExhibitTests(unittest.TestCase):
             locked,_=pipeline._lock_plan(economic_plan(),records)
             label=locked['assumptions_label']
             self.assertIn('Only the cash and investment assets selected in the pinned bridge',label)
-            self.assertIn('Omitted investment categories are not reported zeros',label)
+            self.assertIn('An omitted investment category counts as zero by assumption',label)
             if combined:
                 self.assertIn('already included in the selected combined net-debt subtotal',label)
                 self.assertNotIn('outside the selected financial net-debt subtotal',label)

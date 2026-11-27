@@ -936,7 +936,7 @@ def _valuation_multiples(plan, actuals, scenarios, market):
         }
     return {
         'market': market_bridge, 'scenarios': output,
-        'basis': 'Computed valuation exhibits. Entry multiples use first-explicit-forecast-year earnings, not historical or trailing earnings. Negative or zero EV/earnings are retained as amounts but do not produce conventional multiples. Exit alternatives have no probability weight and do not change the DCF.',
+        'basis': 'Computed valuation exhibits. Entry multiples use first-explicit-forecast-year earnings; trailing earnings are unused. Negative or zero EV/earnings are retained as amounts but do not produce conventional multiples. Exit alternatives have no probability weight and do not change the DCF.',
         'discount_timing': ('Annual FCFF discounted from the valuation date: the first year counts only its unexpired fraction and every later flow and the exit fall at year k minus that stub; no midyear adjustment.'
                             if plan.get('_timing', {}).get('stub_years') else
                             'Existing model convention: annual FCFF at integer years 1..N, exit at year N, opening financing bridge at time zero; no stub or midyear adjustment.'),
@@ -1040,7 +1040,7 @@ def _repurchase_tests(plan, actuals, scenarios, weighted):
             'scenarios': cases, 'original_weighted_per_share_value': weighted,
             'post_repurchase_weighted_per_share_value': post_weighted,
             'weighted_value_change': _value_change(post_weighted, weighted),
-            'basis': 'Independent contemporaneous one-period cash-funded illustration at current house values: cash falls by the amount spent, net debt increases by that same amount, and shares fall by amount / price exactly once. Enterprise operating value, forecast cash flows, discount rates, other claims and scenario weights stay fixed. Each test starts from the original snapshot; tests are not cumulative. No future FCFF, financing, dividend or SBC offset funds this purchase. A historical price is a retrospective conditional comparison with current underwriting, not observed historical value destruction; a forward illustration is not a forecast of actual repurchases or shareholder returns.',
+            'basis': 'Independent contemporaneous one-period cash-funded illustration at current house values: cash falls by the amount spent, net debt increases by that same amount, and shares fall by amount / price exactly once. Enterprise operating value, forecast cash flows, discount rates, other claims and scenario weights stay fixed. Each test starts from the original snapshot; tests are not cumulative. No future FCFF, financing, dividend or SBC offset funds this purchase. A historical price is a retrospective conditional comparison with current underwriting. A forward illustration forecasts neither actual repurchases nor shareholder returns.',
         })
     return output
 
@@ -1112,7 +1112,7 @@ def _counterfactuals(plan, actuals, definitions):
             changed_fields.add('wacc')
         projection = _project(actuals, effective, flat=flat)
         projection.update(
-            basis='Conditional base-scenario counterfactual, not an observed market input, forecast or replacement for the house scenarios.',
+            basis='Conditional base-scenario counterfactual. It is neither a market input nor a forecast, and the house scenarios stand.',
             overrides=copy.deepcopy(overrides),
             effective_inputs={**{field: copy.deepcopy(effective[field]) for field in listed if field in effective},
                               **({'wacc': flat, 'rate_override': 'one flat rate in every year and the terminal value'}
@@ -1185,7 +1185,7 @@ def _monitoring(plan, counterfactuals, baseline, calibration_comparisons=()):
         rows.append({**copy.deepcopy(item), 'base_per_share_value': baseline,
                      'conditional_per_share_value': case['per_share_value'],
                      'value_change': _value_change(case['per_share_value'], baseline),
-                     'basis': 'Analyst-selected observation and decision threshold, not a reported outcome or an automatic forecast. The named counterfactual changes only its disclosed inputs; correlated cases are not additive.'})
+                     'basis': 'Analyst-selected observation and decision threshold. It is neither a reported outcome nor an automatic forecast. The named counterfactual changes only its disclosed inputs; correlated cases are not additive.'})
     return rows
 
 
@@ -1294,7 +1294,7 @@ def _computed_diagnostics(actuals, definitions, scenarios, weighted):
             'fcff_step_currency_units': fcff_delta['dollar_delta'],
             'fcff_step_percent': fcff_delta['percent_delta'],
             'implied_forecast_incremental_roic': _finite_or_none(margin * inputs['sales_to_capital']),
-            'implied_forecast_incremental_roic_basis': 'Final forecast after-tax EBIT margin times forecast sales-to-capital; a constant-margin incremental-return identity, not measured historical ROIC or a claim about changing-margin incremental returns.',
+            'implied_forecast_incremental_roic_basis': 'Final forecast after-tax EBIT margin times forecast sales-to-capital; a constant-margin incremental-return identity. It measures no historical ROIC and makes no claim about changing-margin incremental returns.',
             'terminal_roic': result['terminal_roic_applied'],
             'forecast_sales_to_capital': inputs['sales_to_capital'],
             **({'forecast_sales_to_capital_path': list(inputs['sales_to_capital_path'])} if inputs.get('sales_to_capital_path') else {}),
@@ -1362,7 +1362,7 @@ def _computed_diagnostics(actuals, definitions, scenarios, weighted):
             'changes':capital_changes,
             'zero_explicit_forecast_net_investment_per_share_value':no_forecast_investment,
             'zero_explicit_forecast_net_investment_status':'calculated' if no_forecast_investment is not None else 'not_calculated',
-            'zero_investment_basis':'Set only explicit-forecast net reinvestment to zero, preserving terminal reinvestment. This is an illustration, not an achievable forecast or a universal value floor/ceiling.'},
+            'zero_investment_basis':'Set only explicit-forecast net reinvestment to zero, preserving terminal reinvestment. This is an illustration. It is neither an achievable forecast nor a universal value floor or ceiling.'},
         'base_terminal_return_at_wacc':no_terminal_excess_return}
 
 
@@ -1414,7 +1414,7 @@ def _calibration_reconciliations(plan, spec):
                 raise ValueError('Reported finance leases must be nonnegative and cannot exceed combined debt')
             expected_financial, expected_lease = total - lease, lease
             if any('allocation' in spec[field] for field in ('financial_debt', 'finance_lease_debt')):
-                raise ValueError('A known separate finance-lease amount must be split explicitly, not assigned an unknown-split allocation')
+                raise ValueError('A known separate finance-lease amount must be split explicitly; the unknown-split allocation is for unknown amounts')
             scope = 'separately_reported_finance_leases_split_from_combined_debt'
         else:
             expected_financial, expected_lease = total, 0.
@@ -1565,7 +1565,7 @@ def materialize(plan):
             unknown_split = prepared.get('other_claims_bridge', {}).get('reported_finance_lease_liabilities') is None
             calibration['conventions']['financial_debt_input'] = (
                 'Combined financial debt and finance leases allocated entirely to financial_debt; '
-                'finance_lease_debt zero is an allocation, not reported absence. The separate lease amount is unknown.'
+                'finance_lease_debt zero is an allocation. The separate lease amount is unknown.'
                 if unknown_split else
                 'Financial debt excludes separately reported finance leases: combined bridge debt minus the same-date lease amount; finance leases are included once through finance_lease_debt.')
         if calibration['term_structure'] == GLIDE:
@@ -1759,7 +1759,7 @@ def evaluate(plan):
               'sensitivity': _sensitivities(actuals, definitions['base']),
               'computed_diagnostics': _computed_diagnostics(actuals, definitions, scenarios, weighted),
               'disclosures': [
-                  'Forecasts and scenario weights are explicit house assumptions, not reported facts.',
+                  'Forecasts and scenario weights are explicit house assumptions.',
                   'Cash operating taxes are zero on losses; no NOL benefit is assumed.',
                   'Net debt includes the selected cash balance and is subtracted once. Cash is not added again.',
                   'Incremental sales-to-capital represents net operating reinvestment, including working capital. Maintenance investment is assumed to offset depreciation.',
@@ -2004,7 +2004,7 @@ def _price_requirements(actuals, base, market):
             'basis': 'Base scenario. One input changed at a time, all others fixed; "shift" rows add the same number of '
                      'points to every explicit forecast year (steady-state years keep terminal growth and the final margin) '
                      'and report the projected path: compound annual revenue growth or the average EBIT margin over all '
-                     'forecast years. Rows are alternatives, not additive, and carry no probability. '
+                     'forecast years. Rows are alternatives, never added together, and carry no probability. '
                      'A row that is not reachable reports the value closest to the price within the inputs the engine accepts.'}
 
 
@@ -2479,7 +2479,7 @@ def _rate_regime_rows(actuals, base, baseline, plan):
         points = f'{delta * 100:+.0f} point' + ('s' if abs(delta) > .01 + 1e-12 else '')
         if hurdle:
             rows.append(_exhibit_row(actuals, baseline, name, f'Treasury rate {points}', 'rate_regime',
-                                     reason='The discount rate is a house hurdle, not built from the Treasury rate'))
+                                     reason='The discount rate is a house hurdle with no Treasury-rate build'))
             continue
         if spec is None:
             # Without dated rate inputs the whole path moves one for one, as in the ±1 point rows.
@@ -2521,8 +2521,8 @@ def _rate_regime_rows(actuals, base, baseline, plan):
     own = (spec['equity_risk_premium'].get('observed_at'), spec['risk_free_rate']['value'], spec['equity_risk_premium']['value'])
     last = history[-1]
     if last[0] != own[0] or not math.isclose(last[1], own[1], abs_tol=1e-12) or not math.isclose(last[2], own[2], abs_tol=1e-12):
-        notes.append(f'The monthly rate history ends at {last[0]}, not at the plan\'s own Treasury rate and premium '
-                     f'({own[0]}), so the ten-year range is not shown.')
+        notes.append(f'The monthly rate history ends at {last[0]}. The plan\'s own Treasury rate and premium are for '
+                     f'{own[0]}, so the ten-year range is not shown.')
         return rows, notes, summary
     values, failed = [], []
     for day, rf, premium in history:

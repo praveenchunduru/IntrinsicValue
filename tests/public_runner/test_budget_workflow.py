@@ -92,7 +92,7 @@ class FullContractTransport:
                      'remain house judgments; compare competing explanations and missing evidence. [S4]\n')*50
         elif prompt.startswith('Build an investment valuation plan'):
             content=self.proposal
-        elif prompt.startswith('Write the prose of an investment-committee'):
+        elif prompt.startswith(pipeline.WRITER_OPENING):
             if self.timeout_once:
                 self.timeout_once=False
                 raise RuntimeError('Synthetic uncertain transport interruption')
@@ -481,7 +481,7 @@ class SharedPrefixTests(unittest.TestCase):
         self.assertIn('\nValuation:\n', review)
         payload = next(p for p in fixture.requests if instructions(p).startswith('Review this equity memo'))
         self.assertTrue(instructions(payload).rstrip().endswith('DRAFT>>>'))
-        self.assertEqual(prefix_of('Write the prose of'), prefix_of('Build an investment valuation plan'))
+        self.assertEqual(prefix_of(pipeline.WRITER_OPENING), prefix_of('Build an investment valuation plan'))
 
 
 class PrefilterPipelineTests(unittest.TestCase):

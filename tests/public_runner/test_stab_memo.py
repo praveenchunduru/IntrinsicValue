@@ -76,6 +76,7 @@ class NumberStyleTests(unittest.TestCase):
         self.assertEqual(memo_style.scaled(0.0, 1e9), '0')
         self.assertEqual(memo_style.table_scale([525.6e9]), ('B', 1e9, 1))
         self.assertEqual(memo_style.table_scale([5.2e9]), ('M', 1e6, 0))
+        self.assertEqual(memo_style.table_scale([50.0]), ('', 1, 0))
 
     def test_other_currencies_use_a_symbol_or_the_code_once(self):
         self.assertEqual(memo_style.Style('EUR').amount(34.3e9), '€34.3B')
@@ -258,3 +259,69 @@ class TraceTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ReviewerViewTests(unittest.TestCase):
+    """The reviewer, the finding check and the reader see one layout (2026-11-27)."""
+
+    def test_the_reader_view_is_the_delivered_memo_up_to_the_sources(self):
+        memo, value, result = rendered()
+        view = pipeline.reader_view(PROSE, SOURCES, value, result, 'EXMP')
+        self.assertEqual(memo.split('\n## Sources')[0].rstrip(), view.rstrip())
+        self.assertEqual(view.count('## Method notes'), 1)
+        self.assertNotIn('### Notes on the', view)
+
+    def test_the_loop_builds_the_reviewer_copy_with_the_reader_view(self):
+        import inspect
+        source = inspect.getsource(pipeline._run)
+        self.assertIn("visible=reader_view(memo,state['sources'],plan,result,ticker)", source)
+        self.assertNotIn('valuation_section(plan,result)+', source.split('visible=')[1].split('\n')[0])
+
+    def test_prompts_carry_the_writing_standard(self):
+        import inspect
+        source = inspect.getsource(pipeline._run)
+        self.assertIn('WRITER_OPENING', source)
+        self.assertNotIn('investment-committee', source)
+        self.assertNotIn('Attribute model', source)
+        self.assertIn("EVIDENCE_TIER_RULE+'\\n'+WRITING_STANDARD", source)
+        self.assertIn('writing standard', pipeline.EDIT_INSTRUCTIONS)
+
+
+class EditStyleTests(unittest.TestCase):
+    def test_dollar_amounts_are_restyled_with_their_figures(self):
+        self.assertEqual(quality.dollar_amounts('capex was USD 115.9 billion and USD 850 million, at USD 12.40'),
+                         'capex was $115.9B and $850M, at $12.40')
+
+    def test_a_replacement_that_breaks_the_standard_is_rejected(self):
+        memo = 'Revenue grew 10% [S1]. Margins held.'
+        pools = quality.trace_pools([], ({'revenue': 525628090000},))
+        for replacement, rule in (('Margins held — barely.', 'em-dash'),
+                                  ('Margins held at 525,628,090,000.', 'long-number')):
+            _, records = pipeline._apply_finding_edits(memo, [{'finding': 'F1', 'quote': 'Margins held.',
+                                                               'replacement': replacement}], {'F1'}, pools)
+            self.assertFalse(records[0]['applied'])
+            self.assertIn(rule, records[0]['reason'])
+        edited, records = pipeline._apply_finding_edits(memo, [{'finding': 'F1', 'quote': 'Margins held.',
+                                                                'replacement': 'Margins held, not fell.'}], {'F1'}, pools)
+        self.assertTrue(records[0]['applied'])  # one contrast is inside the allowance
+        heavy = 'It is a rate, not growth. It is cash, not debt. ' + memo
+        _, records = pipeline._apply_finding_edits(heavy, [{'finding': 'F1', 'quote': 'Margins held.',
+                                                            'replacement': 'Margins held, not fell.'}], {'F1'}, pools)
+        self.assertIn('contrast-formula', records[0]['reason'])
+
+    def test_the_free_check_fix_keeps_the_standard_too(self):
+        memo = 'Revenue grew 10% [S1]. Margins held.'
+        out, applied, skipped = pipeline._apply_edits(memo, [{'quote': 'Margins held.', 'replacement': 'Margins — held.'},
+                                                             {'quote': 'Revenue grew 10%', 'replacement': 'Revenue of USD 4.2 billion grew 10%'}])
+        self.assertEqual(applied, 1)
+        self.assertIn('$4.2B', out)
+        self.assertIn('em-dash', skipped[0])
+
+
+class BridgeTests(unittest.TestCase):
+    def test_lines_with_nothing_reported_are_one_note(self):
+        memo, _, _ = rendered()
+        bridge = memo[memo.index('### From enterprise value'):memo.index('### Forecast, base case')]
+        self.assertNotRegex(bridge, r'\| 0 \|')
+        notes = memo[memo.index('## Method notes'):]
+        self.assertIn('Bridge lines with nothing to add or deduct:', notes)

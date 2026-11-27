@@ -88,7 +88,9 @@ WORLD = 'every region'
 
 _AMERICAS_CHOICE = 'The Americas are Damodaran\'s North America, Central and South America and Caribbean regions.'
 _RESIDUAL_CHOICE = 'A residual or remainder member covers the countries the same breakdown does not report separately.'
-_GDP_CHOICE = 'Within a region, countries are weighted by GDP, not by the company\'s sales.'
+_GDP_CHOICE = 'Within a region, countries are weighted by GDP because the company does not report sales by country.'
+# The choice sentence saved with runs before 2026-11-27.
+_GDP_CHOICE_SAVED = 'Within a region, countries are weighted by GDP, not by the company\'s sales.'
 
 # Member names that name a region: the countries it covers. ``residual`` members
 # cover their scope less every country the other members of the breakdown cover.
@@ -485,7 +487,7 @@ def country_risk_reference(sources, reported):
             'source_refs': list(dict.fromkeys(ref for ref in (*used_sources, *refs) if ref)),
             'basis': ('Damodaran\'s operation-weighted country risk: each country\'s or region\'s premium over the US '
                       'premium, weighted by the company\'s reported revenue there. Unmapped revenue is excluded from the '
-                      'weights. The premium is added to the cost of equity (premium times revenue exposure, not scaled by '
+                      'weights. The premium is added to the cost of equity (premium times revenue exposure, unscaled by '
                       'beta); the cost of debt and the capital weights are unchanged.')}
 
 
@@ -543,7 +545,7 @@ def render_parts(panel, ref_label=lambda ref: f'[{ref}]'):
 
 
 # Saved choice sentences in the memo's voice.
-_CHOICE_TEXT = {_GDP_CHOICE: 'Within a region, countries are weighted by GDP because the company does not report sales by country.'}
+_CHOICE_TEXT = {_GDP_CHOICE_SAVED: _GDP_CHOICE}
 
 
 def render_note(panel, ref_label=lambda ref: f'[{ref}]'):

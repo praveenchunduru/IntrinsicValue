@@ -277,7 +277,7 @@ class ReportedInputTests(unittest.TestCase):
         self.assertTrue(report['coverage']['complete'])
         self.assertEqual(report['net_debt_bridge']['selected_cash_and_nonoperating_investments'], 36305000000)
         self.assertIn('noncurrent_marketable_securities', report['net_debt_bridge']['cash_coverage']['missing_investment_categories'])
-        self.assertIn('not reported as zero', report['net_debt_bridge']['cash_classification_policy'])
+        self.assertIn('count as zero by assumption', report['net_debt_bridge']['cash_classification_policy'])
 
     def test_selected_cash_subtotal_does_not_hide_an_impossible_marketable_subset(self):
         data = self.alternate(('ShortTermBorrowings', 1997000000), ('ShortTermInvestments', 1))

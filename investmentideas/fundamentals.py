@@ -126,14 +126,14 @@ def yahoo_financials(ticker, fetch_callable):
         },
         'notes': [
             'Secondary Yahoo Finance data; verify financial figures against official filings when available.',
-            'asOfDate and currencyCode are reproduced from the provider; period ends may be normalized rather than exact fiscal filing dates.',
+            'asOfDate and currencyCode are reproduced from the provider; period ends may be normalized dates that differ from fiscal filing dates.',
             'Capital expenditure retains the provider sign, including negative cash outflows; avoid subtracting an outflow twice.',
-            'Diluted average shares are annual average share counts, not currency amounts or current shares outstanding.',
-            'Ordinary shares are dated period-end share counts, not shares verified as current on the market-quote date.',
+            'Diluted average shares are annual average share counts. They are neither currency amounts nor current shares outstanding.',
+            'Ordinary shares are dated period-end share counts; they are unverified as current on the market-quote date.',
             'Cash and cash equivalents are included in cash, cash equivalents and short-term investments; use one cash definition, never add the two series.',
             'An enterprise-to-equity bridge must align debt and the chosen cash measure to the same asOfDate and currency; absent cash or debt is missing evidence, never zero.',
             'Change in working capital preserves the provider cash-flow-statement sign; it is not automatically an increase in invested working capital for FCFF subtraction.',
-            'Tax provision and pretax income are reported annual flows, not an assumed normalized forward cash tax rate.',
+            'Tax provision and pretax income are reported annual flows. They give no normalized forward cash tax rate.',
             'Stock-based compensation is reported separately and must not be treated as free capital or counted twice in an FCFF bridge.',
         ],
     }

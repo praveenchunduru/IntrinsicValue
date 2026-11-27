@@ -11,11 +11,11 @@ from .sec_http import sec_contact_scope
 
 
 def main():
-    parser = argparse.ArgumentParser(description='InvestmentIdeas — OpenRouter-only research')
+    parser = argparse.ArgumentParser(description='InvestmentIdeas: OpenRouter-only research')
     parser.add_argument('ticker', nargs='?')
     parser.add_argument('--quick', action='store_true', help='Use the four-call financial overview instead of the full research pipeline')
     parser.add_argument('--profile', choices=MODELS, default='balanced')
-    parser.add_argument('--budget', type=float, help='Total cumulative USD allowance, including prior uncertain charges (default: full 20, quick 2; a ceiling with conservative per-call reservations, not a promised cost)')
+    parser.add_argument('--budget', type=float, help='Total cumulative USD allowance, including prior uncertain charges (default: full 20, quick 2; a ceiling with conservative per-call reservations; the run can cost less)')
     parser.add_argument('--sec-contact',help='Requester contact email for SEC access (memory only; alternatively set SEC_CONTACT_EMAIL)')
     parser.add_argument('--output', default='research-output')
     parser.add_argument('--evidence', type=Path, help='Optional UTF-8 filing or research text (up to 100 KB)')

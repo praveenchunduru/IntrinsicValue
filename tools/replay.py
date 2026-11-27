@@ -1,7 +1,7 @@
 """Re-run a saved full run's later stages on its frozen evidence, paying only for those stages.
 
 Usage:
-  python tools/replay.py SAVED_RUN_FOLDER OUTPUT_DIR [--from plan|draft] [--max-revisions 1]
+  python tools/replay.py SAVED_RUN_FOLDER OUTPUT_DIR [--from plan|draft] [--max-revisions N]
                          [--budget 20] [--profile balanced] [--strong-model ID] [--review-model ID]
   python tools/replay.py SAVED_RUN_FOLDER OUTPUT_DIR --plan-samples N [--budget 8] [--resume]
 
@@ -628,7 +628,7 @@ def main():
     parser.add_argument('saved')
     parser.add_argument('output')
     parser.add_argument('--from', dest='start', choices=('plan', 'draft', 'review'), default='plan')
-    parser.add_argument('--max-revisions', type=int, default=1)
+    parser.add_argument('--max-revisions', type=int, default=pipeline.DEFAULT_MAX_REVISIONS)
     parser.add_argument('--budget', type=float, default=pipeline.DEFAULT_BUDGET)
     parser.add_argument('--profile', choices=tuple(core.MODELS), default='balanced')
     parser.add_argument('--strong-model')

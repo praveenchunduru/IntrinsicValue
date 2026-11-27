@@ -232,7 +232,7 @@ DEBT_RECONCILIATION = {
 CASH_POLICY = ('Explicit house modeling policy: selected nonoperating assets comprise reported cash and '
                'cash equivalents plus directly reported marketable securities or short-term investments '
                'on the annual balance-sheet date. Inclusive subtotals replace their components. Missing '
-               'investment categories are excluded from this selected-asset policy, not reported as zero. '
+               'investment categories are excluded from this selected-asset policy and count as zero by assumption. '
                'Long-term investments without a marketable classification are excluded here; the equity '
                'bridge adds separately the investment lines the return-on-capital table removes from invested '
                'capital. This does not '
@@ -1283,7 +1283,7 @@ def _claim_components(pick, preferred_in_shares, conflicts):
                                                                  for concept in part[1:] if concept) + BENEFIT_ASSETS)):
         if name not in components:
             looked_for.append({'line': name, 'value': 0, 'concepts_looked_for': ['us-gaap:' + concept for concept in concepts],
-                               'basis': 'assumption: no concept reported on the date; zero, not a reported fact'})
+                               'basis': 'assumption: no concept reported on the date; zero by assumption'})
     return components, looked_for
 
 
@@ -1590,7 +1590,7 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                       'debt_components': _components_public(debt),
                       'finance_leases_included_in_net_debt': leases_in_debt,
                       'cash_classification_policy': CASH_POLICY,
-                      'cash_coverage': {'basis': 'selected directly reported assets, not an assertion that omitted investments are zero',
+                      'cash_coverage': {'basis': 'selected directly reported assets; omitted investments are left out',
                                         'excluded_unclassified_investments': 'LongTermInvestments and other investments without a selected marketable classification; see nonoperating_assets_bridge',
                                         'unselected_reported_categories': [name for name in CASH if cash_items[name] and name not in cash],
                                         'missing_investment_categories': [name for name in CASH if not cash_items[name]]},
@@ -1657,7 +1657,7 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
             claim_amount = Decimal(0) if leases_in_debt and debt else amount
             used = list(debt.values()) if leases_in_debt and debt else list(lease_parts.values())
             actuals['other_equity_claims'] = _json_number(claim_amount)
-            refs['other_equity_claims'] = sorted({sid for item in used for sid in item['source_refs']}) + ['assumption: additional unidentified claims are zero, not a reported fact']
+            refs['other_equity_claims'] = sorted({sid for item in used for sid in item['source_refs']}) + ['assumption: additional unidentified claims are zero by assumption']
             dates['other_equity_claims'] = {'instant': anchor.isoformat(), 'basis': 'finance leases already included in debt; no second deduction' if leases_in_debt else 'reported finance lease liabilities plus explicit house assumption for unidentified claims'}
             claims_bridge = {'currency': currency, 'as_of': anchor.isoformat(),
                              'reported_finance_lease_liabilities': _json_number(amount) if amount is not None else None,
@@ -1674,7 +1674,7 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                                                   'current_term_debt_and_finance_leases',
                                                   'noncurrent_term_debt_and_finance_leases'))):
             actuals['other_equity_claims'] = 0
-            refs['other_equity_claims'] = ['assumption: no finance lease liability concept is reported; additional unidentified claims are zero, not a reported fact']
+            refs['other_equity_claims'] = ['assumption: no finance lease liability concept is reported; additional unidentified claims are zero by assumption']
             dates['other_equity_claims'] = {'instant': anchor.isoformat(), 'basis': 'no reported finance lease liability concept; explicit house assumptions'}
             claims_bridge = {'currency': currency, 'as_of': anchor.isoformat(),
                              'reported_finance_lease_liabilities': None,
@@ -1747,7 +1747,7 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
             actuals['dilutive_shares'] = _json_number(dilution['dilutive_shares'])
             refs['dilutive_shares'] = dilution['source_refs'] or [
                 'assumption: no weighted-average share count is reported for the anchor fiscal year; '
-                'dilutive increment zero, not a reported fact']
+                'dilutive increment zero by assumption']
             dates['dilutive_shares'] = {**dilution['period'],
                                         'basis': 'anchor fiscal year diluted less basic weighted-average shares, added to the '
                                                  'latest outstanding shares'}
@@ -1767,7 +1767,7 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
             refs['nonoperating_assets'] = (
                 sorted({ref for item in components.values() for ref in item['source_refs']}) or
                 sorted({ref for entry in record['not_added'] for ref in entry.get('source_refs', [])}) or
-                ['assumption: no non-operating investment concept is reported on the date; zero, not a reported fact'])
+                ['assumption: no non-operating investment concept is reported on the date; zero by assumption'])
             dates['nonoperating_assets'] = {'instant': anchor.isoformat(),
                                             'basis': 'reported carrying value of non-operating investments not selected as cash, '
                                                      'on the balance-sheet date of net debt'}
@@ -1787,7 +1787,7 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
             assumptions = [ref for ref in refs['other_equity_claims'] if ref.startswith('assumption:')]
             if absent:
                 assumptions.append('assumption: ' + ', '.join(entry['line'].replace('_', ' ') for entry in absent) +
-                                   ' not reported on the date; zero, not a reported fact')
+                                   ' not reported on the date; zero by assumption')
             refs['other_equity_claims'] = reported + assumptions
             dates['other_equity_claims']['basis'] += ('; noncontrolling interests, preferred stock and unfunded '
                                                       'defined-benefit obligations at carrying value, before tax')
