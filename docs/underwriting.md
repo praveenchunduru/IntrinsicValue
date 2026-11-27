@@ -1118,7 +1118,7 @@ saved run's memo with the current rendering code at no cost, keeping its prose.
 The CLI flags map to Python's `pipeline.run(source_snapshot=..., forecast_plan=...)`:
 
 ```bash
-python -m investmentideas AAPL --snapshot sources.json \
+python3 -m intrinsicvalue AAPL --snapshot sources.json \
   --forecast-plan assumptions.json --draft memo-body.md --budget 10
 ```
 
@@ -1149,7 +1149,7 @@ still apply. See [live-validation guidance](openrouter_live_validation.md).
 To recompute without a key, network requests or model calls:
 
 ```bash
-python -m investmentideas --revalue assumptions.json --output revalued
+python3 -m intrinsicvalue --revalue assumptions.json --output revalued
 ```
 
 Offline revaluation uses the supplied facts and references; it does not fetch

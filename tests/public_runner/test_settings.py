@@ -218,9 +218,12 @@ class CommandLineUsesTheFile(unittest.TestCase):
 
     def test_the_same_replay_without_the_file_says_the_key_is_missing(self):
         with tempfile.TemporaryDirectory() as folder:
-            Path(folder, 'snapshot.json').write_text('not json', encoding='utf-8')
+            Path(folder, 'snapshot.json').write_text('[]', encoding='utf-8')
             done = self.run_cli(folder, 'AAPL', '--snapshot', 'snapshot.json')
-        self.assertIn('Setup: OPENROUTER_API_KEY is not set', done.stderr)
+        # Changed 2026-11-27: a missing key now stops before any work, with the setup command.
+        self.assertIn('No OpenRouter key is set', done.stderr)
+        self.assertIn('--setup', done.stderr)
+        self.assertNotIn('Traceback', done.stderr)
 
     def test_an_unusable_settings_file_stops_with_a_plain_message(self):
         with tempfile.TemporaryDirectory() as folder:

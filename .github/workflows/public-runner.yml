@@ -1,9 +1,9 @@
 name: Portable OpenRouter runner
 on:
   push:
-    paths: ['investmentideas/**', 'tests/public_runner/**', 'pyproject.toml', '.github/workflows/public-runner.yml']
+    paths: ['investmentideas/**', 'intrinsicvalue/**', 'tests/public_runner/**', 'pyproject.toml', '.github/workflows/public-runner.yml']
   pull_request:
-    paths: ['investmentideas/**', 'tests/public_runner/**', 'pyproject.toml', '.github/workflows/public-runner.yml']
+    paths: ['investmentideas/**', 'intrinsicvalue/**', 'tests/public_runner/**', 'pyproject.toml', '.github/workflows/public-runner.yml']
 permissions:
   contents: read
 jobs:
@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python: ['3.10', '3.12', '3.13']
+        python: ['3.9', '3.10', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -20,3 +20,5 @@ jobs:
       - run: python -m pip install .
       - run: python -m unittest discover -s tests/public_runner -v
       - run: investmentideas --help
+      - run: intrinsicvalue --version
+      - run: python -m intrinsicvalue --help

@@ -14,8 +14,15 @@ class LocalServerTests(unittest.TestCase):
         with socket.socket() as sock:
             sock.bind(('127.0.0.1', 0))
             cls.port = sock.getsockname()[1]
-        cls.process = subprocess.Popen([sys.executable, '-m', 'investmentideas', '--port', str(cls.port)],
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        cls.process = subprocess.Popen([sys.executable, '-m', 'investmentideas', '--port', str(cls.port), '--no-browser'],
+                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        # Changed 2026-11-27: the token travels in the address printed in the terminal, not in the page.
+        banner = cls.process.stdout.readline()
+        found = re.search(r'#token=(\S+)', banner)
+        if not found:
+            cls.process.terminate()
+            raise RuntimeError('Local server printed no address: ' + banner)
+        cls.token = found.group(1)
         for _ in range(100):
             try:
                 conn = http.client.HTTPConnection('127.0.0.1', cls.port, timeout=1)
@@ -23,9 +30,8 @@ class LocalServerTests(unittest.TestCase):
                 response = conn.getresponse()
                 cls.page = response.read().decode()
                 conn.close()
-                cls.token = re.search("const csrf='([^']+)'", cls.page).group(1)
                 return
-            except (OSError, AttributeError):
+            except OSError:
                 time.sleep(.05)
         cls.process.terminate()
         raise RuntimeError('Local server failed to start')
@@ -34,6 +40,7 @@ class LocalServerTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.process.terminate()
         cls.process.wait(timeout=5)
+        cls.process.stdout.close()
 
     def request(self, path, method='GET', headers=None, body=None):
         conn = http.client.HTTPConnection('127.0.0.1', self.port, timeout=5)
@@ -46,7 +53,8 @@ class LocalServerTests(unittest.TestCase):
     def test_page_and_private_status(self):
         self.assertIn('type="password"', self.page)
         self.assertEqual(self.request('/')[2], 'no-store')
-        self.assertEqual(self.request('/status')[0], 404)
+        self.assertEqual(self.request('/status')[0], 403)
+        self.assertNotIn(self.token, self.page)
         code, content, _ = self.request('/status', headers={'X-Research-Token': self.token})
         self.assertEqual(code, 200)
         self.assertTrue(json.loads(content)['done'])

@@ -540,7 +540,8 @@ class StoredRunTests(unittest.TestCase):
     def test_defaults_are_three_rounds(self):
         self.assertEqual(pipeline.DEFAULT_MAX_REVISIONS, 3)
         self.assertEqual(inspect.signature(pipeline.run).parameters['max_revisions'].default, 3)
-        self.assertIn("'--max-revisions',type=int,default=3", inspect.getsource(cli))
+        # Changed 2026-11-27: the flag defaults to None so --quick and --revalue can refuse it when given.
+        self.assertIn("'max_revisions': 3 if args.max_revisions is None", inspect.getsource(cli))
 
     def test_a_run_stopped_by_the_old_default_continues_with_the_new_one(self):
         fixture = LoopTransport(reviews=[['prose'], ['prose']])

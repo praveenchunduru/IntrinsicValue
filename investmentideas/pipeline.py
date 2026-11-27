@@ -5298,28 +5298,42 @@ def run(ticker, key, *, profile='balanced', budget=DEFAULT_BUDGET, directory='re
         raise ValueError('Evidence must be text of at most 100 KB')
     easy,strong=core.MODELS[profile]
     easy,strong=easy_model or easy,strong_model or strong
-    identity_parts=[VERSION,ticker,profile,easy,strong,evidence,source_snapshot,datetime.now(timezone.utc).date().isoformat()]
-    if plan_samples!=default_plan_samples(profile):
-        # A non-default sample count is its own run; the default keeps existing run folders.
-        identity_parts.append(['plan_samples',plan_samples])
-    identity=_digest(identity_parts)[:16]
     base=Path(directory)/ticker
-    folder=base/('full-'+identity)
+    def locate(day):
+        parts=[VERSION,ticker,profile,easy,strong,evidence,source_snapshot,day.isoformat()]
+        if plan_samples!=default_plan_samples(profile):
+            # A non-default sample count is its own run; the default keeps existing run folders.
+            parts.append(['plan_samples',plan_samples])
+        ident=_digest(parts)[:16]
+        found=base/('full-'+ident)
+        if not found.exists():
+            # Preserve legacy metered history, without moving a possibly active run.
+            legacy=base/('full-'+_digest(parts+[core.SYSTEM])[:16])
+            if legacy.is_dir():
+                found=legacy
+            elif base.is_dir():
+                for marker in sorted(base.glob('full-*/run-identity.json')):
+                    if json.loads(marker.read_text()).get('id')==ident:
+                        found=marker.parent
+                        break
+        return parts,ident,found
+    today=datetime.now(timezone.utc).date()
+    identity_parts,identity,folder=locate(today)
     if not folder.exists():
-        # Preserve legacy metered history, without moving a possibly active run.
-        legacy=base/('full-'+_digest(identity_parts+[core.SYSTEM])[:16])
-        if legacy.is_dir():
-            folder=legacy
-        elif base.is_dir():
-            for marker in sorted(base.glob('full-*/run-identity.json')):
-                if json.loads(marker.read_text()).get('id')==identity:
-                    folder=marker.parent
-                    break
+        # The identity carries the UTC day. An unfinished run from the previous UTC day
+        # started within 24 hours is the same research: resume it (see runs.resumable).
+        from .runs import resumable
+        earlier=locate(today-timedelta(days=1))
+        if earlier[2].is_dir() and resumable(earlier[2]):
+            identity_parts,identity,folder=earlier
+            progress('Resuming the unfinished run from the previous UTC day; finished steps are reused')
     folder.mkdir(parents=True,exist_ok=True)
     with _lock(folder):
         marker_path=folder/'run-identity.json'
         marker=json.loads(marker_path.read_text()) if marker_path.exists() else {}
         marker['id']=identity
+        if not marker_path.exists():
+            marker['started_at']=datetime.now(timezone.utc).isoformat(timespec='seconds')
         if folder.name=='full-'+_digest(identity_parts+[core.SYSTEM])[:16]:
             # The legacy folder digest itself establishes which SYSTEM was
             # used by its old stage keys, which did not include that field.
@@ -5578,7 +5592,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         state['quality_status']='missing_valuation'
         details='; '.join(coverage.get('conflicts',[])) or ', '.join(coverage.get('missing_fields',[]))
         notes='; '.join(coverage.get('notes',[]))
-        message='Reported-input preflight stopped before paid research: '+details+'. '+notes
+        message='Reported-input preflight stopped before paid research: '+details+'. '+notes+('.' if notes and not notes.endswith('.') else '')
         recovery=('This issuer needs a financial-institution valuation model, which this tool does not provide'
             if gate.get('refused') else
             'Supply primary disclosures with --sources, or start a fresh non-snapshot run with --sec-contact'
