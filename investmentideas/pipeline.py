@@ -1911,15 +1911,16 @@ def _sales_to_capital_paths(locked, changes):
                             'reason':'Python builds the per-year sales-to-capital from the stated path'})
 
 
-def _pin_terminal_rnd(locked, changes):
-    """Final-year R&D share of revenue, for the net R&D investment the continuing value adds back.
+def _pin_terminal_rnd(locked, sources, changes):
+    """Each forecast year's R&D share of revenue, for the net R&D investment the continuing value adds back.
 
     Owner choice (2026-11-26, Damodaran critique F3): R&D is expensed in the margin
     and the continuing value also charges reinvestment at the terminal return, so
     new R&D after the forecast earned below its cost forever. R&D only, not selling
-    or administrative costs. The share is the plan's own final-year R&D line; a plan
-    without one (aggregate margins) holds the reported share, and a company that
-    reports no R&D (Costco) gets none.
+    or administrative costs. The shares are the plan's own R&D line; a plan without
+    one (aggregate margins) holds the reported share, and a company that reports no
+    R&D (Costco) gets none. The continuing value amortizes the forecast's own R&D,
+    so the reported history is kept only for forecasts shorter than six years.
     """
     model=locked.get('operating_model') if isinstance(locked.get('operating_model'),dict) else {}
     reported=_reported_expense_shares(locked).get('research_and_development') or 0.0
@@ -1931,28 +1932,68 @@ def _pin_terminal_rnd(locked, changes):
         spend=((operating.get('expenses') or {}).get('research_and_development')
                if model.get('earnings_mode')=='gross_profit_less_expenses' else None)
         revenue=_scenario_revenue(bases,operating) if spend is not None else None
-        previous=(scenario.get('terminal_rnd_share'),scenario.get('terminal_rnd_basis'))
-        if (isinstance(spend,list) and spend and isinstance(spend[-1],(int,float)) and revenue and
-                len(revenue)==len(spend) and revenue[-1]>0):
-            share,basis=spend[-1]/revenue[-1],'final_year_share'
+        previous=(scenario.get('rnd_share_path'),scenario.get('rnd_basis'))
+        if (isinstance(spend,list) and revenue and len(revenue)==len(spend) and
+                all(isinstance(x,(int,float)) and not isinstance(x,bool) for x in spend) and all(x>0 for x in revenue)):
+            shares,basis=[value/amount for value,amount in zip(spend,revenue)],'plan_rnd_line'
         else:
-            share,basis=reported,'reported_share'
-        if not share:
+            horizon=_forecast_horizon(locked,name)
+            shares,basis=([reported]*horizon if horizon else []),'reported_share'
+        if not any(shares):
             # No R&D: the field is left out, which the engine reads as zero.
-            scenario.pop('terminal_rnd_share',None)
-            scenario.pop('terminal_rnd_basis',None)
+            scenario.pop('rnd_share_path',None)
+            scenario.pop('rnd_basis',None)
             if previous[0]:
-                changes.append({'field':f'scenarios.{name}.terminal_rnd_share','previous':previous[0],'pinned':None,
+                changes.append({'field':f'scenarios.{name}.rnd_share_path','previous':previous[0],'pinned':None,
                                 'source_refs':[],'reason':'no R&D line in the plan or the reported results'})
             continue
-        scenario['terminal_rnd_share'],scenario['terminal_rnd_basis']=share,basis
-        if previous!=(share,basis):
-            changes.append({'field':f'scenarios.{name}.terminal_rnd_share','previous':previous[0],'pinned':share,
+        scenario['rnd_share_path'],scenario['rnd_basis']=shares,basis
+        if previous!=(shares,basis):
+            changes.append({'field':f'scenarios.{name}.rnd_share_path','previous':previous[0],'pinned':shares,
                             'source_refs':[],
-                            'reason':('final-year R&D share of revenue from the plan; the continuing value adds back net R&D '
-                                      'investment' if basis=='final_year_share' else
+                            'reason':('R&D share of revenue in each forecast year from the plan; the continuing value adds back '
+                                      'net R&D investment' if basis=='plan_rnd_line' else
                                       'reported R&D share of revenue, held (the plan has no R&D line); the continuing value adds '
                                       'back net R&D investment')})
+    history=reported_rnd_history(sources,(locked.get('actuals') or {}).get('revenue'))
+    if history and any(isinstance(item,dict) and item.get('rnd_share_path') for item in (locked.get('scenarios') or {}).values()):
+        locked['reported_rnd_history']=history
+    else:
+        locked.pop('reported_rnd_history',None)
+
+
+def reported_rnd_history(sources, anchor_revenue):
+    """Reported R&D for consecutive fiscal years ending at the forecast anchor year, oldest first, or None.
+
+    The last history year must be the anchor: its revenue matches the pinned revenue.
+    """
+    if not isinstance(anchor_revenue,(int,float)) or anchor_revenue<=0:
+        return None
+    for sid,rows in _grouped_history(sources).items():
+        if not rows or not isinstance(rows[-1].get('revenue'),(int,float)) or \
+                abs(rows[-1]['revenue']-anchor_revenue)>1e-6*anchor_revenue:
+            continue
+        run=[]
+        for row in reversed(rows):
+            amount=row.get('research_and_development')
+            if (not isinstance(amount,(int,float)) or isinstance(amount,bool) or amount<0 or
+                    (run and not _consecutive_years(row,run[0]))):
+                break
+            run.insert(0,row)
+        if run:
+            return {'amounts':[row['research_and_development'] for row in run],
+                    'fiscal_year_ends':[row.get('fiscal_year_end') for row in run],'source_refs':[sid],
+                    'basis':'Reported R&D for consecutive fiscal years ending at the forecast anchor year, oldest first; '
+                            'the continuing value amortizes it only where the forecast is shorter than six years.'}
+    return None
+
+
+def _consecutive_years(earlier, later):
+    try:
+        days=(date.fromisoformat(later['fiscal_year_end'])-date.fromisoformat(earlier['fiscal_year_end'])).days
+    except (KeyError,TypeError,ValueError):
+        return False
+    return 350<=days<=380
 
 
 def forecast_capital_reference(sources):
@@ -2074,11 +2115,12 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
         convention_notes=_pin_market_conventions(locked,sources,reported,valuation_day,changes)
         if apply_conventions:
             convention_notes=[*convention_notes,*_pin_house_conventions(locked,sources,changes)]
-            _pin_terminal_rnd(locked,changes)
-            if any(isinstance(scenario,dict) and scenario.get('terminal_rnd_share')
+            _pin_terminal_rnd(locked,sources,changes)
+            if any(isinstance(scenario,dict) and scenario.get('rnd_share_path')
                    for scenario in (locked.get('scenarios') or {}).values()):
-                convention_notes.append('The continuing value adds net R&D investment (R&D less six-year amortization) back '
-                                        'to NOPAT, so R&D after the forecast is investment that earns the terminal return.')
+                convention_notes.append('The continuing value adds net R&D investment (final-year R&D less six-year '
+                                        'amortization of the forecast\'s own R&D) back to NOPAT, so R&D after the forecast is '
+                                        'investment that earns the terminal return.')
     else:
         convention_notes=['This supplied plan keeps its own rate and timing conventions; the market-consistent rate path '
                           'and valuation-date stub apply only when a plan opts in with discount_rate.term_structure or valuation_timing.']

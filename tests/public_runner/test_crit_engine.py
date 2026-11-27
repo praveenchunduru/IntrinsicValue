@@ -1,7 +1,7 @@
 """Engine fixes from the Damodaran, Mauboussin and Druckenmiller critiques (2026-11-26).
 
 Continuing-value timing (Mauboussin F8), net R&D investment in the continuing value
-(Damodaran F3), the implied-return search below terminal growth (Damodaran F1,
+amortizing the forecast's own R&D (Damodaran F3), the implied-return search below terminal growth (Damodaran F1,
 Druckenmiller F5, Mauboussin F6), a sales-to-capital path (Damodaran F7,
 Druckenmiller F6) and the forecast ROIC line (Mauboussin F3). Expected numbers are
 computed here by hand, independently of the engine.
@@ -106,7 +106,9 @@ class ContinuingValueTimingTests(unittest.TestCase):
 
 
 class RndAddBackTests(unittest.TestCase):
-    def test_net_investment_share_matches_the_roic_vintages(self):
+    SHARES = [.08 + .01 * year for year in range(10)]
+
+    def test_the_steady_growth_fallback_matches_the_roic_vintages(self):
         # R&D growing at g with six-year straight-line amortization from the year after the spending.
         growth, start = .04, date(2000, 6, 30)
         rows = [{'fiscal_year_end': (start + timedelta(days=365 * year)).isoformat(),
@@ -117,78 +119,103 @@ class RndAddBackTests(unittest.TestCase):
         self.assertEqual(valuation.RND_LIFE_YEARS, 6)
         self.assertAlmostEqual(valuation.rnd_net_investment_share(0.0), 0.0)
 
-    def test_terminal_nopat_adds_net_rnd_and_the_reinvestment_covers_it(self):
-        value = steady(constant_plan())
-        value['scenarios']['base']['terminal_rnd_share'] = .1
-        result = evaluate(value)['scenarios']['base']
-        revenue = 1e9 * 1.05 ** 5
-        net = .1 * revenue * (1 - sum(1.02 ** -age for age in range(1, 7)) / 6)
-        self.assertAlmostEqual(result['terminal_rnd_net_investment'], net, places=3)
-        self.assertAlmostEqual(result['terminal_nopat'], revenue * .2 * .75 + net, places=3)
-        self.assertAlmostEqual(result['terminal_enterprise_value'], result['terminal_nopat'] / .10, places=2)
-        self.assertEqual(result['terminal_rnd_addback']['life_years'], 6)
-        # Growth still adds no value with the add-back.
-        value['scenarios']['base']['terminal_growth'] = .05
-        moved = evaluate(value)['scenarios']['base']
-        net_at = .1 * revenue * (1 - sum(1.05 ** -age for age in range(1, 7)) / 6)
-        self.assertAlmostEqual(moved['terminal_enterprise_value'], (revenue * .15 + net_at) / .10, places=2)
+    def test_growth_adds_no_value_with_the_add_back_on_a_ten_year_glide_plan(self):
+        values = []
+        for growth, basis in ((None, None), (.03, 'Synthetic slower market.'), (0.0, 'Synthetic flat market.')):
+            value = steady(glide_plan())
+            for scenario in value['scenarios'].values():
+                scenario['rnd_share_path'] = self.SHARES
+                if growth is not None:
+                    scenario.update(terminal_growth=growth, terminal_growth_basis=basis)
+            result = evaluate(value)['scenarios']['base']
+            addback = result['terminal_rnd_addback']
+            self.assertEqual(addback['amortization_basis'], 'forecast')
+            self.assertGreater(addback['net_investment_added_to_nopat'], 0)
+            values.append(result['per_share_value'])
+        self.assertAlmostEqual(values[0], values[1], places=9)
+        self.assertAlmostEqual(values[0], values[2], places=9)
+        self.assertGreater(values[0], base_value(steady(glide_plan())))
 
-    def test_with_rnd_terminal_growth_moves_value_only_through_the_add_back(self):
-        # The add-back's amortization assumes R&D grew at terminal growth, so growth enters
-        # there and nowhere else: the R&D-expensed value stays invariant.
-        revenue = 1e9 * 1.05 ** 5
-        expensed = []
-        for growth in (0.0, .02, .05):
-            value = steady(constant_plan())
-            value['scenarios']['base']['terminal_growth'] = growth
-            expensed.append(base_value(value))
-            value['scenarios']['base']['terminal_rnd_share'] = .1
-            net = .1 * revenue * valuation.rnd_net_investment_share(growth)
-            self.assertAlmostEqual(base_value(value) - expensed[-1], net / .10 / 1.1 ** 5 / 1e8, places=9)
-        self.assertAlmostEqual(expensed[0], expensed[1], places=9)
-        self.assertAlmostEqual(expensed[0], expensed[2], places=9)
+    def test_amortization_is_the_forecasts_own_rnd_of_the_six_prior_years(self):
+        value = steady(glide_plan())
+        for scenario in value['scenarios'].values():
+            scenario['rnd_share_path'] = self.SHARES
+        result = evaluate(value)['scenarios']['base']
+        spend = [share * row['revenue'] for share, row in zip(self.SHARES, result['cashflows'])]
+        addback = result['terminal_rnd_addback']
+        self.assertAlmostEqual(addback['research_and_development'], spend[9], places=6)
+        self.assertEqual(len(addback['amortized_spending']), 6)
+        self.assertAlmostEqual(addback['amortization'], sum(spend[3:9]) / 6, places=6)
+        self.assertAlmostEqual(result['terminal_nopat'], result['terminal_nopat_before_rnd_addback'] + spend[9] - sum(spend[3:9]) / 6, places=6)
+        self.assertAlmostEqual(result['terminal_enterprise_value'], result['terminal_nopat'] / result['terminal_rate'])
+        self.assertIn("amortization of the forecast's own R&D", result['continuing_value_basis'])
+
+    def test_short_forecasts_use_reported_rnd_and_fall_back_only_without_it(self):
+        value = steady(constant_plan())
+        value['scenarios']['base']['rnd_share_path'] = .1
+        spend = [.1 * 1e9 * 1.05 ** year for year in range(1, 6)]
+        # Five forecast years need the anchor year and the year before from the reported history.
+        value['reported_rnd_history'] = {'amounts': [80e6, 90e6, 95e6], 'source_refs': ['S2']}
+        addback = evaluate(value)['scenarios']['base']['terminal_rnd_addback']
+        self.assertEqual(addback['amortization_basis'], 'forecast_and_reported')
+        self.assertAlmostEqual(addback['amortization'], (90e6 + 95e6 + sum(spend[:4])) / 6, places=3)
+        self.assertAlmostEqual(addback['net_investment_added_to_nopat'], spend[4] - (90e6 + 95e6 + sum(spend[:4])) / 6, places=3)
+        # Without enough history the amortization assumes R&D grew at terminal growth, and says so.
+        value['reported_rnd_history'] = {'amounts': [95e6]}
+        result = evaluate(value)['scenarios']['base']
+        addback = result['terminal_rnd_addback']
+        self.assertEqual(addback['amortization_basis'], 'terminal_growth_steady_state')
+        self.assertAlmostEqual(addback['net_investment_added_to_nopat'], spend[4] * valuation.rnd_net_investment_share(.02), places=3)
+        self.assertIn('assuming R&D grew at terminal growth', result['continuing_value_basis'])
+        with self.assertRaisesRegex(ValueError, 'cannot be negative'):
+            evaluate(dict(value, reported_rnd_history={'amounts': [-1.0]}))
 
     def test_the_panel_shows_rnd_expensed_as_the_earlier_rule(self):
-        value = steady(constant_plan())
-        value['market_price'] = 20.0
+        value = steady(glide_plan())
         rows = {row['name']: row for row in evaluate(value)['convention_panel']['rows']}
         self.assertEqual(rows['terminal_rnd_expensed']['status'], 'not_applicable')
         expensed = base_value(value)
-        value['scenarios']['base']['terminal_rnd_share'] = .1
+        value['scenarios']['base']['rnd_share_path'] = self.SHARES
         result = evaluate(value)
-        row = {row['name']: row for row in result['convention_panel']['rows']}['terminal_rnd_expensed']
+        rows = {row['name']: row for row in result['convention_panel']['rows']}
+        row = rows['terminal_rnd_expensed']
         self.assertEqual(row['status'], 'calculated')
         self.assertIn('earlier house rule', row['label'])
         self.assertAlmostEqual(row['per_share_value'], expensed)
         self.assertLess(row['dollar_delta'], 0)
         # Continuing the forecast's efficiency keeps R&D expensed, as the forecast does.
-        continuing = {row['name']: row for row in result['convention_panel']['rows']}['terminal_reinvestment_continues_forecast']
-        reference = steady(constant_plan())
-        reference['scenarios']['base'].update(terminal_roic=.2 * .75 * 2)
-        reference['scenarios']['base'].pop('terminal_roic_basis')
-        self.assertAlmostEqual(continuing['per_share_value'], base_value(reference))
+        reference = glide_plan()
+        reference['scenarios']['base']['terminal_roic'] = .2 * .8 * 2
+        self.assertAlmostEqual(rows['terminal_reinvestment_continues_forecast']['per_share_value'], base_value(reference))
 
-    def test_the_lock_sets_the_plans_final_year_rnd_share_and_revalue_reproduces_it(self):
+    def test_the_lock_sets_the_plans_rnd_shares_and_revalue_reproduces_them(self):
         value = operating_plan()
         for scenario in value['scenarios'].values():
-            # At zero growth amortization equals spending and the add-back is zero.
             scenario['terminal_growth'] = .02
-        locked, changes = lock(value)
-        for name in ('bear', 'base', 'bull'):
-            scenario = locked['scenarios'][name]
-            # R&D 100 against revenue 1,000 in the final year.
-            self.assertAlmostEqual(scenario['terminal_rnd_share'], .1)
-            self.assertEqual(scenario['terminal_rnd_basis'], 'final_year_share')
-        self.assertIn('scenarios.base.terminal_rnd_share', [change['field'] for change in changes])
+        value['operating_model']['scenarios']['base']['expenses']['research_and_development'] = [100, 110, 120, 130, 150]
+        history = [{'fiscal_year_end': f'202{year}-12-31', 'revenue': 900 + 50 * year, 'research_and_development': 80 + 5 * year}
+                   for year in range(3)]
+        source = {'id': 'S2', 'data': {}, 'historical_baseline': {'rows': history}}
+        locked, changes = lock(value, sources=[source])
+        self.assertEqual(locked['scenarios']['base']['rnd_share_path'], [.1, .11, .12, .13, .15])
+        self.assertEqual(locked['scenarios']['bear']['rnd_share_path'], [.1] * 5)
+        self.assertEqual(locked['scenarios']['base']['rnd_basis'], 'plan_rnd_line')
+        # The anchor year (revenue 1,000) ends the reported history.
+        self.assertEqual(locked['reported_rnd_history']['amounts'], [80, 85, 90])
+        self.assertIn('scenarios.base.rnd_share_path', [change['field'] for change in changes])
         self.assertIn('adds net R&D investment', locked['assumptions_label'])
         result = evaluate(locked)
         self.assertEqual(evaluate(json.loads(json.dumps(locked)))['weighted_per_share_value'], result['weighted_per_share_value'])
-        self.assertGreater(result['scenarios']['base']['terminal_rnd_net_investment'], 0)
-        # Relocking records nothing new.
-        again = [change for change in lock(locked)[1] if change['field'].endswith('terminal_rnd_share')]
+        addback = result['scenarios']['base']['terminal_rnd_addback']
+        self.assertEqual(addback['amortization_basis'], 'forecast_and_reported')
+        self.assertAlmostEqual(addback['amortization'], (85 + 90 + 100 + 110 + 120 + 130) / 6)
+        again = [change for change in lock(locked, sources=[source])[1] if change['field'].endswith('rnd_share_path')]
         self.assertEqual(again, [])
+        # A history that does not end at the anchor year is not used.
+        history[-1]['revenue'] = 999
+        self.assertNotIn('reported_rnd_history', lock(value, sources=[source])[0])
 
-    def test_the_share_follows_an_edited_rnd_line_and_an_rnd_counterfactual(self):
+    def test_the_shares_follow_an_edited_rnd_line_and_an_rnd_counterfactual(self):
         locked, _ = lock(operating_plan())
         edited = copy.deepcopy(locked)
         edited['operating_model']['scenarios']['base']['expenses']['research_and_development'][-1] = 150
@@ -197,8 +224,8 @@ class RndAddBackTests(unittest.TestCase):
         locked['counterfactuals'] = {'higher_rnd': {'operating_overrides': {'expenses': {
             'research_and_development': [100, 100, 100, 100, 200]}}}}
         case = evaluate(locked)['counterfactuals']['higher_rnd']
-        self.assertAlmostEqual(case['effective_inputs']['terminal_rnd_share'], .2)
-        self.assertIn('terminal_rnd_share', case['fixed_input_basis']['changed_base_inputs'])
+        self.assertAlmostEqual(case['effective_inputs']['rnd_share_path'][-1], .2)
+        self.assertIn('rnd_share_path', case['fixed_input_basis']['changed_base_inputs'])
 
     def test_aggregate_plans_hold_the_reported_share_and_no_rnd_means_none(self):
         value = operating_plan()
@@ -207,10 +234,10 @@ class RndAddBackTests(unittest.TestCase):
             scenario.update(growth_rates=[0] * 5, ebit_margins=[.3] * 5)
         reference = {'operating_margin': .3, 'lines': {'research_and_development': {'value': 80, 'source_refs': ['S1']}}}
         locked, _ = lock(copy.deepcopy(value), operating_reference=reference)
-        self.assertAlmostEqual(locked['scenarios']['base']['terminal_rnd_share'], .08)
-        self.assertEqual(locked['scenarios']['base']['terminal_rnd_basis'], 'reported_share')
+        self.assertEqual(locked['scenarios']['base']['rnd_share_path'], [.08] * 5)
+        self.assertEqual(locked['scenarios']['base']['rnd_basis'], 'reported_share')
         locked, changes = lock(copy.deepcopy(value), operating_reference={'operating_margin': .3, 'lines': {}})
-        self.assertNotIn('terminal_rnd_share', locked['scenarios']['base'])
+        self.assertNotIn('rnd_share_path', locked['scenarios']['base'])
         self.assertNotIn('adds net R&D investment', locked['assumptions_label'])
 
     def test_supplied_plans_keep_their_own_conventions(self):
@@ -221,7 +248,7 @@ class RndAddBackTests(unittest.TestCase):
                 patch.object(pipeline, 'pin_reported_inputs',
                              side_effect=lambda proposal, _: (dict(copy.deepcopy(proposal), reported_inputs={}), [])):
             locked, _ = pipeline._lock_plan(value, [], apply_conventions=False)
-        self.assertNotIn('terminal_rnd_share', locked['scenarios']['base'])
+        self.assertNotIn('rnd_share_path', locked['scenarios']['base'])
 
 
 class ImpliedReturnTests(unittest.TestCase):

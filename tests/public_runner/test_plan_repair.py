@@ -151,7 +151,7 @@ class OperatingUnitLabelTests(unittest.TestCase):
         # The house terminal return (the terminal discount rate) and the continuing value's
         # R&D share are pinned on every plan; these tests concern the other normalizations.
         return locked, [change for change in changes
-                        if not change['field'].endswith(('.terminal_roic', '.terminal_rnd_share'))]
+                        if not change['field'].endswith(('.terminal_roic', '.rnd_share_path'))]
 
     def test_a_currency_code_written_as_the_unit_is_corrected_and_recorded(self):
         proposal = inputs()

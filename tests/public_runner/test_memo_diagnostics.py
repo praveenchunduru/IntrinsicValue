@@ -119,7 +119,7 @@ class MemoDiagnosticsTests(unittest.TestCase):
         self.assertEqual(case['final_forecast_nopat'], 150_000_000)
         self.assertAlmostEqual(case['terminal_year_nopat'], 150_000_000)
         # A terminal tax rate and the net R&D add-back each make the two denominators differ.
-        inputs['scenarios']['base'].update(terminal_tax_rate=.2, terminal_rnd_share=.1)
+        inputs['scenarios']['base'].update(terminal_tax_rate=.2, rnd_share_path=.1)
         case = evaluate(inputs)['computed_diagnostics']['valuation_multiples']['scenarios']['base']['original_dcf_exit']
         amortized = sum(1.02 ** -age for age in range(1, 7)) / 6
         self.assertAlmostEqual(case['terminal_year_nopat'], 1e9 * .2 * .8 + 1e8 * (1 - amortized))

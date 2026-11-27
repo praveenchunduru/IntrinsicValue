@@ -36,11 +36,13 @@ schedule is modelled. Reinvestment pays for the same year's revenue increase, so
 capital at the end of the rate path supports that year's NOPAT. The continuing
 value capitalizes it: NOPAT_T * (1 - g / terminal_roic) / (r - g), NOPAT_T / r when
 the terminal return follows the rate (Mauboussin's steady state, where growth adds
-no value). NOPAT_T uses the terminal tax rate and adds optional
-``terminal_rnd_share`` net R&D investment (R&D less six-year straight-line
-amortization at terminal growth), so expensed R&D is not also charged as
-reinvestment. Debt and other noncommon claims are bridged after enterprise value.
-No value floors apply.
+no value). NOPAT_T uses the terminal tax rate and adds net R&D investment from
+optional ``rnd_share_path`` (an R&D share of revenue, held or one per explicit
+year): year-T R&D less straight-line amortization over six years of the R&D of
+years T-6 to T-1 on the same forecast path (reported R&D from plan-level
+``reported_rnd_history`` for years at or before the anchor), so expensed R&D is
+not also charged as reinvestment and terminal growth still adds no value. Debt
+and other noncommon claims are bridged after enterprise value. No value floors apply.
 
 Optional ``counterfactuals`` maps up to eight named cases to base-scenario
 overrides, for example ``{"higher_growth": {"growth_rates": [.10] * 5}}``.
@@ -121,7 +123,7 @@ FORECAST_FIELDS = ('growth_rates', 'ebit_margins', 'tax_rate', 'sales_to_capital
                    'wacc', 'terminal_growth', 'terminal_roic')
 # Overridable alongside FORECAST_FIELDS; absent unless stated, so that a changed
 # tax_rate still reaches steady-state years and the terminal value.
-OPTIONAL_FORECAST_FIELDS = ('terminal_tax_rate', 'terminal_rnd_share')
+OPTIONAL_FORECAST_FIELDS = ('terminal_tax_rate', 'rnd_share_path')
 # R&D asset life for the continuing value's net R&D investment: the life roic.py
 # uses for capitalized R&D (Mauboussin and Callahan, 2022, as applied to Microsoft).
 RND_LIFE_YEARS = CAPITALIZATION['research_and_development'][1]
@@ -213,6 +215,30 @@ def _validated_sales_to_capital(item, horizon, name):
     return ratios[-1], path
 
 
+
+def _rnd_share_path(spec, horizon, name):
+    """R&D share of revenue in each explicit year: one share held, or one per year."""
+    field = name + '.rnd_share_path'
+    shares = ([_number(value, field) for value in spec] if isinstance(spec, list) else [_number(spec, field)] * horizon)
+    if len(shares) != horizon:
+        raise ValueError(f'{field} needs one R&D share of revenue per explicit forecast year ({horizon})')
+    if any(not 0 <= share <= 1 for share in shares):
+        raise ValueError(f'{field} shares must be between 0 and 1')
+    return shares
+
+
+def _reported_rnd_history(record):
+    """Reported R&D before the forecast, oldest first and ending at the anchor year, or []."""
+    if record is None:
+        return []
+    amounts = record.get('amounts') if isinstance(record, dict) else None
+    if not isinstance(amounts, list) or len(amounts) > 15:
+        raise ValueError('reported_rnd_history.amounts must list at most 15 reported R&D amounts, oldest first')
+    values = [_number(value, 'reported_rnd_history.amounts') for value in amounts]
+    if any(value < 0 for value in values):
+        raise ValueError('reported_rnd_history amounts cannot be negative')
+    return values
+
 def _validated(plan):
     if not isinstance(plan, dict):
         raise ValueError('Valuation plan must be an object')
@@ -246,6 +272,7 @@ def _validated(plan):
     discounting = plan.get('_discounting') or {'convention': 'constant'}
     glide = discounting['convention'] == GLIDE
     timing = plan.get('_timing') or {'stub_years': 0.0}
+    history = _reported_rnd_history(plan.get('reported_rnd_history'))
     scenarios = {}
     for name in SCENARIOS:
         item = definitions[name]
@@ -264,12 +291,11 @@ def _validated(plan):
             values['sales_to_capital_path'] = path
         values['growth_rates'] = [_number(value, name + '.growth_rates') for value in growth]
         values['ebit_margins'] = [_number(value, name + '.ebit_margins') for value in margins]
-        if item.get('terminal_rnd_share') is not None:
-            values['terminal_rnd_share'] = _number(item['terminal_rnd_share'], name + '.terminal_rnd_share')
-            if not 0 <= values['terminal_rnd_share'] <= 1:
-                raise ValueError(f'{name}: terminal_rnd_share must be a share of revenue between 0 and 1')
-        # Set at lock from the plan's final-year R&D line; materialize follows an edited line.
-        values['terminal_rnd_follows_plan'] = item.get('terminal_rnd_basis') == 'final_year_share'
+        if item.get('rnd_share_path') is not None:
+            values['rnd_share_path'] = _rnd_share_path(item['rnd_share_path'], len(growth), name)
+            values['rnd_history'] = list(history)
+        # Set at lock from the plan's R&D line; materialize follows an edited line.
+        values['rnd_follows_plan'] = item.get('rnd_basis') == 'plan_rnd_line'
         # Mauboussin's steady state: the return on new terminal capital is the terminal
         # discount rate of whatever rate path is applied, so an alternative rate keeps it.
         values['terminal_roic_follows_rate'] = (item.get('terminal_roic_basis') == 'terminal_rate' or
@@ -367,6 +393,17 @@ def _rate_path(scenario, *, flat=None, shift=0.0, terminal=None):
             for year in range(1, horizon + 1)], final
 
 
+def _plan_rnd_shares(cashflows):
+    """Each year's R&D share of revenue from an operating forecast's R&D line, or None."""
+    shares = []
+    for row in cashflows:
+        spend = (row.get('expense_breakdown') or {}).get('research_and_development')
+        if spend is None or not row.get('revenue'):
+            return None
+        shares.append(spend / row['revenue'])
+    return shares or None
+
+
 def rnd_net_investment_share(growth, life=RND_LIFE_YEARS):
     """Net R&D investment as a share of the year's R&D at steady growth.
 
@@ -375,6 +412,57 @@ def rnd_net_investment_share(growth, life=RND_LIFE_YEARS):
     spending k years earlier, which at constant growth g is R&D * (1/L) * sum (1+g)^-k.
     """
     return 1 - sum((1 + growth) ** -age for age in range(1, life + 1)) / life
+
+
+RND_AMORTIZATION_SOURCE = {
+    'forecast': 'of the forecast\'s own R&D in the six years before',
+    'forecast_and_reported': 'of the forecast\'s and the reported R&D in the six years before',
+    'terminal_growth_steady_state': ('assuming R&D grew at terminal growth, because the forecast and the reported '
+                                     'history together are shorter than six years')}
+RND_AMORTIZATION_TEXT = {key: f' (R&D less six-year amortization {text})' for key, text in RND_AMORTIZATION_SOURCE.items()}
+
+
+def _rnd_addback(scenario, rows, explicit, growth):
+    """Net R&D investment in the continuing-value year, or None without an R&D path.
+
+    R&D in year t is that year's share times its revenue on the forecast path (the
+    final explicit share in steady-state years). Amortization at year T is (1/L) x
+    the sum of R&D in years T-L to T-1, straight line from the year after the
+    spending, as roic.py capitalizes R&D. Years at or before the anchor take
+    reported R&D. Owner choice (2026-11-26): amortizing the forecast's own R&D,
+    not a history assumed to grow at terminal growth, keeps the value exactly
+    invariant to terminal growth under the steady state. Only when the forecast and
+    the reported history together are shorter than L years is that assumption used.
+    """
+    shares = scenario.get('rnd_share_path')
+    if not shares or not any(shares):
+        return None
+    spend = [(shares[index] if index < explicit else shares[-1]) * row['revenue'] for index, row in enumerate(rows)]
+    history = scenario.get('rnd_history') or []
+    horizon, current = len(rows), spend[-1]
+    prior = []
+    for age in range(RND_LIFE_YEARS, 0, -1):
+        year = horizon - age
+        if year >= 1:
+            prior.append(spend[year - 1])
+        elif len(history) >= 1 - year:
+            prior.append(history[year - 1])
+        else:
+            prior = None
+            break
+    if prior is None:
+        amortization = current * (1 - rnd_net_investment_share(growth))
+        basis = 'terminal_growth_steady_state'
+    else:
+        amortization = sum(prior) / RND_LIFE_YEARS
+        basis = 'forecast' if horizon > RND_LIFE_YEARS else 'forecast_and_reported'
+    return {'research_and_development_share': shares[-1], 'research_and_development': current,
+            'amortized_spending': prior, 'amortization': amortization, 'amortization_basis': basis,
+            'net_investment_added_to_nopat': current - amortization, 'life_years': RND_LIFE_YEARS,
+            'basis': ('R&D in the continuing-value year is its share of revenue times that year\'s revenue. Amortization '
+                      'is straight line over six years from the year after the spending, ' + RND_AMORTIZATION_SOURCE[basis] +
+                      '. NOPAT adds R&D less amortization (Damodaran: EBIT(1 - t) + R&D - amortization), so the '
+                      'reinvestment charge covers all new capital, R&D included.')}
 
 
 def _project(actuals, scenario, *, flat=None, shift=0.0, terminal=None):
@@ -442,9 +530,8 @@ def _project(actuals, scenario, *, flat=None, shift=0.0, terminal=None):
     # without this every R&D dollar after year T would earn below its cost. Net R&D
     # investment (R&D less amortization) is added back, as Damodaran does
     # (EBIT(1 - t) + R&D - amortization; the tax benefit of expensing is kept).
-    rnd_share = scenario.get('terminal_rnd_share', 0.0)
-    rnd_spend = rnd_share * terminal_revenue
-    rnd_net = rnd_spend * rnd_net_investment_share(growth_forever)
+    addback = _rnd_addback(scenario, rows, explicit, growth_forever)
+    rnd_net = addback['net_investment_added_to_nopat'] if addback else 0.0
     terminal_nopat = nopat_before_rnd + rnd_net
     terminal_reinvestment = terminal_nopat * growth_forever / roic
     terminal_fcff = terminal_nopat - terminal_reinvestment
@@ -469,19 +556,14 @@ def _project(actuals, scenario, *, flat=None, shift=0.0, terminal=None):
               'terminal_enterprise_value': terminal_value,
               'continuing_value_basis': (
                   'Continuing value at the end of year ' + str(len(rows)) + ': that year\'s NOPAT at the terminal tax rate'
-                  + (', plus net R&D investment,' if rnd_net else '') + ' capitalized as NOPAT x (1 - g / ROIC) / (r - g)'
+                  + (', plus net R&D investment' + RND_AMORTIZATION_TEXT[addback['amortization_basis']] + ','
+                     if addback else '') + ' capitalized as NOPAT x (1 - g / ROIC) / (r - g)'
                   + (', which is NOPAT / r because the return on new capital equals the rate' if follows else '')
                   + '. The capital in place at that year end supports that NOPAT; each later year\'s reinvestment pays '
                     'for the growth of the year after.'),
               'cashflows': rows}
-    if rnd_share:
-        result['terminal_rnd_addback'] = {
-            'research_and_development_share': rnd_share, 'research_and_development': rnd_spend,
-            'amortization': rnd_spend - rnd_net, 'net_investment_added_to_nopat': rnd_net, 'life_years': RND_LIFE_YEARS,
-            'basis': 'R&D in the continuing-value year is the final explicit-year share of revenue times that year\'s '
-                     'revenue. Amortization is straight line over six years from the year after the spending, at '
-                     'terminal growth. NOPAT adds R&D less amortization (Damodaran: EBIT(1 - t) + R&D - amortization), '
-                     'so the reinvestment charge covers all new capital, R&D included.'}
+    if addback:
+        result['terminal_rnd_addback'] = addback
     if versioned:
         result.update(initial_rate=rates[0], terminal_rate=terminal_rate,
                       terminal_spread=terminal_rate - scenario['terminal_growth'],
@@ -933,18 +1015,17 @@ def _counterfactuals(plan, actuals, definitions):
                 raise ValueError('A counterfactual cannot mix operating drivers with aggregate growth or EBIT overrides')
             changed, operating_case = derive_counterfactual(plan, overrides['operating_overrides'])
             changed.update({key:value for key,value in overrides.items() if key != 'operating_overrides'})
-            last = (operating_case.get('cashflows') or [{}])[-1]
-            spend = (last.get('expense_breakdown') or {}).get('research_and_development')
-            if base.get('terminal_rnd_follows_plan') and 'terminal_rnd_share' not in overrides and spend is not None:
+            shares = _plan_rnd_shares(operating_case.get('cashflows') or [])
+            if base.get('rnd_follows_plan') and 'rnd_share_path' not in overrides and shares is not None:
                 # A case that changes the R&D line changes the continuing value's R&D with it.
-                changed['terminal_rnd_share'] = spend / last['revenue']
+                changed['rnd_share_path'] = shares
         else:
             changed = dict(_revalidatable(base), **overrides)
         if 'sales_to_capital' in overrides:
             changed.pop('sales_to_capital_path', None)
-        if 'terminal_rnd_share' in overrides:
-            changed.pop('terminal_rnd_basis', None)
-            changed['terminal_rnd_follows_plan'] = False
+        if 'rnd_share_path' in overrides:
+            changed.pop('rnd_basis', None)
+            changed['rnd_follows_plan'] = False
         if 'terminal_roic' in overrides:
             changed['terminal_roic_follows_rate'] = False
         flat = None
@@ -1135,7 +1216,7 @@ def _computed_diagnostics(actuals, definitions, scenarios, weighted):
             try:
                 alternative_price = _finite_or_none(_project(actuals, dict(
                     inputs, terminal_roic=continuing_roic, terminal_roic_follows_rate=False,
-                    terminal_rnd_share=0.0))['per_share_value'])
+                    rnd_share_path=None))['per_share_value'])
             except (ValueError, ArithmeticError):
                 alternative_price = None
         transition[name] = {
@@ -1375,11 +1456,10 @@ def materialize(plan):
     if operating is not None and operating.get('earnings_mode') == 'gross_profit_less_expenses':
         for name in SCENARIOS:
             scenario = prepared['scenarios'][name]
-            last = operating['scenarios'][name]['cashflows'][-1]
-            spend = (last.get('expense_breakdown') or {}).get('research_and_development')
-            if scenario.get('terminal_rnd_basis') == 'final_year_share' and spend is not None:
-                # The stated share follows the plan's own R&D line (a revalue after an expense edit).
-                scenario['terminal_rnd_share'] = spend / last['revenue']
+            shares = _plan_rnd_shares(operating['scenarios'][name]['cashflows'])
+            if scenario.get('rnd_basis') == 'plan_rnd_line' and shares is not None:
+                # The stated shares follow the plan's own R&D line (a revalue after an expense edit).
+                scenario['rnd_share_path'] = shares
     calibration = None
     prepared['_timing'] = _timing(prepared)
     if 'discount_rate' in prepared:
@@ -2018,15 +2098,15 @@ def _convention_panel(actuals, definitions, scenarios, discounting, reported_pea
     # continuing it keeps R&D expensed (no add-back) at the final-year ratio.
     continuing = margin * base['sales_to_capital']
     add('terminal_reinvestment_continues_forecast', 'Terminal reinvestment continues the forecast capital efficiency (no step at the end of the forecast)',
-        {'terminal_roic': continuing, 'terminal_rnd_share': 0.0},
+        {'terminal_roic': continuing, 'rnd_share_path': None},
         applies=continuing > 0 and continuing >= base['terminal_growth'] and
-                (abs(continuing - base['terminal_roic']) > 1e-6 or bool(base.get('terminal_rnd_share'))),
+                (abs(continuing - base['terminal_roic']) > 1e-6 or any(base.get('rnd_share_path') or ())),
         reason='Forecast capital efficiency already equals the terminal return')
     # Owner choice (2026-11-26, Damodaran critique F3): the continuing value adds net R&D
     # investment back to NOPAT; this row shows the value with R&D left expensed.
     add('terminal_rnd_expensed', 'R&D expensed in the continuing value (earlier house rule): no net R&D investment added back to NOPAT, '
         'so new R&D after the forecast earns below its cost',
-        {'terminal_rnd_share': 0.0}, applies=bool(base.get('terminal_rnd_share')),
+        {'rnd_share_path': None}, applies=any(base.get('rnd_share_path') or ()),
         reason='No R&D share is set for the continuing value')
     for shift in (-.01, .01):
         add(f'required_return_{"minus" if shift < 0 else "plus"}_1_point', f'Whole discount-rate path {shift * 100:+.0f} point',
