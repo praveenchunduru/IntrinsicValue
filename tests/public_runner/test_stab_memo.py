@@ -505,8 +505,8 @@ INPUT_PHRASE = re.compile(r'(?:computed|calculated|derived) from (?:the )?report
 # True sentences that name a computed metric and a reported input, each justified:
 ALLOWED_REPORTED = (
     # The definition counts acquisitions and finance-lease additions only where the filing reports them.
-    'Net reinvestment is capital expenditure less depreciation and amortization, plus cash acquisitions and '
-    'finance-lease additions where reported.',
+    # The depreciation wording follows the filings (evidence_tables.depreciation_phrase), so only the start is fixed.
+    'Net reinvestment is capital expenditure less depreciation',
     # The capitalized ROIC is withheld because the filing reports no R&D line: "reported" refers to the line.
     'ROIC with intangibles capitalized is not shown: no R&D line is reported',
     # A history measure that no filing reports in any year shown is listed by name.

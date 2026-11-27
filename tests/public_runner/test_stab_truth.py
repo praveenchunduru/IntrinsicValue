@@ -87,6 +87,16 @@ def check_conditions(case, memo, result, plan):
             failures.append(f'{case}: history span does not match {years} forecast years')
         if not span and ' only' not in cell and 'not computed' not in cell:
             failures.append(f'{case}: history cell names no period')
+    cash = ((plan.get('net_debt_bridge') or {}).get('cash_coverage') or {}).get('excluded_reported_categories')
+    if cash and 'An omitted investment category counts as zero by assumption.' in computed:
+        failures.append(f'{case}: omitted-category note beside the listed excluded categories')
+    if cash and 'excluded by house policy' not in computed:
+        failures.append(f'{case}: excluded cash categories not listed')
+    annual = computed.split('### Annual results')[1].split('###')[0] if '### Annual results' in computed else ''
+    if '| outside filings scanned' in annual.lower() and 'older filings report' not in annual:
+        failures.append(f'{case}: "outside filings scanned" cells without the caption that explains them')
+    if '(depreciation only)' in annual and '"(Depreciation only)" marks' not in annual:
+        failures.append(f'{case}: "(depreciation only)" cells without the caption that explains them')
     base_rates = computed.split('### Revenue growth against base rates')[1].split('###')[0] \
         if '### Revenue growth against base rates' in computed else ''
     if 'real' in base_rates and 'nominal' not in base_rates:
@@ -153,6 +163,58 @@ class ContinuityShapeTests(unittest.TestCase):
         self.assertIn('on the change in invested capital it is 0.83. The continuity check uses the lower, 0.83.', notes)
         self.assertNotIn('Goodwill and acquired intangibles count only up to', notes)
         self.assertIn('unless the cell names another period', text)
+
+
+class DataHookTests(unittest.TestCase):
+    """Fields the data side records reach the reader (review seam, 2026-11-27)."""
+
+    def test_zero_lines_and_excluded_cash_say_why(self):
+        value = headline_plan()
+        result = evaluate(value)
+        value['other_claims_bridge'] = {
+            'components': {}, 'finance_lease_claim': 0, 'components_assumed_zero': [
+                {'line': 'defined_benefit_obligations', 'basis': 'assumption: zero by assumption; no pension or '
+                 'postretirement liability is tagged for the whole company on the date, and the filing\'s plan-level '
+                 'values were not read'},
+                {'line': 'preferred_stock', 'basis': 'assumption: no concept reported on the date; zero, not a reported fact'}]}
+        value['net_debt_bridge']['cash_coverage'] = {'excluded_reported_categories': [
+            {'label': 'available-for-sale debt securities', 'value': 1774e6, 'source_refs': ['S1'],
+             'reason': 'the available-for-sale total is used only when no other investment category is reported'}]}
+        lines, notes = pipeline._equity_bridge_parts(value, result, STYLE)
+        text = ' '.join(notes)
+        self.assertIn('less unfunded pension obligations, before tax (no pension or postretirement liability is tagged '
+                      'for the whole company on the date, and the filing\'s plan-level values were not read, zero by '
+                      'assumption)', text)
+        self.assertIn('less preferred stock (no concept reported on the date, zero by assumption)', text)
+        self.assertNotIn('not a reported fact', text)
+        self.assertIn('Reported available-for-sale debt securities of $1.8B [S1] are excluded by house policy: the '
+                      'available-for-sale total is used only when no other investment category is reported.', text)
+        omitted = pipeline._assumption_notes('An omitted investment category counts as zero by assumption.', result, value)
+        self.assertEqual(omitted, [])
+
+    def test_history_rows_carry_their_basis(self):
+        from tests.public_runner.test_stab_memo import history_source
+        source = history_source('USD', 1e9)
+        rows = source['historical_baseline']['rows']
+        rows[0].update(average_repurchase_price_concept='StockRepurchasedDuringPeriodValue / StockRepurchasedDuringPeriodShares',
+                       shares_repurchased=1e8, depreciation_amortization=10e9, depreciation_only=True)
+        rows[1].update(average_repurchase_price_concept='StockRepurchasedDuringPeriodValue / StockRepurchasedDuringPeriodShares',
+                       shares_repurchased=1e8, depreciation_amortization=12e9, operating_income=120e9)
+        for entry, income in zip(source['breakdown_tables']['segment']['members'], (100e9, 40e9)):
+            entry.update(operating_income=[income, income], operating_margin=[.3, .3])
+        text = '\n'.join(pipeline.reported_tables_section([source]))
+        self.assertIn('| Average buyback price, share-note value / shares ($) |', text)
+        # The consolidated figure (120 in FY2025) is set beside the segment sum (140).
+        self.assertIn('Segment operating income sums to $140B for the fiscal year ending 2025-12-31, against consolidated '
+                      'operating income of $120B', text)
+        lines, notes = pipeline._continuity_parts(
+            {'reinvestment_continuity': {'fiscal_year_end': '2025-12-31', 'years': 3, 'net_reinvestment': 2e9,
+                                         'net_reinvestment_over_years': 5e9, 'capital_expenditure_sales_to_capital': 1.2,
+                                         'invested_capital_sales_to_capital': 1.0, 'sales_to_capital_basis': 'invested_capital',
+                                         'scenarios': {'base': {'net_reinvestment': 6e9, 'sales_to_capital': 1.1}}}},
+            STYLE, rows)
+        self.assertIn('less depreciation and amortization (depreciation only for the fiscal years ending 2024-12-31)',
+                      ' '.join(notes))
 
 
 class NoteFactTests(unittest.TestCase):

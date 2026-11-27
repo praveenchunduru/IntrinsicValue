@@ -28,7 +28,8 @@ from .quality import (WRITING_STANDARD, dollar_amounts, style_added, DIAGNOSTIC_
                       inspect_memo, parse_json, parse_review, prereview_checks, prose_words, trace_pools, untraced_figures,
                       _figures)
 from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_breakdown_facts, inline_facts, archive_focus_excerpts
-from .evidence_tables import (breakdown_markdown, breakdown_tables, scale_of, filing_supplement_for, historical_baseline,
+from .evidence_tables import (OUTSIDE_SCANNED, breakdown_markdown, breakdown_tables, depreciation_phrase,
+                              repurchase_price_basis, scale_of, filing_supplement_for, historical_baseline,
                               quarterly_markdown, render_baseline, render_roic, render_breakdowns, render_quarterly)
 from .macro import gather_us_calibration
 from .roic import _consecutive as roic_consecutive
@@ -3713,8 +3714,11 @@ def _assumption_notes(label, result=None, plan=None):
     addback=_rnd_addback(result)
     has_rnd=bool(addback) or any(any((scenario.get('rnd_share_path') or [])) for scenario in
                                  ((plan or {}).get('scenarios') or {}).values() if isinstance(scenario,dict))
+    excluded=(((plan or {}).get('net_debt_bridge') or {}).get('cash_coverage') or {}).get('excluded_reported_categories')
     out=[]
     for sentence in sentences:
+        if excluded and sentence=='An omitted investment category counts as zero by assumption.':
+            continue
         # The panel, the headline and the stub are stated by their own notes; the panel sentence's fragments go too.
         if sentence.startswith(('The convention panel shows','The base case is the headline value',
                                 'Present value is dated at the valuation date','The earlier rule is','The panel also shows')):
@@ -3746,6 +3750,16 @@ NONOPERATING_LABELS = {'long_term_investments': 'long-term investments', 'securi
                        'other_long_term_investments': 'other long-term investments',
                        'equity_securities_nonmarketable': 'non-marketable equity securities',
                        'equity_securities_marketable': 'marketable equity securities'}
+
+
+def _zero_basis_words(basis):
+    """A zero line's basis in the memo's voice: 'no concept reported on the date, zero by assumption'."""
+    text=re.sub(r'^assumption:\s*','',str(basis or '')).strip().rstrip('.')
+    if text in ('','none reported'):
+        return 'none reported'
+    text=re.sub(r';\s*zero(?:, not a reported fact| by assumption)$',', zero by assumption',text)
+    text=re.sub(r'^zero by assumption;\s*(.*)$',r'\1, zero by assumption',text)
+    return text
 
 
 def _equity_bridge_parts(plan, result, style):
@@ -3781,10 +3795,13 @@ def _equity_bridge_parts(plan, result, style):
                      'within net debt' if claims.get('finance_leases_included_in_net_debt') else
                      'reported finance lease liabilities'+_cite(lease_refs)
                      if claims.get('reported_finance_lease_liabilities') is not None else 'none reported'])
+        # Each zero line says why it is zero: the data side records the basis (no concept, or plan-level values unread).
+        zero_basis={entry.get('line'):re.sub(r'^assumption:\s*','',str(entry.get('basis') or '')).strip()
+                    for entry in claims.get('components_assumed_zero') or [] if isinstance(entry,dict)}
         for name,label in CLAIM_LABELS:
             item=components.get(name)
             if not isinstance(item,dict):
-                rows.append([label,money(0),'none reported'])
+                rows.append([label,money(0),zero_basis.get(name) or 'none reported'])
                 continue
             if name=='preferred_stock' and item.get('carrying_value_not_deducted') is not None:
                 rows.append([label,money(0),'counted through conversion shares'+_cite(item.get('source_refs'))])
@@ -3823,14 +3840,27 @@ def _equity_bridge_parts(plan, result, style):
     empty=[row for row,amount in zip(rows,amounts) if amount==0 and not row[0].startswith(('Enterprise','Equity'))]
     rows=[row for row in rows if row not in empty]
     if empty:
-        notes.insert(0,'Bridge lines with nothing to add or deduct: '+'; '.join(
-            row[0][0].lower()+row[0][1:]+('' if row[2]=='none reported' else f', {row[2]}') for row in empty)+'.')
+        # Grouped by basis, so each reason is stated once: "(no concept reported on the date, zero by assumption)".
+        groups={}
+        for row in empty:
+            basis=_zero_basis_words(row[2])
+            groups.setdefault(basis,[]).append(row[0][0].lower()+row[0][1:])
+        parts=[]
+        for basis,labels in groups.items():
+            names=labels[0] if len(labels)==1 else ', '.join(labels[:-1])+' and '+labels[-1]
+            parts.append(names+(f' ({basis})' if basis else ''))
+        notes.insert(0,'Bridge lines with nothing to add or deduct: '+'; '.join(parts)+'.')
     lines=['','### From enterprise value to value per share','',f'Base case, {style.unit(unit)} unless the line says otherwise.','']
     lines+=_table(['Line',style.unit(unit),'Basis'],rows,['---','---:','---'])
     quoted=assets.get('reported_quoted_market_value_not_used')
     if isinstance(quoted,dict) and _finite_number(quoted.get('value')):
         notes.append(f'The bridge carries the listed equity-method stakes at book value. Their reported quoted market '
                      f'value is {style.amount(quoted["value"])}{_cite(quoted.get("source_refs"))}.')
+    excluded=(((plan or {}).get('net_debt_bridge') or {}).get('cash_coverage') or {}).get('excluded_reported_categories') or []
+    for item in excluded:
+        if isinstance(item,dict) and _finite_number(item.get('value')):
+            notes.append(f'Reported {item.get("label")} of {style.amount(item["value"])}{_cite(item.get("source_refs"))} '
+                         f'are excluded by house policy: {str(item.get("reason") or "").rstrip(".")}.')
     if assets or components is not None:
         notes.append('Claims and investments are carrying values on the balance-sheet date of net debt. A category with '
                      'no reported concept is zero by assumption.')
@@ -4287,7 +4317,7 @@ def _multiples_parts(result, style):
     return lines,notes
 
 
-def _continuity_parts(result, style):
+def _continuity_parts(result, style, history_rows=None):
     """The forecast against the last reported results, as one table: (lines, notes)."""
     names=('bear','base','bull')
     continuity=result.get('forecast_continuity') or {}
@@ -4385,7 +4415,7 @@ def _continuity_parts(result, style):
                          + ('not reported for every year' if reinvestment.get('net_reinvestment_status')=='not_reported'
                             else 'not positive') + ', so there is no floor.')
         notes.append(f'Incremental sales-to-capital is the revenue increase over {span} divided by the investment in those '
-                     'years. Net reinvestment is capital expenditure less depreciation and amortization, plus cash '
+                     f'years. Net reinvestment is capital expenditure less {depreciation_phrase(history_rows) if history_rows else "depreciation and amortization"}, plus cash '
                      'acquisitions and finance-lease additions where reported. The change in invested capital follows '
                      'Mauboussin and Callahan and includes working capital and operating leases.'+
                      (' Goodwill and acquired intangibles count only up to the cash paid for acquisitions.'
@@ -4430,7 +4460,17 @@ def _scale_parts(plan, result, style):
     return ['','### Scale check','',text],[]
 
 
-def _valuation_parts(plan, result):
+def _baseline_rows(sources):
+    """The reported history rows of the first source that has them, or []."""
+    for source in sources or ():
+        data=source.get('data') if isinstance(source,dict) and isinstance(source.get('data'),dict) else {}
+        baseline=(source.get('historical_baseline') if isinstance(source,dict) else None) or data.get('historical_baseline')
+        if baseline and baseline.get('rows'):
+            return baseline['rows']
+    return []
+
+
+def _valuation_parts(plan, result, sources=None):
     """The valuation detail section and its method notes: (lines, notes)."""
     if not result:
         return ['',DETAIL_HEADING,'','No value is calculated because essential valuation inputs are unresolved.'],[]
@@ -4489,7 +4529,7 @@ def _valuation_parts(plan, result):
                        (base_rates.memo_exhibit(result.get('base_rates'),style),'Base rates, tests and diagnostics'),
                        (_monitoring_parts(result,style),'Base rates, tests and diagnostics'),
                        (_multiples_parts(result,style),'Base rates, tests and diagnostics'),
-                       (_continuity_parts(result,style),'Forecast against reported results'),
+                       (_continuity_parts(result,style,_baseline_rows(sources)),'Forecast against reported results'),
                        (_scale_parts(plan,result,style),'Valuation basis')):
         lines+=part[0]
         groups.append((group,part[1]))
@@ -4544,7 +4584,7 @@ CELL_NOTES = {'n/m (capital change under a tenth of capital)': 'n/m', 'n/m (capi
               'n/m (capital at or below zero)': 'n/m'}
 
 
-def _history_table(names, columns, style, notes, letter='B'):
+def _history_table(names, columns, style, notes, letter='B', price_label=None):
     """A transposed Markdown table: one row per measure, one column per period. Rows with no data are dropped."""
     lines=['| Measure | '+' | '.join(columns[0])+' |','|---|'+'---:|'*len(columns[0])]
     empty=[]
@@ -4554,6 +4594,8 @@ def _history_table(names, columns, style, notes, letter='B'):
             notes.append('ROIC is n/m where invested capital is at or below zero.')
         cells=[CELL_NOTES.get(cell,cell) for cell in cells]
         label=HISTORY_LABELS.get(name.strip(),name.strip()[:1].upper()+name.strip()[1:])
+        if name.strip()=='avg buyback price' and price_label:
+            label='Average buyback price, '+price_label+' ({U})'
         label=label.replace('{B}',style.unit(letter)).replace('{U}',style.unit(''))
         if all(cell=='n/a' for cell in cells):
             word=label.split(' (')[0]
@@ -4597,10 +4639,18 @@ def _reported_parts(sources):
             basis=text[text.index('Basis notes:'):] if 'Basis notes:' in text else []
             text=text[:len(text)-len(basis)]
             header,rows=text[1].split(' | '),[row.split(' | ') for row in text[2:] if row.strip()]
+            cells=' '.join(' '.join(row) for row in rows)
             lines+=['','### Annual results','',f'Fiscal years ending on the dates shown{ref}. Ratios are computed from '
-                    'reported values; n/a means not reported on a comparable basis.','']
-            lines+=_history_table(header[1:],([row[0] for row in rows],rows),style,notes,letter)
-            notes+=[_billions_in_text(note[2:].rstrip('.'),style)+'.' for note in basis[1:] if note.startswith('- ')]
+                    'reported values; n/a means not reported on a comparable basis.'+
+                    (f' "{OUTSIDE_SCANNED.capitalize()}" marks a figure that older filings report and the scanned filings do '
+                     'not cover.' if OUTSIDE_SCANNED in cells else '')+
+                    (' "(Depreciation only)" marks a year whose filing gives depreciation without amortization.'
+                     if '(depreciation only)' in cells else ''),'']
+            price_label,_=repurchase_price_basis(baseline['rows'])
+            lines+=_history_table(header[1:],([row[0] for row in rows],rows),style,notes,letter,price_label)
+            notes+=[_billions_in_text(note[2:].rstrip('.'),style).replace(
+                ', not cash buybacks divided by shares:','. Cash buybacks over the same shares give a different price:')+'.'
+                    for note in basis[1:] if note.startswith('- ')]
             quarterly,quarterly_notes=quarterly_markdown(baseline,source.get('id'))
             if quarterly:
                 lines+=['','### Quarters','']+quarterly
@@ -4617,7 +4667,11 @@ def _reported_parts(sources):
                 notes+=[note[2:] for note in returns[cut+1:] if note.startswith('- ')]
         breakdowns=source.get('breakdown_tables') or data.get('breakdown_tables')
         if breakdowns:
-            table,table_notes=breakdown_markdown(breakdowns,source.get('id'),currency)
+            history=_baseline_rows(sources)
+            consolidated={row['fiscal_year_end']:row.get('operating_income') for row in history
+                          if _finite_number(row.get('operating_income'))}
+            table,table_notes=breakdown_markdown(breakdowns,source.get('id'),currency,
+                                                 consolidated_operating_income=consolidated or None)
             lines+=table
             notes+=table_notes
     return ((['',HISTORY_HEADING]+lines) if lines else []),notes
@@ -4672,7 +4726,7 @@ def reader_view(memo, sources, plan, result, ticker='', state=None):
     what the reader sees (memo layout joined to the review loop, 2026-11-27).
     """
     state=state or {}
-    detail,groups=_valuation_parts(plan,result)
+    detail,groups=_valuation_parts(plan,result,sources)
     history,history_notes=_reported_parts(sources)
     groups=groups+[('Forecast samples',consensus.method_notes(consensus.enrich(_consensus_record(result),state.get('plan_consensus')),
                                                               _style(plan,result),requested=_requested_samples(state))),
