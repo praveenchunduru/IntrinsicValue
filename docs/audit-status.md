@@ -584,50 +584,52 @@ Owner decisions the same day, recorded in the
 [underwriting guide](underwriting.md#house-conventions-the-plan-does-not-choose): the
 10-year steady state stays the house rule, with horizons of 5, 15 and 20 years and
 Mauboussin's industry fade as panel rows; the continuing value capitalizes year-10 NOPAT
-with no extra growth step and adds back net R&D investment (R&D only, six-year life, from
-the forecast's own R&D); Damodaran's revenue-weighted country risk premium is a panel row
-only, because the S&P 500 implied premium already reflects US companies' foreign revenue;
-base rates appear as printed percentiles with no gate; and the balanced reviewer is
-GPT-6.2 Sol, the newest OpenAI generation in the catalog. This replaces two statements in
-the steady-state section above: the 10 years are a house horizon, and the continuing
-value is year-10 NOPAT over the terminal rate.
+with no extra growth step and adds back net R&D investment (R&D only, six-year life), by
+the steady-state formula once amortizing the forecast's own R&D, tried first, was
+dropped after the review below; Damodaran's revenue-weighted country risk premium is a
+panel row only, because the S&P 500 implied premium already reflects US companies'
+foreign revenue; base rates appear as printed percentiles with no gate; and the
+balanced reviewer is GPT-6.2 Sol, the newest OpenAI generation in the catalog. This
+replaces two statements in the steady-state section above: the 10 years are a house
+horizon, and the continuing value is year-10 NOPAT over the terminal rate.
 
-What changed, measured offline on the merged code. Apple figures use the shipped revised
-example (a constant 10.02% rate, terminal returns of 30-70%) and, for the exhibits, the
-critique's restatement of it under the current conventions (rate glide, terminal return
-equal to the terminal rate, base headline, the 74/26 bottom-up beta), with R&D shares set
-as the lock sets them:
+What changed, measured offline on the code after the review fixes below (23255b1).
+Apple figures use the shipped revised example (a constant 10.02% rate, terminal returns
+of 30-70%) and, for the exhibits, the critique's restatement of it under the current
+conventions (rate glide, terminal return equal to the terminal rate, base headline, the
+74/26 bottom-up beta), with R&D shares set as the lock sets them:
 
 - **Continuing value and R&D.** Capitalizing final-year NOPAT, with no further growth
   step, multiplies the continuing value by 1/(1+g): the shipped example's base value goes
-  from $162.07 to $159.53. Adding back $8.9 billion of net R&D investment to $239.1 billion of final-year
-  NOPAT takes it to $162.67. With the terminal return equal to the rate, the base value
-  is $140.30 at terminal growth of 0%, 2%, 3% and 5% alike. Sales-to-capital can be a
-  path, and each scenario's forecast ROIC and incremental ROIC are printed from the last
-  reported invested capital.
+  from $162.07 to $159.53. Adding back $8.0 billion of net R&D investment to $239.1
+  billion of final-year NOPAT takes it to $162.36. With the terminal return equal to the
+  rate, the base value runs from $137.96 at 0% terminal growth to $141.31 at 5%, all of
+  it through the R&D line; with R&D expensed it is $137.96 at both. Sales-to-capital can
+  be a path, and each scenario's forecast ROIC and incremental ROIC are printed from the
+  last reported invested capital.
 - **Equity bridge.** Non-operating investments, noncontrolling interests, preferred stock,
-  pensions before tax and the dilutive increment enter the bridge, and the memo prints it
-  line by line. Across the 16 sample companies dilution runs from 0.1% of outstanding
-  shares (Costco) to 3.8% (Procter & Gamble), other claims reach $28.5 billion (AT&T) and
-  non-operating investments $68.7 billion (Alphabet). Apple adds nothing outside its cash
-  and 58.4 million dilutive shares, which lower every value 0.4%. Some of the critique's
-  amounts do not reproduce at the annual balance-sheet date, probably because they came
-  from later quarter ends: Amazon's non-marketable equity is $16.2 billion there against
-  the critique's $143.7 billion.
+  pension deficits (gross, before tax) and the dilutive increment enter the bridge, and
+  the memo prints it line by line. Across the 16 sample companies dilution runs from
+  0.1% of outstanding shares (Costco) to 3.8% (Procter & Gamble), other claims reach
+  $28.5 billion (AT&T) and non-operating investments $68.7 billion (Alphabet). Apple
+  adds nothing outside its cash and 58.4 million dilutive shares, which lower every
+  value 0.4%. Some of the critique's amounts do not reproduce at the annual
+  balance-sheet date, probably because they came from later quarter ends: Amazon's
+  non-marketable equity is $16.2 billion there against the critique's $143.7 billion.
 - **Preflight.** Johnson & Johnson's short-term borrowings line, Procter & Gamble's
   rounding and restricted-cash tagging, and Uber's mixed principal and carrying
   observations are now read from reported amounts. The free preflight, run live against
   SEC on the bridge commit (561ed2d), passes for all 16 sample companies (AAPL, MSFT,
   GOOGL, NVDA, AMZN, META, COST, KO, WMT, CRM, HD, JNJ, PG, UBER, ORCL, T), and net debt
   is unchanged for the 13 that already passed.
-- **Exhibits.** On the restatement (base $147.53 against $148.42 before, 0.43 of the
-  $344.17 price), horizons of 5, 15 and 20 years give −11.6%, +9.1% and +15.7%, and the
-  industry fade (Technology Hardware 0.17 and Software 0.22, 16 years in all) +10.6%. The
-  Treasury rate 2 and 1 points lower and 1 and 2 points higher gives +32.1%, +14.0%,
-  −11.1% and −20.0%. Over the 120 monthly rate pairs ending November 2026 the base value
-  runs from $145.27 (October 2026) to $271.01 (August 2021), with a median of $182.09.
-  The index benchmark prints 0.78 beside the company's 0.43. With Damodaran's own November
-  inputs the same structure gives about 0.69, so the stylized benchmark runs about 0.09
+- **Exhibits.** On the restatement (base $148.64 against $148.42 before, 0.43 of the
+  $344.17 price), horizons of 5, 15 and 20 years give −13.4%, +8.4% and +14.9%, and the
+  industry fade (Technology Hardware 0.17 and Software 0.22, 16 years in all) +9.9%. The
+  Treasury rate 2 and 1 points lower and 1 and 2 points higher gives +30.9%, +13.5%,
+  −10.8% and −19.5%. Over the 120 monthly rate pairs ending November 2026 the base value
+  runs from $146.57 (October 2026) to $267.00 (August 2021), with a median of $182.62.
+  The index benchmark prints 0.80 beside the company's 0.43. With Damodaran's own November
+  inputs the same structure gives about 0.72, so the stylized benchmark runs about 0.09
   high, and the memo calls it a steady state.
 - **Implied return.** Where the terminal return follows the rate, the search starts at
   0.5%. The restatement's base case now solves at 4.5% against a 9.6% flat-equivalent
@@ -636,17 +638,18 @@ as the lock sets them:
   (Coca-Cola), with all 16 companies' revenue mapped. Apple's 0.75 points raise its
   discount rates by 0.74 points and lower the shipped example's base value 9.7%.
 - **Checks.** With the latest twelve months, base ceilings rise for Microsoft, Coca-Cola,
-  Alphabet, Amazon, Nvidia and Oracle (Amazon 15.6% to 18.1%, Nvidia 67.4% to 70.2%),
-  and Uber has no bear ceiling and a base ceiling of 17.4%. Nvidia's base ceiling stayed
+  Alphabet, Amazon, Nvidia and Oracle (Amazon 15.6% to 18.1%, Nvidia 67.4% to 70.2%).
+  Uber's bear ceiling is its five-year peak of 10.7%, because its average is not
+  positive, and its base ceiling is 17.4%. Nvidia's base ceiling stayed
   at 42.3% on filings to June and September 2023 and rose to 50.9% in December, once the
   inflection was in reported quarters. In a backtest at 120, 210 and 300 days after each
   fiscal year end, later margins exceeded the base ceiling within three years in 60 of
   420 company-dates, against 66 before. The invested-capital rate sets the reinvestment
-  reference for 14 of the 16 companies (Nvidia 9.56 to 2.23, AT&T 2.03 to 0.50), Apple
+  reference for 14 of the 16 companies (Nvidia 9.6 to 2.3, AT&T 2.0 to 0.5), Apple
   and Uber are now checked, and the revised Apple example's sales-to-capital of 3.0
   would go back for repair in every scenario.
 - **ROIC table.** One-line SG&A now gets the intangibles-capitalized ROIC (Nvidia 105.6%,
-  Johnson & Johnson 18.5%, Procter & Gamble 14.1%), small capital changes show n/m, and a
+  Johnson & Johnson 18.5%, Procter & Gamble 14.2%), small capital changes show n/m, and a
   tax note flags eight companies (Microsoft's latest ROIC is 33.1%, or 28.6% at its
   three-year median tax rate). R&D is the larger of the inclusive concept and its part in
   the history, the ROIC table and the reported operating lines, so Johnson & Johnson's
@@ -654,8 +657,8 @@ as the lock sets them:
   otherwise have held about 15 points of extra margin.
 - **Quarters and base rates.** The evidence and the memo carry the latest eight fiscal
   quarters. Apple's base case grows 5.5% a year over 10 years, the 67th percentile for
-  companies with more than $50 billion of sales; the growth the price requires, 10.0
-  points more a year, is at the 98th percentile on the shipped example and above the 99th
+  companies with more than $50 billion of sales; the growth the price requires, 10.8
+  points more a year, is at the 99th percentile on the shipped example and above the 99th
   on the restatement.
 
 Not implemented:
@@ -677,7 +680,44 @@ Not implemented:
   rate rows with the convention rows, a market-implied horizon row, FRED real-yield and
   breakeven series, and next-fiscal-year consensus.
 
-No paid run has used this code yet. The suite has 814 offline tests.
+#### Review of the merged code
+
+Three independent Opus reviews of the merged code (engine, pipeline and data) found one
+blocker, about ten majors and many minors. The blocker: a company whose R&D exceeds
+revenue could never get a valid plan, because R&D shares above 1 were refused. Shares up
+to 100 times revenue are now accepted, and the continuing value caps the share at one
+less the final EBIT margin. Among the majors:
+
+- Amortizing the forecast's own R&D made year-10 net R&D investment permanent and
+  overstated value by 2-4% where R&D growth fades, so the add-back went back to the
+  steady-state formula by owner decision. The index benchmark priced value and price on
+  different timings and read about 2.5% low.
+- A stock-funded acquisition collapsed the invested-capital rate (Salesforce's fiscal
+  2022, with Slack: 0.30, against 0.70 once goodwill counts only up to cash paid).
+- Quarterly growth mixed restated and original figures, and compared quarters of
+  different length (Home Depot −3.8%, where sales per day rose 3.6%).
+- The bridge dropped Meta's $7.4 billion of equity-method investments beside its
+  non-marketable equity and netted Johnson & Johnson's $7.3 billion of plan surpluses
+  against $4.7 billion of deficits; Procter & Gamble's R&D was capitalized twice inside
+  its SG&A.
+- The memo could read the index benchmark as a cause of the gap, and the largest
+  horizon and rate-regime rows as convention steps.
+
+All are fixed, except the items left open under Still open below. The reviews also found
+two defects older than the change set, both fixed. At a valuation date one US calendar
+day before the UTC retrieval, 11 of the 16 sample companies lost net debt, because the
+financing absence scan counted only when it ran on or before that date, and a run would
+have stopped at the coverage check after paying for its plan; the model's date also
+moved value through the stub, about 6 cents a share a day for Microsoft. The scan now
+counts on either side, and Python dates a model-written plan at the UTC date of the
+latest retrieval. Shares could come from a cover months after year-end net debt
+(Salesforce 823 million after buybacks, against 929 million on the balance-sheet date);
+they are now counted on the net-debt date or a cover within 60 days. Prices that vary by
+UTC hour are reserved at their highest level, so the economy profile can start.
+
+No paid run has completed on this code; a Microsoft run is under way and will be
+recorded separately. With these fixes (23255b1) the suite has 850 offline tests, passing
+on Python 3.9, 3.12 and 3.13.
 
 ### Still open after 2026-11-14
 
@@ -711,22 +751,22 @@ No paid run has used this code yet. The suite has 814 offline tests.
 - Whether Apple's value / price is credible (0.67 in the 2026-11-14 runs, 0.43 for the
   offline restatement under the current conventions) rests on the discount rate and
   terminal returns, which the memo's convention panel and beta cross-checks show one
-  change at a time, beside the stylized index's 0.78. No value is tuned to the price.
-- No paid run has used the 2026-11-26 change set, and the country risk row has not run
-  in a live pipeline.
+  change at a time, beside the stylized index's 0.80. No value is tuned to the price.
+- No paid run has completed on the 2026-11-26 change set, and the country risk row has
+  not run in a live pipeline.
 - Equity bridge: Nvidia's $12.9 billion of marketable equity is added in the bridge but
-  stays in ROIC's invested capital. Lines left out under the nesting rule or a possible
-  overlap with cash are disclosed in the bridge (largest: Meta's $7.4 billion of
-  equity-method investments). Alphabet's $3.4 billion noncontrolling interest and Oracle's $24.1 billion
-  `Investments` are not tagged as balance-sheet lines and are not used. Unvested awards
-  beyond the diluted count are not valued.
+  stays in ROIC's invested capital. Lines left out because they may overlap the selected
+  cash or another line are disclosed in the bridge (largest: Meta's $6.0 billion of
+  marketable equity). Alphabet's $3.4 billion noncontrolling interest and Oracle's $24.1
+  billion `Investments` are not tagged as balance-sheet lines and are not used.
+  Unvested awards beyond the diluted count are not valued.
 - The year-to-date fallback for the margin ceilings has run only on synthetic data, and
   Johnson & Johnson, with no operating income line, has no ceilings or year-1 margin
   check.
 - Country risk labels are matched by name, and GDP weights the countries inside a region.
-- Offline `--revalue` output has no base rates, and the terminal-growth requirement has
-  no percentile.
-- Under the glide a plan shorter than 10 years keeps a small timing effect from terminal
-  growth, and its steady-state years keep R&D expensed.
+- The terminal-growth price requirement has no base-rate percentile.
+- Under the glide a plan shorter than 10 years keeps a small effect from terminal
+  growth beyond the R&D line, because its steady-state years are discounted at gliding
+  rates that differ from the return on new capital; those years keep R&D expensed.
 - The index benchmark is a steady state that runs about 0.09 above the same structure on
   Damodaran's own inputs.

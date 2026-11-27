@@ -219,7 +219,9 @@ Each slot uses the newest model generation in the OpenRouter catalog (checked
 Opus 5.5 wrote a shorter draft with fewer review findings than Claude Sonnet 4.6 or 5.5.
 
 All selected models and their supported token pricing are checked against the live
-OpenRouter catalog before paid work.
+OpenRouter catalog before paid work. A price that changes with prompt length or with
+the UTC time of day, as DeepSeek V4.1 Flash's does, is reserved at its highest listed
+level.
 Provider fallback can use another provider **for the same model** under the same
 price caps. There are no automatic client retries or silent switches to expensive
 models. The default reviewer differs from the author model: when `--strong-model`
@@ -307,7 +309,7 @@ python -m pip install .
 investmentideas --help
 ```
 
-The current source passes **814 tests** locally on Python 3.9, 3.12 and 3.13; the
+The current source passes **852 tests** locally on Python 3.9, 3.12 and 3.13; the
 v0.2.0 release passed 268. The
 [CI matrix](https://github.com/praveenchunduru/IntrinsicValue/actions/runs/42261827883)
 tests Python 3.10, 3.12 and 3.13. CI runs synthetic evidence and mocked transports without model calls or
