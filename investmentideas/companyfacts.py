@@ -16,7 +16,7 @@ import json
 import math
 import re
 
-from .inputs import FINANCING_ABSENCE_SCAN, PRIMARY_INPUT_CONCEPTS, REVENUE, SHARES, STRUCTURED_FORMS
+from .inputs import FINANCING_ABSENCE_SCAN, PRIMARY_INPUT_CONCEPTS, REVENUE, SHARE_COUNT_CONCEPTS, SHARES, STRUCTURED_FORMS
 
 ACCEPTED_FORMS = STRUCTURED_FORMS
 ANNUAL_FORMS = ACCEPTED_FORMS - {'10-Q', '10-Q/A'}
@@ -45,7 +45,7 @@ _PER_SHARE = frozenset(concept for concept in FINANCIAL_CONTEXT_CONCEPTS if 'Ear
 
 
 def _unit(concept, original):
-    if concept in SHARES | _AVERAGE_SHARES:
+    if concept in SHARES | _AVERAGE_SHARES | SHARE_COUNT_CONCEPTS:
         return 'xbrli:shares' if original == 'shares' else None
     if concept in _PER_SHARE:
         return 'iso4217:' + original[:3] + '/xbrli:shares' if isinstance(original, str) and re.fullmatch(r'[A-Z]{3}/shares', original) else None

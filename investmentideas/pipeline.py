@@ -2332,6 +2332,10 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
         'classified as nonoperating under an explicit house policy. Omitted investment categories are '
         'not reported zeros. All selected cash and investments are treated as nonoperating; any part the business '
         'needs to operate would lower equity value. '+lease_allocation+
+        ('Non-operating investments outside the selected cash are added, and noncontrolling interests, preferred stock '
+         'and net unfunded pension and postretirement obligations are deducted, at carrying value; pension obligations '
+         'are taken before tax. Value per share divides by outstanding shares plus the latest fiscal year\'s dilutive '
+         'increment. ' if locked.get('nonoperating_assets_bridge') or locked.get('share_count_bridge') else '')+
         'Additional unidentified '
         'claims are assumed zero, not established absent. GAAP EBIT retains operating rent, SBC and R&D. '+
         ('Discount rates move from the current cost of capital toward market-average business risk over years 6-10, and '
@@ -2512,7 +2516,7 @@ def _validate_plan_sources(plan, sources):
             if not isinstance(ref,str) or not ref.strip():
                 raise ValueError(f'Invalid source reference for {field}')
             ref = ref.strip().strip('[]')
-            if ref.startswith('assumption:') and field == 'other_equity_claims':
+            if ref.startswith('assumption:') and field in ('other_equity_claims', 'nonoperating_assets', 'dilutive_shares'):
                 continue
             if ref not in known:
                 raise ValueError(f'Unknown source reference for {field}')
@@ -2601,6 +2605,97 @@ def _role(name, probability, headline):
     if headline:
         return 'headline' if name=='base' else 'stress case'
     return f'{probability:.0%}'
+
+
+# Claim components in the order the bridge prints them.
+CLAIM_LABELS = (('noncontrolling_interests', 'Less noncontrolling interests'),
+                ('redeemable_noncontrolling_interests', 'Less redeemable noncontrolling interests'),
+                ('preferred_stock', 'Less preferred stock'),
+                ('defined_benefit_obligations', 'Less net unfunded pension and postretirement obligations, before tax'))
+NONOPERATING_LABELS = {'long_term_investments': 'long-term investments', 'securities_noncurrent': 'noncurrent securities',
+                       'equity_method_investments': 'equity-method investments',
+                       'other_long_term_investments': 'other long-term investments',
+                       'equity_securities_nonmarketable': 'non-marketable equity securities',
+                       'equity_securities_marketable': 'marketable equity securities'}
+
+
+def _equity_bridge_exhibit(plan, result, currency):
+    """Base-case enterprise value to value per share, each line with its source and basis."""
+    base=(result.get('scenarios') or {}).get('base') or {}
+    if not isinstance(base.get('enterprise_value'),(int,float)) or not isinstance(base.get('per_share_value'),(int,float)):
+        return []
+    def money(value):
+        return (f'{currency} 0' if not value else f'{currency} {value/1e9:,.1f} billion' if abs(value)>=1e9 else
+                f'{currency} {value/1e6:,.0f} million')
+    def cite(refs):
+        refs=[refs] if isinstance(refs,str) else refs if isinstance(refs,list) else []
+        ids=[ref.strip().strip('[]') for ref in refs if isinstance(ref,str) and re.fullmatch(r'\[?S\d+\]?',ref.strip())]
+        return ' '+' '.join(f'[{ref}]' for ref in dict.fromkeys(ids)) if ids else ''
+    refs=(plan or {}).get('source_refs') or {}
+    dates=(plan or {}).get('input_dates') or {}
+    claims=(plan or {}).get('other_claims_bridge') or {}
+    assets=(plan or {}).get('nonoperating_assets_bridge') or {}
+    shares=(plan or {}).get('share_count_bridge') or {}
+    day=((dates.get('net_debt') or {}).get('instant')) or 'the balance-sheet date'
+    rows=[('Enterprise value (present value of base-case free cash flow to the firm)',money(base['enterprise_value']),'computed'),
+          ('Less net debt',money(base['net_debt']),f'debt less selected cash on {day}'+cite(refs.get('net_debt')))]
+    components=claims.get('components') if isinstance(claims.get('components'),dict) else None
+    if components is not None:
+        lease=claims.get('finance_lease_claim',0) or 0
+        lease_refs=[fact.get('source_id') for fact in claims.get('source_facts') or [] if isinstance(fact,dict)]
+        rows.append(('Less finance leases',money(lease),
+                     'within net debt' if claims.get('finance_leases_included_in_net_debt') else
+                     'reported finance lease liabilities'+cite(lease_refs)
+                     if claims.get('reported_finance_lease_liabilities') is not None else 'assumed zero: none reported'))
+        for name,label in CLAIM_LABELS:
+            item=components.get(name)
+            if not isinstance(item,dict):
+                rows.append((label,money(0),'assumed zero: none reported'))
+                continue
+            if name=='preferred_stock' and item.get('carrying_value_not_deducted') is not None:
+                rows.append((label,money(0),f'carrying value {money(item["carrying_value_not_deducted"])} counted through '
+                                            'conversion shares in the dilutive increment'+cite(item.get('source_refs'))))
+            elif name=='defined_benefit_obligations':
+                text=(f'recognized liabilities {money(item.get("recognized_liabilities",0))} less overfunded plan assets '
+                      f'{money(item.get("overfunded_plan_assets",0))}')
+                if item.get('net_surplus_not_added') is not None:
+                    text+=f'; net surplus of {money(item["net_surplus_not_added"])} not added'
+                rows.append((label,money(item['value']),text+cite(item.get('source_refs'))))
+            else:
+                rows.append((label,money(item['value']),'carrying value'+cite(item.get('source_refs'))))
+    else:
+        rows.append(('Less other equity claims',money(base['other_equity_claims']),'finance leases and identified claims'+
+                     cite(refs.get('other_equity_claims'))))
+    added=assets.get('components') if isinstance(assets.get('components'),dict) else {}
+    if 'nonoperating_assets' in ((plan or {}).get('actuals') or {}):
+        names=('carrying value: '+', '.join(NONOPERATING_LABELS.get(name,name.replace('_',' ')) for name in added) if added else
+               'none outside the selected cash' if assets.get('not_added') else 'assumed zero: none reported')
+        rows.append(('Plus non-operating investments',money(base.get('nonoperating_assets',0)),
+                     names+cite(refs.get('nonoperating_assets'))))
+    rows.append(('Equity value',money(base['equity_value']),'computed'))
+    count=lambda value:f'{value/1e6:,.1f} million'
+    rows.append(('Shares outstanding',count(base['shares_outstanding']),
+                 f'on {(dates.get("shares_outstanding") or {}).get("instant","the reported date")}'+cite(refs.get('shares_outstanding'))))
+    if 'dilutive_shares' in ((plan or {}).get('actuals') or {}):
+        period=shares.get('period') or dates.get('dilutive_shares') or {}
+        basis=('diluted less basic weighted-average shares, fiscal year to '+str(period.get('end_date','')) if
+               shares.get('status')=='reported' else 'reported basic and diluted shares are equal' if
+               shares.get('status')=='reported_basic_equals_diluted' else 'assumed zero: no weighted-average shares reported')
+        rows.append(('Plus dilutive increment',count(base.get('dilutive_shares',0)),basis+cite(refs.get('dilutive_shares'))))
+        rows.append(('Diluted shares',count(base.get('diluted_shares',base['shares_outstanding'])),'computed'))
+    rows.append(('Value per share',f'{currency} {base["per_share_value"]:,.2f}','computed'))
+    lines=['','### Enterprise value to value per share (base case)','','| Line | Amount | Basis |','|---|---:|---|']
+    lines+=[f'| {label} | {amount} | {basis} |' for label,amount,basis in rows]
+    notes=[]
+    quoted=assets.get('reported_quoted_market_value_not_used')
+    if isinstance(quoted,dict) and isinstance(quoted.get('value'),(int,float)):
+        notes.append(f'The reported quoted market value of the listed equity-method stakes, {money(quoted["value"])}'
+                     f'{cite(quoted.get("source_refs"))}, is not used; the bridge carries investments at book value.')
+    if assets or components is not None:
+        notes.append('Claims and investments are carrying values on the balance-sheet date of net debt; pension obligations '
+                     'are before tax. A category with no reported concept is zero by assumption. Stock-based '
+                     'compensation stays an operating expense; the dilutive increment counts awards already granted.')
+    return lines+[part for note in notes for part in ('',note)]
 
 
 def _scale_exhibit(plan, result, currency):
@@ -2703,7 +2798,11 @@ def valuation_section(plan, result):
         dates={}
     measurements=[]
     for field,label in [('net_debt','net debt'),('other_equity_claims','other claims'),
-                        ('shares_outstanding','shares outstanding'),('market_price','regular-session quote')]:
+                        ('nonoperating_assets','non-operating investments'),
+                        ('shares_outstanding','shares outstanding'),('dilutive_shares','dilutive increment (fiscal year to)'),
+                        ('market_price','regular-session quote')]:
+        if field in ('nonoperating_assets','dilutive_shares') and field not in dates:
+            continue
         row=dates.get(field,{})
         when=(row.get('instant') or row.get('observed_at') or row.get('end_date')) if isinstance(row,dict) else None
         measurements.append(label+': '+str(when or 'not supplied'))
@@ -2716,6 +2815,7 @@ def valuation_section(plan, result):
     else:
         lines += ['', 'Measurement dates — '+ '; '.join(measurements)+'. '
                   'Balances are not rolled forward to the quote date; the annual cash-flow model has no stub-period adjustment.']
+    lines += _equity_bridge_exhibit(plan, result, currency)
     lines += _continuity_exhibit(result)
     lines += _scale_exhibit(plan, result, currency)
     lines += base_rates.memo_lines(result.get('base_rates'), currency)

@@ -113,6 +113,8 @@ INSTANTS = {
     'operating_lease_liability': ('OperatingLeaseLiability',),
 }
 RATES = {'operating_lease_rate': ('OperatingLeaseWeightedAverageDiscountRatePercent',)}
+# Investment lines that can contain one another; only the largest is removed.
+NESTED_INVESTMENTS = ('equity_method_investments', 'other_long_term_investments', 'equity_securities_nonmarketable')
 
 
 def _number(value):
@@ -121,6 +123,36 @@ def _number(value):
 
 def _amount(row, name):
     return _number(row.get(name)) or 0
+
+
+def unsplit_securities(row):
+    """True when no cash-and-investments total and no current or noncurrent securities line is tagged.
+
+    Nvidia's case: its marketable securities are then the debt securities total
+    plus marketable equity, both counted with cash.
+    """
+    return all(row.get(name) is None for name in ('cash_and_short_term_investments', 'securities_current',
+                                                  'securities_noncurrent'))
+
+
+def nonoperating_investments(row):
+    """(field, amount) lines that invested capital removes as non-operating investments.
+
+    The balance-sheet investments line where it is tagged; otherwise noncurrent
+    securities plus the largest of the investment lines that can nest (Alphabet's
+    other investments contain its equity-method stakes). The equity bridge adds
+    the same lines, less any already selected as cash (inputs.py).
+    """
+    if row.get('long_term_investments') is not None:
+        return [('long_term_investments', _amount(row, 'long_term_investments'))]
+    lines = [('securities_noncurrent', _amount(row, 'securities_noncurrent'))] if row.get('securities_noncurrent') is not None else []
+    nested = [name for name in NESTED_INVESTMENTS if row.get(name) is not None]
+    if nested:
+        # The largest overlapping line: an investment left in errs toward lower ROIC,
+        # one counted twice could take capital below zero.
+        largest = max(nested, key=lambda name: _amount(row, name))
+        lines.append((largest, _amount(row, largest)))
+    return lines
 
 
 def invested_capital(row):
@@ -139,20 +171,13 @@ def invested_capital(row):
         cash = _number(row['cash_and_short_term_investments'])
         if row.get('securities_current') is None:
             cash += _amount(row, 'marketable_securities_other')
-    elif row.get('securities_current') is not None or row.get('securities_noncurrent') is not None:
+    elif not unsplit_securities(row):
         cash = _amount(row, 'cash') + _amount(row, 'securities_current')
     else:
         cash = (_amount(row, 'cash') + _amount(row, 'securities_unsplit') + _amount(row, 'equity_securities_marketable') +
                 _amount(row, 'marketable_securities_other'))
     excess = max(0.0, cash - OPERATING_CASH_SHARE * revenue)
-    if row.get('long_term_investments') is not None:
-        investments = _amount(row, 'long_term_investments')
-    else:
-        # The largest overlapping line: an investment left in errs toward lower ROIC,
-        # one counted twice could take capital below zero.
-        investments = _amount(row, 'securities_noncurrent') + max(
-            _amount(row, 'equity_method_investments'), _amount(row, 'other_long_term_investments'),
-            _amount(row, 'equity_securities_nonmarketable'))
+    investments = sum(amount for _, amount in nonoperating_investments(row))
     return assets - (current - debt) - excess - investments - _amount(row, 'pension_assets')
 
 

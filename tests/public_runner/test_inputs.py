@@ -314,8 +314,11 @@ class ReportedInputTests(unittest.TestCase):
         self.assertEqual(original,before)
         self.assertEqual(corrected['scenarios'],original['scenarios'])
         self.assertEqual(corrected['assumptions_label'],original['assumptions_label'])
+        # The equity bridge adds non-operating investments (none outside the selected cash here)
+        # and the dilutive increment (zero: no basic weighted-average count in this fixture).
         self.assertEqual(corrected['actuals'],{'revenue':478834000000,'net_debt':-56824000000,
-                                            'other_equity_claims':1456000000,'shares_outstanding':14532182000})
+                                            'other_equity_claims':1456000000,'shares_outstanding':14532182000,
+                                            'nonoperating_assets':0,'dilutive_shares':0})
         bridge=corrected['net_debt_bridge']
         self.assertEqual(bridge['debt'],80111000000)
         self.assertEqual(bridge['selected_cash_and_nonoperating_investments'],136935000000)
@@ -331,7 +334,8 @@ class ReportedInputTests(unittest.TestCase):
         self.assertNotIn('1259000000',json.dumps(bridge))
         self.assertTrue(corrected['reported_inputs']['coverage']['complete'])
         self.assertEqual(corrected['source_refs']['net_debt'],['S19'])
-        self.assertEqual({r['field'] for r in changes}, {'actuals.net_debt','actuals.shares_outstanding','market_price'})
+        self.assertEqual({r['field'] for r in changes}, {'actuals.net_debt','actuals.shares_outstanding','market_price',
+                                                        'actuals.nonoperating_assets','actuals.dilutive_shares'})
         repeated,repeated_changes=pin_reported_inputs(corrected,sources())
         self.assertEqual(repeated,corrected)
         self.assertEqual(repeated_changes,[])

@@ -26,6 +26,14 @@ shares are a whole-share count. Net debt already deducts the selected cash balan
 it is subtracted once, and there is no second cash add-back. Unknown actuals are
 errors, never zero defaults. The pipeline must verify source support and dates.
 
+Two optional actuals complete the equity bridge: ``nonoperating_assets``
+(investments outside the selected cash, added to equity value) and
+``dilutive_shares`` (the fiscal year's diluted less basic weighted-average shares,
+added to shares outstanding). Each needs its own source_refs when present; plans
+saved before they existed omit them and revalue unchanged, with both at zero.
+Equity = enterprise value - net debt - other_equity_claims + nonoperating_assets,
+and value per share = equity / (shares_outstanding + dilutive_shares).
+
 Annual FCFF = EBIT - cash operating taxes - incremental revenue / sales_to_capital.
 Sales-to-capital is an incremental investment ratio including working capital and
 net fixed investment; maintenance investment offsets depreciation in this model.
@@ -135,6 +143,8 @@ from .cap_fade import industry_fade
 
 SCENARIOS = ('bear', 'base', 'bull')
 ACTUAL_FIELDS = ('revenue', 'net_debt', 'other_equity_claims', 'shares_outstanding')
+# Zero when absent, so plans saved before the full equity bridge revalue unchanged.
+OPTIONAL_ACTUAL_FIELDS = ('nonoperating_assets', 'dilutive_shares')
 FORECAST_FIELDS = ('growth_rates', 'ebit_margins', 'tax_rate', 'sales_to_capital',
                    'wacc', 'terminal_growth', 'terminal_roic')
 # Overridable alongside FORECAST_FIELDS; absent unless stated, so that a changed
@@ -285,8 +295,18 @@ def _validated(plan):
     refs = _required(plan, 'source_refs', 'plan')
     if not isinstance(actuals, dict) or not isinstance(refs, dict):
         raise ValueError('actuals and source_refs must be objects')
-    actuals = {key: _number(_required(actuals, key, 'actuals'), 'actuals.' + key) for key in ACTUAL_FIELDS}
+    supplied = actuals
+    actuals = {key: _number(_required(supplied, key, 'actuals'), 'actuals.' + key) for key in ACTUAL_FIELDS}
     for key in ACTUAL_FIELDS:
+        if not _reference(refs.get(key)):
+            raise ValueError(f'Explicit source_refs.{key} is required; an assumed zero must be disclosed')
+    for key in OPTIONAL_ACTUAL_FIELDS:
+        if supplied.get(key) is None:
+            actuals[key] = 0.0
+            continue
+        actuals[key] = _number(supplied[key], 'actuals.' + key)
+        if actuals[key] < 0:
+            raise ValueError(f'actuals.{key} cannot be negative')
         if not _reference(refs.get(key)):
             raise ValueError(f'Explicit source_refs.{key} is required; an assumed zero must be disclosed')
     if actuals['revenue'] <= 0 or actuals['shares_outstanding'] <= 0:
@@ -391,6 +411,17 @@ def _validated(plan):
         if market <= 0 or not _reference(refs.get('market_price')):
             raise ValueError('A positive market_price requires its own source reference')
     return actuals, scenarios, market
+
+
+def _diluted_shares(actuals):
+    """Outstanding shares plus the reported dilutive increment."""
+    return actuals['shares_outstanding'] + actuals.get('dilutive_shares', 0.0)
+
+
+def _equity(actuals, enterprise, net_debt=None):
+    """Equity value from enterprise value: less net debt and other claims, plus non-operating assets."""
+    net_debt = actuals['net_debt'] if net_debt is None else net_debt
+    return enterprise - net_debt - actuals['other_equity_claims'] + actuals.get('nonoperating_assets', 0.0)
 
 
 def _horizon(scenario):
@@ -577,11 +608,14 @@ def _project(actuals, scenario, *, flat=None, shift=0.0, terminal=None):
     pv_terminal = terminal_value * roll / cumulative if versioned else terminal_value / (1 + rates[0]) ** len(rows)
     pv_forecast = sum(row['pv_fcff'] for row in rows)
     enterprise = pv_forecast + pv_terminal
-    equity = enterprise - actuals['net_debt'] - actuals['other_equity_claims']
-    per_share = equity / actuals['shares_outstanding']
+    equity = _equity(actuals, enterprise)
+    per_share = equity / _diluted_shares(actuals)
     result = {'enterprise_value': enterprise, 'net_debt': actuals['net_debt'],
-              'other_equity_claims': actuals['other_equity_claims'], 'equity_value': equity,
-              'shares_outstanding': actuals['shares_outstanding'], 'per_share_value': per_share,
+              'other_equity_claims': actuals['other_equity_claims'],
+              'nonoperating_assets': actuals.get('nonoperating_assets', 0.0), 'equity_value': equity,
+              'shares_outstanding': actuals['shares_outstanding'],
+              'dilutive_shares': actuals.get('dilutive_shares', 0.0), 'diluted_shares': _diluted_shares(actuals),
+              'per_share_value': per_share,
               'pv_forecast_fcff': pv_forecast, 'pv_terminal_value': pv_terminal,
               'terminal_value_fraction': pv_terminal / enterprise if enterprise else None,
               'terminal_revenue': terminal_revenue, 'terminal_nopat': terminal_nopat,
@@ -779,8 +813,8 @@ def _cashflow_irr(cashflows, times=None):
 
 
 def _fixed_exit_return(actuals, projection, price):
-    shares=actuals['shares_outstanding']
-    opening=-(actuals['net_debt']+actuals['other_equity_claims'])/shares
+    shares=_diluted_shares(actuals)
+    opening=-(actuals['net_debt']+actuals['other_equity_claims']-actuals.get('nonoperating_assets',0.0))/shares
     rows=projection['cashflows']
     cashflows=[-price+opening]+[row['fcff']*row.get('counted_fraction',1.0)/shares for row in rows]
     times=[0.0]+[row.get('discount_time',row['year']) for row in rows]
@@ -866,18 +900,21 @@ def _unchanged_multiple_return(actuals, projection, price, metric, multiple):
 
 
 def _valuation_multiples(plan, actuals, scenarios, market):
-    shares = actuals['shares_outstanding']
+    shares = _diluted_shares(actuals)
     equity = _finite_or_none(market * shares) if market is not None else None
-    enterprise = (_finite_or_none(equity + actuals['net_debt'] + actuals['other_equity_claims'])
-                  if equity is not None else None)
+    enterprise = (_finite_or_none(equity + actuals['net_debt'] + actuals['other_equity_claims'] -
+                                  actuals.get('nonoperating_assets', 0.0)) if equity is not None else None)
     market_bridge = {
         'status': 'unavailable' if market is None else 'calculated' if enterprise is not None else 'not_calculated',
-        'market_price': market, 'shares_outstanding': shares,
+        'market_price': market, 'shares_outstanding': actuals['shares_outstanding'],
+        'dilutive_shares': actuals.get('dilutive_shares', 0.0), 'diluted_shares': shares,
         'market_equity_value': equity, 'net_debt': actuals['net_debt'],
-        'other_equity_claims': actuals['other_equity_claims'], 'enterprise_value': enterprise,
+        'other_equity_claims': actuals['other_equity_claims'],
+        'nonoperating_assets': actuals.get('nonoperating_assets', 0.0), 'enterprise_value': enterprise,
         'source_refs': {key: copy.deepcopy(plan['source_refs'][key]) for key in
-                        ('net_debt', 'other_equity_claims', 'shares_outstanding')},
-        'basis': 'Saved quote times dated ordinary shares, plus signed net debt and other noncommon claims. Selected cash is already deducted in net debt; it is not deducted twice.',
+                        ('net_debt', 'other_equity_claims', 'shares_outstanding', *OPTIONAL_ACTUAL_FIELDS)
+                        if key in plan['source_refs']},
+        'basis': 'Saved quote times dated ordinary shares plus the dilutive increment, plus signed net debt and other noncommon claims, less non-operating assets. Selected cash is already deducted in net debt; it is not deducted twice.',
     }
     if market is not None:
         market_bridge['source_refs']['market_price'] = copy.deepcopy(plan['source_refs']['market_price'])
@@ -961,7 +998,7 @@ def _repurchase_tests(plan, actuals, scenarios, weighted):
     if ('net_debt' in bridge and not math.isclose(_number(bridge['net_debt'], 'net_debt_bridge.net_debt'),
                                                   actuals['net_debt'], rel_tol=1e-8, abs_tol=1e-6)):
         raise ValueError('repurchase_tests net_debt_bridge.net_debt conflicts with actuals.net_debt')
-    shares, names, output = actuals['shares_outstanding'], set(), []
+    shares, names, output = _diluted_shares(actuals), set(), []
     fields = {'name', 'amount', 'price', 'source_refs', 'label', 'interpretation'}
     for item in requested:
         if not isinstance(item, dict) or set(item) != fields:
@@ -986,7 +1023,7 @@ def _repurchase_tests(plan, actuals, scenarios, weighted):
         post_net_debt = actuals['net_debt'] + amount
         cases = {}
         for scenario, projection in scenarios.items():
-            equity = projection['enterprise_value'] - post_net_debt - actuals['other_equity_claims']
+            equity = _equity(actuals, projection['enterprise_value'], post_net_debt)
             per_share = equity / remaining
             transfer = retired * (price - projection['per_share_value'])
             if not all(math.isfinite(value) for value in (post_net_debt, equity, per_share, transfer)):
@@ -1092,7 +1129,8 @@ def _counterfactuals(plan, actuals, definitions):
                                  if flat is not None else {})},
             fixed_input_basis={
                 'reference_scenario': 'base',
-                'actuals': copy.deepcopy(actuals),
+                'actuals': {key: value for key, value in actuals.items()
+                            if key in ACTUAL_FIELDS or key in plan['actuals']},
                 'unchanged_base_inputs': {field: copy.deepcopy(base[field]) for field in listed if field not in changed_fields and field in base},
                 'changed_base_inputs': {**{field: copy.deepcopy(effective[field]) for field in listed if field in changed_fields and field in effective},
                                         **({'wacc': flat} if flat is not None else {})},
@@ -1291,10 +1329,9 @@ def _computed_diagnostics(actuals, definitions, scenarios, weighted):
         except (ValueError, ArithmeticError):
             row.update(status='not_calculated', reason='Alternative arithmetic exceeded finite numeric bounds.')
         capital_changes.append(row)
-    no_forecast_investment=_finite_or_none((scenarios['base']['enterprise_value']+
+    no_forecast_investment=_finite_or_none(_equity(actuals,scenarios['base']['enterprise_value']+
         sum(row['net_reinvestment']*row['discount_factor']*row.get('counted_fraction',1.0) for row in scenarios['base']['cashflows']
-            if row.get('phase','explicit')=='explicit')-
-        actuals['net_debt']-actuals['other_equity_claims'])/actuals['shares_outstanding'])
+            if row.get('phase','explicit')=='explicit'))/_diluted_shares(actuals))
     no_terminal_excess_return = {'terminal_roic': base_terminal, 'per_share_value': None,
                                  'dollar_delta': None, 'percent_delta': None,
                                  'fixed_assumptions': ('The house terminal return already equals the terminal discount rate (Mauboussin\'s steady state), so this row equals the house value.'
@@ -1737,6 +1774,9 @@ def evaluate(plan):
                   'Negative cash flows and negative equity values are preserved; no artificial value floor is applied.',
                   'Source references establish traceability only; the caller must verify financial definitions, dates and accounting support.'
               ]}
+    if any(key in plan['actuals'] for key in OPTIONAL_ACTUAL_FIELDS):
+        result['disclosures'].insert(3, 'Non-operating investments outside the selected cash are added at carrying value, '
+                                        'and value per share divides by outstanding shares plus the reported dilutive increment.')
     if 'valuation_date' in plan:
         result['valuation_date'] = plan['valuation_date']
     returns = forecast_return_on_capital(plan.get('invested_capital_reference'), scenarios)

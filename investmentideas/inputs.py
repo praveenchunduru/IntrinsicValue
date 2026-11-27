@@ -12,6 +12,8 @@ from decimal import Decimal, InvalidOperation
 import math
 import re
 
+from . import roic
+
 REVENUE = {'us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax',
            'us-gaap:RevenueFromContractWithCustomerIncludingAssessedTax',
            'us-gaap:Revenues', 'us-gaap:SalesRevenueNet'}
@@ -205,7 +207,9 @@ CASH_POLICY = ('Explicit house modeling policy: selected nonoperating assets com
                'cash equivalents plus directly reported marketable securities or short-term investments '
                'on the annual balance-sheet date. Inclusive subtotals replace their components. Missing '
                'investment categories are excluded from this selected-asset policy, not reported as zero. '
-               'Long-term investments without a marketable classification are excluded. This does not '
+               'Long-term investments without a marketable classification are excluded here; the equity '
+               'bridge adds separately the investment lines the return-on-capital table removes from invested '
+               'capital. This does not '
                'establish that all cash is economically surplus or required operating cash is zero.')
 CLAIMS_POLICY = ('Explicit house assumption: additional unidentified equity claims are zero. This is '
                  'not a reported fact or evidence that no additional claims exist; identified finance '
@@ -222,17 +226,130 @@ SHORT_TERM_POLICY = ('Explicit house assumption: short-term financing beyond the
 LEASE_ABSENCE_POLICY = ('Explicit house assumption: finance lease liabilities are zero because the scanned SEC '
                         'entity-wide structured record reports no finance or capital lease liability concept on '
                         'the balance-sheet date. An absent concept is not a reported zero.')
+# Procter & Gamble tags its balance-sheet cash only with the cash-flow statement
+# total, which includes restricted cash. Where no restricted cash is reported on
+# the date the two are the same amount, so the total stands in for cash.
+CASH_INCLUDING_RESTRICTED = 'CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents'
+RESTRICTED_CASH = ('RestrictedCash', 'RestrictedCashCurrent', 'RestrictedCashNoncurrent',
+                   'RestrictedCashAndCashEquivalentsAtCarryingValue', 'RestrictedCashAndCashEquivalentsCurrent',
+                   'RestrictedCashAndCashEquivalentsNoncurrent', 'RestrictedCashAndInvestments',
+                   'RestrictedCashAndInvestmentsCurrent', 'RestrictedCashAndInvestmentsNoncurrent')
+RESTRICTED_CASH_POLICY = ('Explicit house reading: the issuer tags no cash and cash equivalents concept on the balance-sheet '
+                          'date, only cash, cash equivalents and restricted cash '
+                          '(us-gaap:CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents), and reports no '
+                          'restricted cash on that date, so that total is taken as cash. Restricted cash the issuer does '
+                          'not tag would be counted as cash.')
+# Non-operating investments added to equity value. The lines and their precedence
+# are those roic.invested_capital removes from invested capital, so the two agree.
+NONOPERATING_FIELDS = ('long_term_investments', 'securities_noncurrent', *roic.NESTED_INVESTMENTS,
+                       'equity_securities_marketable')
+# Marketable equity at fair value: the roic tag, then the current-and-noncurrent total.
+MARKETABLE_EQUITY = tuple(dict.fromkeys((*roic.INSTANTS['equity_securities_marketable'], *EXCLUDED_EQUITY_SECURITIES)))
+EQUITY_METHOD_QUOTED_VALUE = 'EquityMethodInvestmentQuotedMarketValue'
+# Selected cash categories that can contain noncurrent securities.
+NONCURRENT_CASH_CATEGORIES = ('noncurrent_marketable_securities', 'marketable_securities', 'available_for_sale_debt_securities')
+# Selected cash categories that exclude equity securities by definition.
+EQUITY_FREE_CASH_CATEGORIES = frozenset({'cash_and_cash_equivalents', 'cash_including_restricted_cash',
+                                         'available_for_sale_debt_securities'})
+NONOPERATING_POLICY = (
+    'Explicit house policy: non-operating investments are added to equity value at carrying value on the balance-sheet '
+    'date of net debt. The lines are those the return-on-capital table removes from invested capital: the '
+    'balance-sheet investments line (us-gaap:LongTermInvestments) where it is tagged, otherwise noncurrent securities '
+    'plus the largest of equity-method investments, other long-term investments and non-marketable equity securities, '
+    'which can contain one another. Marketable equity securities (us-gaap:EquitySecuritiesFvNi) are added when the '
+    'selected cash holds only cash and debt securities and no investment line added can contain them. A line that may '
+    'already be in the selected cash is not added again. Quoted market values are not used. Any of these investments '
+    'the business needs to operate would lower equity value.')
+NONOPERATING_ABSENCE_POLICY = ('Explicit house assumption: no non-operating investment concept is reported on the '
+                               'balance-sheet date, so non-operating investments are zero. An absent concept is not a '
+                               'reported zero.')
+# Claims on enterprise value beside debt and finance leases, at carrying value.
+NONCONTROLLING = ('MinorityInterest', 'NonredeemableNoncontrollingInterest')
+REDEEMABLE_NONCONTROLLING = ('RedeemableNoncontrollingInterestEquityCarryingAmount',)
+TOTAL_EQUITY = ('StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest', 'StockholdersEquity')
+PREFERRED = ('PreferredStockValue', 'PreferredStockValueOutstanding')
+# Defined-benefit pension and other postretirement liabilities recognized on the
+# balance sheet, tried in this order. Each part is a current-and-noncurrent total,
+# or noncurrent plus current. Johnson & Johnson tags its whole employee-related
+# obligations line, which also holds postemployment benefits, with the combined
+# concept, so the separate pension and postretirement concepts come first. AT&T
+# tags its pension and postretirement obligation only as postemployment benefits.
+BENEFIT_GROUPS = (
+    ('pension_and_other_postretirement_plans', (
+        ('pension_plans', 'DefinedBenefitPensionPlanCurrentAndNoncurrentLiabilities',
+         'DefinedBenefitPensionPlanLiabilitiesCurrent', 'DefinedBenefitPensionPlanLiabilitiesNoncurrent'),
+        ('other_postretirement_plans', 'OtherPostretirementDefinedBenefitPlanLiabilitiesCurrentAndNoncurrent',
+         'OtherPostretirementDefinedBenefitPlanLiabilitiesCurrent', 'OtherPostretirementDefinedBenefitPlanLiabilitiesNoncurrent'))),
+    ('combined_pension_and_postretirement', (
+        ('combined_plans', None, 'PensionAndOtherPostretirementDefinedBenefitPlansCurrentLiabilities',
+         'PensionAndOtherPostretirementDefinedBenefitPlansLiabilitiesNoncurrent'),)),
+    ('combined_including_postemployment', (
+        ('combined_plans', None, 'PensionAndOtherPostretirementAndPostemploymentBenefitPlansLiabilitiesCurrent',
+         'PensionAndOtherPostretirementAndPostemploymentBenefitPlansLiabilitiesNoncurrent'),)),
+    ('postemployment_benefits', (
+        ('postemployment', 'PostemploymentBenefitsLiabilityCurrentAndNoncurrent', 'PostemploymentBenefitsLiabilityCurrent',
+         'PostemploymentBenefitsLiabilityNoncurrent'),)),
+)
+BENEFIT_ASSETS = roic.INSTANTS['pension_assets']
+CLAIMS_COMPONENT_POLICY = (
+    'Explicit house policy: noncontrolling interests (us-gaap:MinorityInterest or NonredeemableNoncontrollingInterest, '
+    'otherwise total equity less parent equity), redeemable noncontrolling interests and preferred stock are deducted at '
+    'carrying value on the balance-sheet date of net debt; market values are not used. A category with no reported '
+    'concept is assumed zero; an absent concept is not a reported zero. Preferred stock whose conversion the filing '
+    'counts in diluted shares is deducted through the share count instead.')
+PENSION_POLICY = (
+    'Explicit house policy: defined-benefit pension and other postretirement obligations are deducted as the recognized '
+    'liabilities less recognized assets of overfunded plans, before tax. Damodaran deducts underfunded pension and health '
+    'care obligations when moving from firm value to equity value and keeps them out of the cost of capital; a net '
+    'surplus is not added, his conservative rule for excess plan assets, which usually cannot be reclaimed without a '
+    'large tax ("Dealing with Cash, Cross Holdings and Other Non-Operating Assets", 2005). The tax deduction on future '
+    'contributions is not credited; at a marginal tax rate t it would raise equity value by t times the deduction. '
+    'Where no defined-benefit concept is tagged, a reported postemployment benefit obligation is deducted as the '
+    'retirement obligation; AT&T reports its pension and postretirement obligation that way.')
+# Weighted-average shares for the anchor fiscal year (financial-context concepts)
+# and the conversion shares that can be inside the diluted count.
+DILUTION = {
+    'diluted_weighted_average': 'WeightedAverageNumberOfDilutedSharesOutstanding',
+    'basic_weighted_average': 'WeightedAverageNumberOfSharesOutstandingBasic',
+    'basic_and_diluted_weighted_average': 'WeightedAverageNumberOfShareOutstandingBasicAndDiluted',
+    'preferred_conversion_shares': 'IncrementalCommonSharesAttributableToConversionOfPreferredStock',
+    'debt_conversion_shares': 'IncrementalCommonSharesAttributableToConversionOfDebtSecurities',
+}
+# A share count more than this factor away from the year's basic average signals a
+# split or large issuance after the fiscal year; the increment is then scaled.
+DILUTION_SCALE_BAND = (Decimal(2) / 3, Decimal(3) / 2)
+SHARE_COUNT_CONCEPTS = frozenset('us-gaap:' + DILUTION[key] for key in ('preferred_conversion_shares', 'debt_conversion_shares'))
+DILUTION_POLICY = (
+    'Value per share divides equity value by outstanding shares plus the dilutive increment of the latest fiscal year: '
+    'reported diluted less basic weighted-average shares, which counts employee awards by the treasury-stock method and '
+    'convertible securities if converted. Conversion shares of debt that the filing reports separately are left out, '
+    'because that debt is already deducted in net debt. The increment is a fiscal-year average applied to the later '
+    'outstanding count. Stock-based compensation stays an operating expense.')
+DILUTION_ABSENCE_POLICY = ('Explicit house assumption: no diluted or basic weighted-average share count is reported for '
+                           'the anchor fiscal year, so the dilutive increment is zero.')
 # Concepts whose absence on the balance-sheet date supports the two assumptions
 # above. A companyfacts source attests the scan in ``selection``.
 FINANCING_ABSENCE_SCAN = frozenset(
     'us-gaap:' + concept for group in (DEBT, FINANCE_LEASES, UNCLASSIFIED_FINANCING, LEGACY_LEASES)
     for concept in group.values())
+EQUITY_BRIDGE_CONCEPTS = frozenset(
+    'us-gaap:' + concept for concept in (
+        CASH_INCLUDING_RESTRICTED, *RESTRICTED_CASH, EQUITY_METHOD_QUOTED_VALUE, *NONCONTROLLING,
+        *REDEEMABLE_NONCONTROLLING, *TOTAL_EQUITY, *PREFERRED, *BENEFIT_ASSETS,
+        *(concept for field in NONOPERATING_FIELDS for concept in roic.INSTANTS[field]),
+        *(concept for _, parts in BENEFIT_GROUPS for part in parts for concept in part[1:] if concept),
+        DILUTION['preferred_conversion_shares'], DILUTION['debt_conversion_shares']))
 PRIMARY_INPUT_CONCEPTS = REVENUE | SHARES | {
     'us-gaap:' + concept for group in (CASH, DEBT, FINANCE_LEASES, UNCLASSIFIED_FINANCING, LEGACY_LEASES,
                                         DEBT_RECONCILIATION) for concept in group.values()
-} | {'us-gaap:' + concept for concept in EXCLUDED_EQUITY_SECURITIES}
+} | {'us-gaap:' + concept for concept in EXCLUDED_EQUITY_SECURITIES} | EQUITY_BRIDGE_CONCEPTS
 STRUCTURED_FORMS = frozenset({'10-K', '10-K/A', '10-Q', '10-Q/A', '20-F', '20-F/A', '40-F', '40-F/A'})
 ANNUAL_REPORT_FORMS = STRUCTURED_FORMS - {'10-Q', '10-Q/A'}
+# Reported inputs the equity bridge needs. The first four are essential; the
+# last two default to zero in plans saved before they existed.
+REPORTED_FIELDS = ('revenue', 'net_debt', 'other_equity_claims', 'shares_outstanding', 'nonoperating_assets',
+                   'dilutive_shares')
+FIELD_PREREQUISITES = {'nonoperating_assets': 'net_debt', 'dilutive_shares': 'revenue'}
 CLASS_OF_STOCK_AXIS = 'us-gaap:StatementClassOfStockAxis'
 CLASS_SHARES_BASIS = ('sum of cover-page outstanding shares by share class (dei:EntityCommonStockSharesOutstanding on '
                       'us-gaap:StatementClassOfStockAxis) on one date; no entity-wide total is reported')
@@ -334,7 +451,9 @@ def _components_public(components):
     return {name: {'value': _json_number(item['value']), 'source_refs': item['source_refs'],
                    'facts': item['facts'],
                    **({'classification_evidence': item['classification_evidence']}
-                      if item.get('classification_evidence') else {})} for name, item in components.items()}
+                      if item.get('classification_evidence') else {}),
+                   **({'reconciliation': item['reconciliation']} if item.get('reconciliation') else {})}
+            for name, item in components.items()}
 
 
 def _reconcile_gross_term_debt(items, reconciliation, leases=None):
@@ -401,25 +520,39 @@ def _validate_scopes(items, scopes, label, conflicts):
     Scope bits encode accounting categories, not display tags. Incomplete
     subsets (commercial paper within short-term borrowing) provide bounds but
     never establish that their enclosing liability category is complete.
+
+    Amounts compare within the rounding their own stated inline precision
+    allows: half a unit of each amount's ``decimals``, summed over the total and
+    the parts compared with it. Procter & Gamble reports current debt of $11,296
+    million and parts of $6,457, $4,837 and $3 million, each rounded to millions.
+    Amounts without a stated precision compare exactly.
     """
-    rows = [(key, item['value'], *scopes[key]) for key, item in items.items()
+    rows = [(key, item['value'], *scopes[key], _half_unit(item)) for key, item in items.items()
             if item and key in scopes]
-    for key, total, enclosing, enclosing_complete in rows:
+    for key, total, enclosing, enclosing_complete, total_slack in rows:
         if not enclosing_complete:
             continue
-        states = {(0, True): (Decimal(0), Decimal(0))}
-        for part_key, value, scope, complete in rows:
+        # State: (covered scope, exact partition) -> {rounding slack of the parts: (low, high)}.
+        states = {(0, True): {Decimal(0): (Decimal(0), Decimal(0))}}
+        for part_key, value, scope, complete, slack in rows:
             if key == part_key or scope & enclosing != scope:
                 continue
-            for (covered, exact), (low, high) in list(states.items()):
+            for (covered, exact), bounds in list(states.items()):
                 if covered & scope:
                     continue
                 state = (covered | scope, exact and complete)
-                new_low, new_high = low + value, high + value
-                old = states.get(state)
-                states[state] = (min(old[0], new_low), max(old[1], new_high)) if old else (new_low, new_high)
-        if any(high > total or (covered == enclosing and exact and (low != total or high != total))
-               for (covered, exact), (low, high) in states.items() if covered):
+                merged = states.setdefault(state, {})
+                for parts_slack, (low, high) in list(bounds.items()):
+                    combined, new_low, new_high = parts_slack + slack, low + value, high + value
+                    old = merged.get(combined)
+                    merged[combined] = (min(old[0], new_low), max(old[1], new_high)) if old else (new_low, new_high)
+        def inconsistent(covered, exact, parts_slack, low, high):
+            tolerance = total_slack + parts_slack
+            return (high > total + tolerance or
+                    (covered == enclosing and exact and (abs(low - total) > tolerance or abs(high - total) > tolerance)))
+        if any(inconsistent(covered, exact, parts_slack, low, high)
+               for (covered, exact), bounds in states.items() if covered
+               for parts_slack, (low, high) in bounds.items()):
             conflicts.append(f'{label} {key} conflicts with reported disjoint components or subtotals')
 
 
@@ -541,9 +674,12 @@ def _cash_selection(items, conflicts):
         if items['noncurrent_marketable_securities']:
             selected['noncurrent_marketable_securities'] = items['noncurrent_marketable_securities']
         return selected
-    if not cash:
+    if cash:
+        selected = {'cash_and_cash_equivalents': cash}
+    elif items.get('cash_including_restricted_cash'):
+        selected = {'cash_including_restricted_cash': items['cash_including_restricted_cash']}
+    else:
         return None
-    selected = {'cash_and_cash_equivalents': cash}
     if marketable and not short:
         selected.update(marketable)
     elif short:
@@ -604,6 +740,80 @@ def _current_long_term_amounts(items, leases):
     return amounts
 
 
+def _short_term_line_is_current_debt(items, leases):
+    """Read a short-term borrowings fact that equals reported current debt as that total.
+
+    Johnson & Johnson tags its balance-sheet "loans and notes payable" line, $8,495
+    million, as ShortTermBorrowings, states current debt of $8.5 billion
+    (DebtCurrent, rounded to hundreds of millions) and reports $2,000 million of
+    current long-term debt. Short-term borrowings exclude current maturities by
+    definition, so the three cannot all hold. The line equals the current-debt
+    total, so it is that total: short-term borrowings are the line less current
+    long-term debt and current finance leases, $6,495 million, and current debt is
+    read at the line's finer stated amount. Applies only when current long-term
+    debt is larger than the rounding of current debt, so no other reading fits.
+    """
+    short, current, term = (items.get(key) for key in ('short_term_borrowings', 'current_debt_and_finance_leases',
+                                                       'current_term_debt'))
+    if not (short and current and term) or short.get('classification_evidence'):
+        return items, None
+    lease = leases.get('current')
+    maturities = term['value'] + (lease['value'] if lease else Decimal(0))
+    tolerance = _half_unit(current) + _half_unit(short)
+    if term['value'] <= tolerance or abs(short['value'] - current['value']) > tolerance or short['value'] < maturities:
+        return items, None
+    parts = [short, term, *([lease] if lease else [])]
+    record = {
+        'basis': 'Reported ShortTermBorrowings equals reported current debt (us-gaap:DebtCurrent) within the rounding of '
+                 'its stated precision and exceeds reported current long-term debt, so the short-term borrowings line is '
+                 'the current-debt total, including current maturities. Short-term borrowings are that line less reported '
+                 'current long-term debt and current finance leases.',
+        'short_term_borrowings_line': _json_number(short['value']),
+        'reported_current_debt': _json_number(current['value']),
+        'reported_current_long_term_debt': _json_number(term['value']),
+        **({'reported_current_finance_leases': _json_number(lease['value'])} if lease else {}),
+        'derived_short_term_borrowings': _json_number(short['value'] - maturities),
+        'source_facts': [fact for item in (short, current, term, *([lease] if lease else [])) for fact in item['facts']]}
+    adjusted = dict(items)
+    adjusted['short_term_borrowings'] = dict(
+        short, value=short['value'] - maturities, stated_decimals=None, reconciliation=record,
+        source_refs=sorted({ref for item in parts for ref in item['source_refs']}),
+        facts=[fact for item in parts for fact in item['facts']])
+    adjusted['current_debt_and_finance_leases'] = dict(current, value=short['value'], stated_decimals=short['stated_decimals'])
+    return adjusted, record
+
+
+def _gross_term_observations(facts, anchor, currency, reconciliation, carrying):
+    """LongTermDebt observations on the date that are gross principal beside carrying ones.
+
+    Uber's 10-K tagged LongTermDebt at $10,600 million, its principal
+    (DebtInstrumentCarryingAmount), and its later 10-Q comparatives tagged the same
+    date at $10,521 million, the carrying amount. Principal less the reported
+    $79 million of unamortized discount and issuance costs equals the carrying
+    observation and current plus noncurrent carrying debt, so the principal
+    observations are set aside, as the gross-principal reconciliation does for a
+    single LongTermDebt fact. Returns (ids to exclude, disclosure) or (set(), None).
+    """
+    observed = [item for item in facts if item['concept'] == 'us-gaap:' + DEBT['term_debt'] and
+                item['parsed_instant'] == anchor and item['unit'] == 'iso4217:' + currency and item['value'] >= 0]
+    values = {item['value'] for item in observed}
+    gross, unamortized = reconciliation.get('gross_long_term_debt'), reconciliation.get('unamortized_discount_and_issuance_costs')
+    if len(values) != 2 or not gross or not unamortized or carrying is None:
+        return set(), None
+    principal, net = gross['value'], gross['value'] - abs(unamortized['value'])
+    if values != {principal, net} or net != carrying or principal == net:
+        return set(), None
+    excluded = [item for item in observed if item['value'] == principal]
+    return {id(item) for item in excluded}, {
+        'basis': 'Some reported LongTermDebt observations for the date equal gross principal before unamortized discount '
+                 'and issuance costs; the others equal the carrying amount, which is principal less the reported '
+                 'unamortized amount and current plus noncurrent carrying debt. The principal observations are set aside.',
+        'gross_principal': _json_number(principal),
+        'unamortized_discount_and_issuance_costs': _json_number(abs(unamortized['value'])),
+        'carrying_amount': _json_number(net),
+        'set_aside_facts': [_public_fact(item) for item in excluded]}
+
+
 def _debt_selection(items, leases, conflicts, *, assume_identified_short_term=False):
     """Compare complete disjoint alternatives at identical scopes before selection.
 
@@ -612,7 +822,10 @@ def _debt_selection(items, leases, conflicts, *, assume_identified_short_term=Fa
     category total, by reported current debt that equals current long-term
     debt, or (only when the caller has verified the absence scan) by the
     disclosed identified-category assumption. A reported complete total always
-    displaces the assumption.
+    displaces the assumption. Reported current debt contradicts the assumption
+    only beyond the rounding its own stated precision and that of the
+    identified categories allow (Procter & Gamble: $11,296 million against
+    $11,297 million of parts, each rounded to millions).
     """
     before = len(conflicts)
     # Scope atoms: commercial paper=1, other short-term borrowings=32, any
@@ -660,7 +873,8 @@ def _debt_selection(items, leases, conflicts, *, assume_identified_short_term=Fa
     short_parts = short_basis = None
     if short:
         short_parts = {'short_term_borrowings': short}
-        short_basis = 'manual_primary_review' if short.get('classification_evidence') else 'reported'
+        short_basis = ('manual_primary_review' if short.get('classification_evidence') else
+                       'reported_current_debt_less_current_maturities' if short.get('reconciliation') else 'reported')
     else:
         # Reported current debt covers short-term borrowings, current long-term
         # debt and current finance leases. Equality with the reported current
@@ -677,7 +891,10 @@ def _debt_selection(items, leases, conflicts, *, assume_identified_short_term=Fa
     if not candidates and assume_identified_short_term and len(conflicts) == before:
         identified = {key: items[key] for key in ('commercial_paper', 'other_short_term_borrowings') if items[key]}
         expected_current = {_amount(identified) + amount for amount in _current_long_term_amounts(items, leases)}
-        if current and expected_current and current['value'] not in expected_current:
+        tolerance = (_half_unit(current) + sum((_half_unit(item) for item in identified.values()), Decimal(0)) +
+                     max(_half_unit(items['current_term_debt_and_finance_leases']),
+                         _half_unit(items['current_term_debt']) + _half_unit(leases.get('current'))))
+        if current and expected_current and all(abs(current['value'] - amount) > tolerance for amount in expected_current):
             # Reported current debt exceeds the identified categories: other
             # short-term financing exists, so the assumption is contradicted.
             combined = term = None
@@ -781,7 +998,17 @@ def _unique(items, label, conflicts):
     selected = dict(items[0])
     selected['source_refs'] = sorted({item['source_id'] for item in items})
     selected['facts'] = [_public_fact(item) for item in items]
+    # The finest inline precision the selected amount is stated at; company-facts
+    # mirrors of the same filings carry none. None means no stated rounding.
+    stated = [_precision(item) for item in items if _precision(item) is not None]
+    selected['stated_decimals'] = max(stated) if stated else None
     return selected
+
+
+def _half_unit(item):
+    """Half a unit of an item's stated inline precision: the rounding it can carry."""
+    decimals = item.get('stated_decimals') if item else None
+    return Decimal(5).scaleb(-decimals - 1) if isinstance(decimals, int) else Decimal(0)
 
 
 def _quote(sources, currency, cutoff):
@@ -822,6 +1049,230 @@ def _quote(sources, currency, cutoff):
         return None
     return {'value': _json_number(matches[0][1]), 'observed_at': latest.isoformat(),
             'source_refs': sorted({row[2] for row in matches if isinstance(row[2], str)})}
+
+
+def _component(concept, item, basis):
+    return {'value': _json_number(item['value']), 'concept': 'us-gaap:' + concept if concept else None, 'basis': basis,
+            'source_refs': item['source_refs'], 'facts': item['facts']}
+
+
+def _first_reported(pick, concepts, label):
+    """(concept, item) of the first concept with an amount on the date, else (None, None)."""
+    for concept in concepts:
+        item = pick('us-gaap:' + concept, label + ' (us-gaap:' + concept + ')')
+        if item:
+            return concept, item
+    return None, None
+
+
+def _nonoperating_assets(pick, cash):
+    """Non-operating investments at carrying value: the lines roic removes from invested capital, less selected cash.
+
+    Returns the bridge record; ``nonoperating_assets`` is its Decimal total.
+    """
+    found = {}
+    for field in NONOPERATING_FIELDS:
+        concepts = MARKETABLE_EQUITY if field == 'equity_securities_marketable' else roic.INSTANTS[field]
+        concept, item = _first_reported(pick, concepts, 'non-operating ' + field.replace('_', ' '))
+        if item:
+            found[field] = (concept, item)
+    row = {field: float(item['value']) for field, (_, item) in found.items()}
+    lines, not_added = roic.nonoperating_investments(row), []
+    noncurrent_cash = [name for name in NONCURRENT_CASH_CATEGORIES if name in cash]
+    if noncurrent_cash and any(field == 'long_term_investments' for field, _ in lines):
+        not_added.append({'line': 'long_term_investments',
+                          'reason': 'LongTermInvestments can contain the noncurrent securities selected as cash (' +
+                                    ', '.join(noncurrent_cash) + '); the equity-investment lines are added instead'})
+        lines = roic.nonoperating_investments({key: value for key, value in row.items()
+                                               if key not in ('long_term_investments', 'securities_noncurrent')})
+    elif noncurrent_cash and any(field == 'securities_noncurrent' for field, _ in lines):
+        not_added.append({'line': 'securities_noncurrent',
+                          'reason': 'Noncurrent securities are already in the selected cash (' + ', '.join(noncurrent_cash) + ')'})
+        lines = [line for line in lines if line[0] != 'securities_noncurrent']
+    if 'equity_securities_marketable' in row:
+        holders = sorted(set(cash) - EQUITY_FREE_CASH_CATEGORIES)
+        containers = [field for field, _ in lines if field in ('long_term_investments', 'other_long_term_investments')]
+        if holders:
+            not_added.append({'line': 'equity_securities_marketable',
+                              'reason': 'The selected cash includes categories that can contain equity securities (' +
+                                        ', '.join(holders) + ')'})
+        elif containers:
+            not_added.append({'line': 'equity_securities_marketable',
+                              'reason': 'The investment line added (' + ', '.join(containers) + ') can contain them'})
+        else:
+            lines.append(('equity_securities_marketable', row['equity_securities_marketable']))
+    chosen = {field for field, _ in lines}
+    for field in roic.NESTED_INVESTMENTS:
+        if field in found and field not in chosen and any(line in chosen for line in roic.NESTED_INVESTMENTS):
+            not_added.append({'line': field, 'reason': 'Can contain, or be contained in, the larger investment line added; '
+                                                       'only the largest of these lines is added'})
+    if 'long_term_investments' in chosen:
+        for field in ('securities_noncurrent', *roic.NESTED_INVESTMENTS):
+            if field in found:
+                not_added.append({'line': field, 'reason': 'Within the balance-sheet investments line (us-gaap:LongTermInvestments)'})
+    for entry in not_added:
+        if entry['line'] in found:
+            concept, item = found[entry['line']]
+            entry.update(concept='us-gaap:' + concept, value=_json_number(item['value']), source_refs=item['source_refs'])
+    components = {field: _component(found[field][0], found[field][1], 'reported carrying value') for field in chosen}
+    total = sum((found[field][1]['value'] for field in chosen), Decimal(0))
+    reported = any(field in found for field in NONOPERATING_FIELDS)
+    record = {'nonoperating_assets': total, 'components': components, 'not_added': not_added,
+              'basis': NONOPERATING_POLICY if reported else NONOPERATING_ABSENCE_POLICY,
+              'assumed_absent': not reported,
+              'concepts_looked_for': sorted({'us-gaap:' + concept for field in NONOPERATING_FIELDS for concept in roic.INSTANTS[field]} |
+                                            {'us-gaap:' + concept for concept in MARKETABLE_EQUITY})}
+    if 'equity_method_investments' in chosen:
+        quoted = pick('us-gaap:' + EQUITY_METHOD_QUOTED_VALUE, 'quoted value of equity-method investments', [])
+        if quoted:
+            record['reported_quoted_market_value_not_used'] = {
+                'value': _json_number(quoted['value']), 'concept': 'us-gaap:' + EQUITY_METHOD_QUOTED_VALUE,
+                'source_refs': quoted['source_refs'],
+                'basis': 'Reported quoted market value of the listed equity-method stakes; carrying value is used.'}
+    return record
+
+
+def _benefit_obligations(pick, conflicts):
+    """Recognized defined-benefit liabilities less overfunded plan assets; a net surplus is not added."""
+    def part(label, total, current, noncurrent):
+        whole = pick('us-gaap:' + total, label + ' (us-gaap:' + total + ')') if total else None
+        first = pick('us-gaap:' + current, label + ' (us-gaap:' + current + ')') if current else None
+        second = pick('us-gaap:' + noncurrent, label + ' (us-gaap:' + noncurrent + ')') if noncurrent else None
+        if whole:
+            pieces = [item for item in (first, second) if item]
+            slack = _half_unit(whole) + sum((_half_unit(item) for item in pieces), Decimal(0))
+            parts_sum = sum((item['value'] for item in pieces), Decimal(0))
+            if pieces and (parts_sum > whole['value'] + slack or
+                           (len(pieces) == 2 and abs(parts_sum - whole['value']) > slack)):
+                conflicts.append(f'Reported {label} total conflicts with its current and noncurrent parts')
+                return []
+            return [(total, whole)]
+        return [(concept, item) for concept, item in ((current, first), (noncurrent, second)) if item]
+    group_name, used = None, []
+    for name, parts in BENEFIT_GROUPS:
+        found = [(part_name, line) for part_name, *concepts in parts
+                 for line in part(name.replace('_', ' ') + ' ' + part_name.replace('_', ' '), *concepts)]
+        if found:
+            group_name, used = name, found
+            break
+    assets_concept, assets = _first_reported(pick, BENEFIT_ASSETS, 'overfunded plan assets')
+    liabilities = sum((item['value'] for _, (_, item) in used), Decimal(0))
+    surplus = assets['value'] if assets else Decimal(0)
+    net = liabilities - surplus
+    claim = max(net, Decimal(0))
+    record = {'value': claim, 'group': group_name,
+              'recognized_liabilities': _json_number(liabilities),
+              'liability_lines': [{'plan': part_name, **_component(concept, item, 'recognized liability, before tax')}
+                                  for part_name, (concept, item) in used],
+              'overfunded_plan_assets': _json_number(surplus),
+              **({'overfunded_plan_assets_line': _component(assets_concept, assets, 'recognized plan assets in excess of obligations')}
+                 if assets else {}),
+              'net_unfunded_before_tax': _json_number(net),
+              **({'net_surplus_not_added': _json_number(-net)} if net < 0 else {}),
+              'tax_treatment': 'before tax', 'basis': PENSION_POLICY,
+              'assumed_absent': not used and not assets,
+              'source_refs': sorted({ref for _, (_, item) in used for ref in item['source_refs']} |
+                                    set(assets['source_refs'] if assets else []))}
+    return record
+
+
+def _claim_components(pick, preferred_in_shares, conflicts):
+    """Noncontrolling interests, preferred stock and benefit obligations at carrying value on the date."""
+    components, looked_for = {}, []
+    concept, item = _first_reported(pick, NONCONTROLLING, 'noncontrolling interests')
+    if item:
+        components['noncontrolling_interests'] = _component(concept, item, 'reported carrying value')
+    else:
+        # Only a fallback: restated equity totals leave it underived rather than stopping the bridge.
+        derivation_conflicts = []
+        total, parent = (pick('us-gaap:' + name, 'equity ' + name, derivation_conflicts) for name in TOTAL_EQUITY)
+        if total and parent and total['value'] >= parent['value'] and not derivation_conflicts:
+            components['noncontrolling_interests'] = {
+                'value': _json_number(total['value'] - parent['value']), 'concept': None,
+                'basis': 'derived: total equity including noncontrolling interests less parent stockholders\' equity',
+                'source_refs': sorted(set(total['source_refs']) | set(parent['source_refs'])),
+                'facts': total['facts'] + parent['facts']}
+    concept, item = _first_reported(pick, REDEEMABLE_NONCONTROLLING, 'redeemable noncontrolling interests')
+    if item:
+        components['redeemable_noncontrolling_interests'] = _component(concept, item, 'reported carrying value')
+    concept, item = _first_reported(pick, PREFERRED, 'preferred stock')
+    if item and preferred_in_shares and item['value'] > 0:
+        components['preferred_stock'] = dict(_component(concept, item, 'reported carrying value; counted through the conversion '
+                                                                       'shares in the dilutive increment, so not deducted here'),
+                                             value=0, carrying_value_not_deducted=_json_number(item['value']))
+    elif item:
+        components['preferred_stock'] = _component(concept, item, 'reported carrying value')
+    benefits = _benefit_obligations(pick, conflicts)
+    if not benefits['assumed_absent']:
+        components['defined_benefit_obligations'] = {key: (_json_number(value) if key == 'value' else value)
+                                                     for key, value in benefits.items() if key != 'assumed_absent'}
+    for name, concepts in (('noncontrolling_interests', (*NONCONTROLLING, *TOTAL_EQUITY)),
+                           ('redeemable_noncontrolling_interests', REDEEMABLE_NONCONTROLLING),
+                           ('preferred_stock', PREFERRED),
+                           ('defined_benefit_obligations', tuple(concept for _, parts in BENEFIT_GROUPS for part in parts
+                                                                 for concept in part[1:] if concept) + BENEFIT_ASSETS)):
+        if name not in components:
+            looked_for.append({'line': name, 'value': 0, 'concepts_looked_for': ['us-gaap:' + concept for concept in concepts],
+                               'basis': 'assumption: no concept reported on the date; zero, not a reported fact'})
+    return components, looked_for
+
+
+def _dilution(facts, start, end, outstanding, conflicts):
+    """Dilutive increment of the anchor fiscal year, with its basis, or None on conflict."""
+    found = {}
+    for name, concept in DILUTION.items():
+        items = [item for item in facts if item['concept'] == 'us-gaap:' + concept and item['parsed_start'] == start and
+                 item['parsed_end'] == end and item['unit'] == 'xbrli:shares' and item['value'] >= 0 and
+                 (item.get('fact_origin') != 'sec_companyfacts' or item.get('form') not in {'10-Q', '10-Q/A'})]
+        chosen = _unique(items, name.replace('_', ' ') + ' for the anchor fiscal year', conflicts)
+        if chosen:
+            found[name] = chosen
+    used = []
+    period = {'start_date': start.isoformat(), 'end_date': end.isoformat()}
+    diluted, basic = found.get('diluted_weighted_average'), found.get('basic_weighted_average')
+    record = {'period': period, 'basis': DILUTION_POLICY, 'adjustments': []}
+    if diluted and basic:
+        increment = diluted['value'] - basic['value']
+        if increment < 0:
+            conflicts.append('Reported diluted weighted-average shares are below basic weighted-average shares; '
+                             'no dilutive increment was selected')
+            return None
+        used += [diluted, basic]
+        record.update(diluted_weighted_average=_json_number(diluted['value']),
+                      basic_weighted_average=_json_number(basic['value']), status='reported')
+    elif found.get('basic_and_diluted_weighted_average'):
+        increment = Decimal(0)
+        used.append(found['basic_and_diluted_weighted_average'])
+        record.update(basic_and_diluted_weighted_average=_json_number(found['basic_and_diluted_weighted_average']['value']),
+                      status='reported_basic_equals_diluted')
+    else:
+        increment = Decimal(0)
+        record.update(basis=DILUTION_ABSENCE_POLICY, status='assumed_zero')
+    debt_shares = found.get('debt_conversion_shares')
+    if debt_shares and debt_shares['value'] > 0 and increment > 0:
+        removed = min(debt_shares['value'], increment)
+        increment -= removed
+        used.append(debt_shares)
+        record['adjustments'].append({'reason': 'conversion shares of convertible debt, which net debt already deducts',
+                                      'shares_removed': _json_number(removed),
+                                      'concept': 'us-gaap:' + DILUTION['debt_conversion_shares']})
+    preferred = found.get('preferred_conversion_shares')
+    record['preferred_in_diluted_shares'] = bool(preferred and preferred['value'] > 0 and record.get('status') == 'reported')
+    if record['preferred_in_diluted_shares']:
+        used.append(preferred)
+        record['preferred_conversion_shares'] = _json_number(preferred['value'])
+    if basic and outstanding and increment > 0:
+        ratio = Decimal(str(outstanding)) / basic['value']
+        if not DILUTION_SCALE_BAND[0] <= ratio <= DILUTION_SCALE_BAND[1]:
+            # A split or large issuance after the fiscal year: keep the increment's share of the count.
+            increment = (increment * ratio).to_integral_value()
+            record['adjustments'].append({'reason': 'outstanding shares differ from the fiscal-year basic average by more than '
+                                                    'half, a split or large issuance; the increment is scaled by their ratio',
+                                          'ratio': float(ratio)})
+    record['dilutive_shares'] = increment
+    record['source_refs'] = sorted({ref for item in used for ref in item['source_refs']})
+    record['facts'] = [fact for item in used for fact in item['facts']]
+    return record
 
 
 def canonical_reported_inputs(sources, *, currency=None, as_of=None):
@@ -928,10 +1379,11 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
     facts = [item for item in facts if not item.get('share_class')]
     actuals, refs, dates, bridge, claims_bridge = {}, {}, {}, {}, {}
     operating_reference = None
-    fields = {key: 'unavailable' for key in ('revenue', 'net_debt', 'other_equity_claims', 'shares_outstanding')}
+    fields = {key: 'unavailable' for key in REPORTED_FIELDS}
     if len(entities) > 1:
         conflicts.append('Primary reported facts identify multiple issuers; no reported actuals were pinned')
         facts, class_shares = [], []
+    anchor_period = None
     annual = [item for item in facts if item['concept'] in REVENUE and
               (item.get('fact_origin') != 'sec_companyfacts' or item.get('form') not in {'10-Q', '10-Q/A'}) and item['parsed_start'] and item['parsed_end'] and
               320 <= (item['parsed_end'] - item['parsed_start']).days <= 400 and item['value'] > 0 and
@@ -970,6 +1422,7 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                 revenue = _unique(compatible, 'latest annual revenue', conflicts)
                 if revenue:
                     anchor = latest
+                    anchor_period = (revenue['parsed_start'], revenue['parsed_end'])
                     operating_reference = _operating_reference(facts, revenue['parsed_start'], revenue['parsed_end'],
                                                                currency, revenue['value'], revenue['concept'])
                     actuals['revenue'] = _json_number(revenue['value'])
@@ -977,12 +1430,31 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                     dates['revenue'] = {'start_date': revenue['start_date'], 'end_date': revenue['end_date'], 'basis': revenue_basis}
                     fields['revenue'] = 'pinned'
     if anchor:
-        def pick(concept, name):
+        def pick(concept, name, sink=None, exclude=frozenset()):
             return _unique([item for item in facts if item['concept'] == concept and item['parsed_instant'] == anchor and
-                            item['unit'] == 'iso4217:' + currency and item['value'] >= 0], name, conflicts)
+                            item['unit'] == 'iso4217:' + currency and item['value'] >= 0 and id(item) not in exclude],
+                           name, conflicts if sink is None else sink)
         cash_conflicts_before = len(conflicts)
-        cash_items = {name: pick('us-gaap:' + concept, name) for name, concept in CASH.items()}
+        # The available-for-sale total is a fallback used only when no other
+        # investment category is selected. Its own conflict then stops the
+        # bridge; otherwise it is disclosed and does not (Uber restated it by
+        # $1 million in later 10-Q comparatives while selecting marketable securities).
+        afs_conflicts = []
+        cash_items = {name: pick('us-gaap:' + concept, name, afs_conflicts if name == 'available_for_sale_debt_securities' else None)
+                      for name, concept in CASH.items()}
+        # Restricted cash only decides whether the fallback applies; a conflicting
+        # restricted-cash amount counts as reported.
+        restricted_conflicts = []
+        restricted = [concept for concept in RESTRICTED_CASH
+                      if (found := pick('us-gaap:' + concept, 'restricted cash ' + concept, restricted_conflicts)) and
+                      found['value'] > 0]
+        if not cash_items['cash_and_cash_equivalents'] and not restricted and not restricted_conflicts:
+            cash_items['cash_including_restricted_cash'] = pick('us-gaap:' + CASH_INCLUDING_RESTRICTED,
+                                                                'cash including restricted cash')
         cash = _cash_selection(cash_items, conflicts)
+        if cash and afs_conflicts:
+            if set(cash) <= {'cash_and_cash_equivalents', 'cash_including_restricted_cash'}:
+                conflicts.extend(afs_conflicts)
         if len(conflicts) != cash_conflicts_before:
             cash = None
         lease_conflicts_before = len(conflicts)
@@ -994,7 +1466,19 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
             lease_parts = None
         lease['reconciled'] = lease_parts
         debt_conflicts_before = len(conflicts)
-        debt_items = {name: pick('us-gaap:' + concept, name) for name, concept in DEBT.items()}
+        # Issuers report the unamortized amount with either sign; only its
+        # magnitude enters the exact reconciliation.
+        reconciliation_items = {
+            name: _unique([{**item, 'value': abs(item['value'])} for item in facts
+                           if item['concept'] == 'us-gaap:' + concept and item['parsed_instant'] == anchor and
+                           item['unit'] == 'iso4217:' + currency], name, [])
+            for name, concept in DEBT_RECONCILIATION.items()}
+        carrying_parts = [pick('us-gaap:' + DEBT[key], key, []) for key in ('current_term_debt', 'noncurrent_term_debt')]
+        gross_ids, gross_observations = _gross_term_observations(
+            facts, anchor, currency, reconciliation_items,
+            sum(item['value'] for item in carrying_parts) if all(carrying_parts) else None)
+        debt_items = {name: pick('us-gaap:' + concept, name, exclude=gross_ids if name == 'term_debt' else frozenset())
+                      for name, concept in DEBT.items()}
         if not debt_items['short_term_borrowings']:
             debt_items['short_term_borrowings'] = _classified_debt(
                 sources, debt_items, anchor, 'short_term_financing_total')
@@ -1004,15 +1488,9 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                 conflicts.append('Primary classified total debt conflicts with the reported total financial debt')
             else:
                 debt_items['financial_debt'] = classified_total
-        # Issuers report the unamortized amount with either sign; only its
-        # magnitude enters the exact reconciliation.
-        reconciliation_items = {
-            name: _unique([{**item, 'value': abs(item['value'])} for item in facts
-                           if item['concept'] == 'us-gaap:' + concept and item['parsed_instant'] == anchor and
-                           item['unit'] == 'iso4217:' + currency], name, [])
-            for name, concept in DEBT_RECONCILIATION.items()}
         debt_items, term_reconciliation = _reconcile_gross_term_debt(debt_items, reconciliation_items, lease)
         debt_items, excluded_totals = _set_aside_narrow_totals(debt_items, lease)
+        debt_items, short_line_reconciliation = _short_term_line_is_current_debt(debt_items, lease)
         # The absence assumptions need an entity-wide record that attests it
         # looked for every modelled financing concept on this exact date.
         scan_attested = anchor.isoformat() in scanned_dates
@@ -1039,7 +1517,7 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                       'finance_leases_included_in_net_debt': leases_in_debt,
                       'cash_classification_policy': CASH_POLICY,
                       'cash_coverage': {'basis': 'selected directly reported assets, not an assertion that omitted investments are zero',
-                                        'excluded_unclassified_investments': 'LongTermInvestments and other investments without a selected marketable classification',
+                                        'excluded_unclassified_investments': 'LongTermInvestments and other investments without a selected marketable classification; see nonoperating_assets_bridge',
                                         'unselected_reported_categories': [name for name in CASH if cash_items[name] and name not in cash],
                                         'missing_investment_categories': [name for name in CASH if not cash_items[name]]},
                       'explanation': 'Exact sum of disjoint reported debt components minus selected cash and investments. Totals replace their components; no rounding residual or second cash add-back is permitted.',
@@ -1061,14 +1539,30 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                     'reported': 'A reported complete debt total or short-term borrowing total establishes short-term financing.',
                     'manual_primary_review': 'A reviewed primary-disclosure classification establishes short-term financing.',
                     'reported_current_debt_identity': 'Reported current debt equals reported current long-term debt, so short-term borrowings are zero by reported arithmetic.',
+                    'reported_current_debt_less_current_maturities': 'The issuer\'s short-term borrowings line equals its reported current debt, so short-term borrowings are that line less reported current long-term debt and current finance leases, by reported arithmetic.',
                     'identified_categories_house_assumption': SHORT_TERM_POLICY}[short_basis],
                 **({'scanned_concepts': sorted(FINANCING_ABSENCE_SCAN)} if assumed else {})}
             if term_reconciliation and not any(name in debt for name in ('term_debt', 'financial_debt', 'total_debt_and_finance_leases')):
                 bridge['long_term_debt_reconciliation'] = term_reconciliation
             if excluded_totals:
                 bridge['excluded_scope_inconsistent_totals'] = excluded_totals
+            if gross_observations:
+                bridge['long_term_debt_observations_set_aside'] = gross_observations
+            if short_line_reconciliation and 'short_term_borrowings' in debt:
+                bridge['current_debt_reconciliation'] = short_line_reconciliation
+            if afs_conflicts and 'available_for_sale_debt_securities' not in cash:
+                bridge['cash_coverage']['unused_conflicting_categories'] = {
+                    'available_for_sale_debt_securities': afs_conflicts,
+                    'basis': 'The available-for-sale total is a fallback for issuers that report no other investment '
+                             'category; another category is selected here, so its conflicting observations are not used.'}
+            restricted_fallback = 'cash_including_restricted_cash' in cash
+            if restricted_fallback:
+                bridge['cash_coverage']['restricted_cash_fallback'] = {
+                    'basis': RESTRICTED_CASH_POLICY,
+                    'restricted_cash_concepts_looked_for': ['us-gaap:' + concept for concept in RESTRICTED_CASH]}
             principal = bool((bridge.get('long_term_debt_reconciliation') or {}).get('policy'))
-            fields['net_debt'] = 'pinned_with_disclosed_assumption' if assumed or available_for_sale or principal else 'pinned'
+            fields['net_debt'] = ('pinned_with_disclosed_assumption'
+                                  if assumed or available_for_sale or principal or restricted_fallback else 'pinned')
         else:
             if not cash:
                 skipped.append('Net-debt cash selection unavailable or conflicting on the annual balance-sheet date')
@@ -1140,6 +1634,62 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
     else:
         skipped.append('Outstanding shares are not reported as one entity-wide amount (for example, only by share class); '
                        'supply a reviewed primary total')
+    nonoperating_bridge, share_bridge = {}, {}
+    if anchor:
+        dilution = _dilution(facts, *anchor_period, actuals.get('shares_outstanding'), conflicts)
+        if dilution is not None:
+            assumed_zero = dilution['status'] == 'assumed_zero'
+            scaled = any('ratio' in entry for entry in dilution['adjustments'])
+            actuals['dilutive_shares'] = _json_number(dilution['dilutive_shares'])
+            refs['dilutive_shares'] = dilution['source_refs'] or [
+                'assumption: no weighted-average share count is reported for the anchor fiscal year; '
+                'dilutive increment zero, not a reported fact']
+            dates['dilutive_shares'] = {**dilution['period'],
+                                        'basis': 'anchor fiscal year diluted less basic weighted-average shares, added to the '
+                                                 'latest outstanding shares'}
+            fields['dilutive_shares'] = 'pinned_with_disclosed_assumption' if assumed_zero or scaled else 'pinned'
+            share_bridge = {key: value for key, value in dilution.items() if key not in ('dilutive_shares', 'source_refs')}
+            share_bridge.update(dilutive_shares=actuals['dilutive_shares'], source_refs=refs['dilutive_shares'])
+            if 'shares_outstanding' in actuals:
+                share_bridge.update(shares_outstanding=actuals['shares_outstanding'],
+                                    shares_outstanding_as_of=dates['shares_outstanding']['instant'],
+                                    diluted_shares=_json_number(Decimal(str(actuals['shares_outstanding'])) +
+                                                                dilution['dilutive_shares']))
+        if 'net_debt' in actuals:
+            record = _nonoperating_assets(pick, cash)
+            components = record['components']
+            actuals['nonoperating_assets'] = _json_number(record['nonoperating_assets'])
+            # With nothing added, the evidence is the reported lines left out (already in cash, or within another line).
+            refs['nonoperating_assets'] = (
+                sorted({ref for item in components.values() for ref in item['source_refs']}) or
+                sorted({ref for entry in record['not_added'] for ref in entry.get('source_refs', [])}) or
+                ['assumption: no non-operating investment concept is reported on the date; zero, not a reported fact'])
+            dates['nonoperating_assets'] = {'instant': anchor.isoformat(),
+                                            'basis': 'reported carrying value of non-operating investments not selected as cash, '
+                                                     'on the balance-sheet date of net debt'}
+            fields['nonoperating_assets'] = 'pinned_with_disclosed_assumption' if record['assumed_absent'] else 'pinned'
+            nonoperating_bridge = {'currency': currency, 'as_of': anchor.isoformat(),
+                                   **{key: value for key, value in record.items() if key != 'assumed_absent'},
+                                   'nonoperating_assets': actuals['nonoperating_assets'],
+                                   'measurement': 'carrying value; quoted market values are not used'}
+        if 'other_equity_claims' in actuals:
+            components, absent = _claim_components(
+                pick, bool(dilution and dilution.get('preferred_in_diluted_shares')), conflicts)
+            lease_claim = Decimal(str(actuals['other_equity_claims']))
+            total = lease_claim + sum((Decimal(str(item['value'])) for item in components.values()), Decimal(0))
+            actuals['other_equity_claims'] = _json_number(total)
+            reported = sorted({ref for ref in refs['other_equity_claims'] if not ref.startswith('assumption:')} |
+                              {ref for item in components.values() for ref in item['source_refs']})
+            assumptions = [ref for ref in refs['other_equity_claims'] if ref.startswith('assumption:')]
+            if absent:
+                assumptions.append('assumption: ' + ', '.join(entry['line'].replace('_', ' ') for entry in absent) +
+                                   ' not reported on the date; zero, not a reported fact')
+            refs['other_equity_claims'] = reported + assumptions
+            dates['other_equity_claims']['basis'] += ('; noncontrolling interests, preferred stock and net unfunded '
+                                                      'defined-benefit obligations at carrying value, before tax')
+            claims_bridge.update(finance_lease_claim=_json_number(lease_claim), components=components,
+                                 components_assumed_zero=absent, component_policy=CLAIMS_COMPONENT_POLICY,
+                                 other_equity_claims=actuals['other_equity_claims'])
     if currency is None:
         market_currencies = {source['data'].get('currency') for source in sources
                              if isinstance(source, dict) and source.get('kind') == 'market_snapshot' and
@@ -1149,12 +1699,16 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
         if len(market_currencies) == 1:
             currency = next(iter(market_currencies))
     quote = _quote(sources, currency, cutoff) if currency else None
+    complete = all(field in actuals for field in REPORTED_FIELDS)
     output = {'actuals': actuals, 'currency': currency, 'source_refs': refs, 'input_dates': dates,
               'net_debt_bridge': bridge, 'other_claims_bridge': claims_bridge,
-              'coverage': {'status': ('conflicted' if conflicts else 'complete' if len(actuals) == 4 else 'partial' if actuals else 'unavailable'),
-                           'complete': len(actuals) == 4 and not conflicts, 'fields': fields,
+              'nonoperating_assets_bridge': nonoperating_bridge, 'share_count_bridge': share_bridge,
+              'coverage': {'status': ('conflicted' if conflicts else 'complete' if complete else 'partial' if actuals else 'unavailable'),
+                           'complete': complete and not conflicts, 'fields': fields,
                            'recognized_primary_source_ids': sorted(source_ids),
-                           'missing_fields': [field for field in fields if field not in actuals],
+                           # A bridge line is listed only once its own prerequisite is pinned.
+                           'missing_fields': [field for field in fields if field not in actuals and
+                                              (field not in FIELD_PREREQUISITES or FIELD_PREREQUISITES[field] in actuals)],
                            'conflicts': conflicts, 'notes': sorted(set(skipped))},
               'notes': [CASH_POLICY, CLAIMS_POLICY, LEASE_POLICY,
                         *([SHORT_TERM_POLICY] if (bridge.get('short_term_financing') or {}).get('basis') ==
@@ -1162,6 +1716,10 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                         *([AFS_POLICY] if (bridge.get('cash_coverage') or {}).get('available_for_sale_fallback') else []),
                         *([PRINCIPAL_POLICY] if (bridge.get('long_term_debt_reconciliation') or {}).get('policy') else []),
                         *([LEASE_ABSENCE_POLICY] if claims_bridge.get('finance_lease_amount_basis') == LEASE_ABSENCE_POLICY else []),
+                        *([RESTRICTED_CASH_POLICY] if (bridge.get('cash_coverage') or {}).get('restricted_cash_fallback') else []),
+                        *([nonoperating_bridge['basis']] if nonoperating_bridge else []),
+                        *([CLAIMS_COMPONENT_POLICY, PENSION_POLICY] if claims_bridge.get('components') is not None else []),
+                        *([share_bridge['basis']] if share_bridge else []),
                         'Reported shares can postdate the balance sheet and predate the quote; the dates remain distinct.',
                         'Missing primary facts are not zero; unsupported or ambiguous inputs remain unpinned.']}
     if operating_reference and operating_reference['lines']:
@@ -1200,7 +1758,7 @@ def pin_reported_inputs(plan, sources):
     for field in canonical['actuals']:
         refs[field] = canonical['source_refs'][field]
         dates[field] = canonical['input_dates'][field]
-    for name in ('net_debt_bridge', 'other_claims_bridge'):
+    for name in ('net_debt_bridge', 'other_claims_bridge', 'nonoperating_assets_bridge', 'share_count_bridge'):
         if canonical[name]:
             corrected[name] = canonical[name]
     if 'market_price' in canonical:
