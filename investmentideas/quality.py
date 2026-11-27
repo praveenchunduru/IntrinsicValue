@@ -728,7 +728,9 @@ def prereview_checks(memo, sources, computed=()):
         findings.append({'id': identifier, 'severity': severity, 'issue': issue, 'fix': fix, 'source_refs': [],
                          'items': [{'figure': figure, 'sentence': text} for figure, text in items][:25]})
     if company_facts:
-        add('unverified-company-fact', 'major', f'{len(company_facts)} sentences state a company fact or figure, or '
+        # Minor: the fix call still removes these before the paid review, but a false alarm
+        # (2 of about 40 flagged sentences in the saved runs) can never hold up approval alone.
+        add('unverified-company-fact', 'minor', f'{len(company_facts)} sentences state a company fact or figure, or '
             'compare the house forecast with one, whose only support is an unverified web excerpt (rule M1). An '
             '"unverified" label does not make a company fact acceptable.', UNVERIFIED_FACT_FIX,
             [('', text) for _, text in company_facts])

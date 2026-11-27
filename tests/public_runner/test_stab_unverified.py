@@ -91,11 +91,12 @@ class UnverifiedCompanyFactTests(unittest.TestCase):
             with self.subTest(sentence=sentence[:60]):
                 self.assertEqual(flagged(sentence), [])
 
-    def test_it_is_a_major_free_check_with_the_fix(self):
+    def test_it_is_a_minor_free_check_with_the_fix(self):
         sources = [{'id': ref, 'source_tier': tier} for ref, tier in TIERS.items()]
         memo = ('## 1. Valuation conclusion\n\n' + REJECTED[0] + ' ' + ACCEPTED[0] + '\n')
         finding = next(item for item in quality.prereview_checks(memo, sources) if item['id'] == 'unverified-company-fact')
-        self.assertEqual(finding['severity'], 'major')
+        # Minor: sent to the fix call before the review, never a reason to withhold approval alone.
+        self.assertEqual(finding['severity'], 'minor')
         self.assertEqual([item['sentence'] for item in finding['items']], [REJECTED[0]])
         self.assertIn('Never keep it as a company fact with an "unverified" label', finding['fix'])
 
