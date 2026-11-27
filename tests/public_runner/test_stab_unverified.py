@@ -110,7 +110,7 @@ class UnverifiedCompanyFactTests(unittest.TestCase):
         self.assertEqual(flagged(right), [])
         # The section brief no longer asks for the comparison the check flags.
         self.assertNotIn('close to consensus, say so', pipeline.SECTIONS)
-        self.assertIn('do not compare the house forecast\nwith them', pipeline.SECTIONS)
+        # Since 2026-11-27 the shared rule (in the rubric) alone bars the comparison.
 
 
 def implied(solved=.033, required=.087):
@@ -154,7 +154,7 @@ class DiscountRateRowTests(unittest.TestCase):
             self.skipTest('INTRINSICVALUE_SAVED_RUNS names no saved run with an implied return')
 
     def test_sections_and_rubric_point_to_the_table(self):
-        self.assertIn('the flat discount\nrate among', pipeline.SECTIONS)
+        self.assertIn('the flat discount rate among', ' '.join(pipeline.SECTIONS.split()))
         self.assertIn('the flat discount rate included', quality.RUBRIC)
 
 

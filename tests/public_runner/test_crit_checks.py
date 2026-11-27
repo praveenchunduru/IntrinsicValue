@@ -549,8 +549,9 @@ class PipelineReviewFixTests(unittest.TestCase):
         self.assertTrue(quality._assigns_gap_cause('Under the same conventions the index benchmark is worth 0.78 of its '
                                                    'price, so the difference between value and price is largely explained '
                                                    'by the house conventions.'))
-        self.assertIn('it explains no part of the company\'s difference', pipeline.SECTIONS)
-        self.assertIn('A convention step is a row of the convention tables', pipeline.SECTIONS)
+        sections = ' '.join(pipeline.SECTIONS.split())
+        self.assertIn('it explains no part of the company\'s difference', sections)
+        self.assertIn('count inputs from it and from nowhere else', sections)
 
     def test_the_largest_horizon_and_rate_regime_rows_print_as_exhibits(self):
         from tests.public_runner.test_crit_exhibits import history_plan

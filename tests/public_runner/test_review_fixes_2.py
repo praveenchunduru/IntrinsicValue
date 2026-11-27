@@ -625,12 +625,16 @@ class GapAttributionTests(unittest.TestCase):
     def test_sections_and_review_use_the_computed_attribution(self):
         # Changed 2026-11-27: the first-page table is named as the full account, the discount rate included.
         # Changed 2026-11-27 (final Walmart run): a bounded search proves nothing past its range.
-        self.assertIn('which inputs alone reach the price within the ranges tested, the flat discount\nrate among',
-                      pipeline.SECTIONS)
-        self.assertIn('"What the price\nneeds"', pipeline.SECTIONS)
-        self.assertIn('Assign the difference between value and price no cause', pipeline.SECTIONS)
-        self.assertNotIn('Say plainly whether the', pipeline.SECTIONS)
-        self.assertIn('Scenario drivers are house assumptions', pipeline.SECTIONS)
+        # Changed 2026-11-27 (readability review): the In brief and section 1 now say why the value differs,
+        # as what our forecast assumes against what the price needs, and count inputs from the table only.
+        sections = ' '.join(pipeline.SECTIONS.split())
+        self.assertIn('which inputs alone reach the price within the ranges tested, the flat discount rate among',
+                      sections)
+        self.assertIn('"What the price needs"', sections)
+        self.assertIn('what our forecast assumes for the input on which it and the price differ most, against what '
+                      'the price needs', sections)
+        self.assertNotIn('Say plainly whether the', sections)
+        self.assertIn('Scenario drivers are our assumptions', sections)
 
 
 class TracedFigureRefutationTests(unittest.TestCase):
