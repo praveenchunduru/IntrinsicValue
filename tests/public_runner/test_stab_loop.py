@@ -35,9 +35,10 @@ class LoopTransport(FullContractTransport):
     'forecast' says only a forecast change can answer F1, 'fail_once' interrupts the first edit call.
     """
 
-    def __init__(self, *, reviews, edit='anchor', unchanged=False, **kwargs):
+    def __init__(self, *, reviews, edit='anchor', unchanged=False, response=None, **kwargs):
         super().__init__(**kwargs)
         self.scripted, self.edit, self.research, self.unchanged = reviews, edit, 0, unchanged
+        self.response = response  # 'label' or 'rationale': return the proposal shown with only that text changed
 
     def reply(self, payload, content):
         prompt_tokens = math.ceil(len((core.SYSTEM + full_text(payload)).encode()) / 3.05)
@@ -60,12 +61,26 @@ class LoopTransport(FullContractTransport):
                 answer = {'edits': [], 'forecast': [{'finding': 'F1', 'reason': 'Only a lower forecast answers it'}]}
             elif self.edit == 'forecast':
                 answer = {'edits': [], 'forecast': [{'finding': 'F1', 'reason': 'Only a lower forecast answers it'}]}
+            elif self.edit == 'anchor_flag_F9':
+                answer = {'edits': [{'finding': 'F1', 'quote': self.excerpt,
+                                     'replacement': self.excerpt + ' The dated monitoring condition is a house judgment.'}],
+                          'forecast': [{'finding': 'F9', 'reason': 'Only the note generator can change the method note'}]}
             elif self.edit == 'miss':
                 answer = {'edits': [{'finding': 'F1', 'quote': 'Text that is not in the memo.', 'replacement': 'x'}]}
             else:
                 answer = {'edits': [{'finding': 'F1', 'quote': self.excerpt,
                                      'replacement': self.excerpt + ' The dated monitoring condition is a house judgment.'}]}
             return self.reply(payload, json.dumps(answer))
+        if prompt.startswith('Address these review findings') and self.response:
+            self.requests.append(copy.deepcopy(payload))
+            view = json.loads(prompt.split('\nCurrent forecast proposal:\n', 1)[1].split('\nLocked actuals', 1)[0])
+            self.shown_view = copy.deepcopy(view)
+            if self.response == 'label':
+                view['assumptions_label'] = 'Label only; forecasts unchanged.'
+            else:
+                view['scenario_rationales'] = dict(view.get('scenario_rationales') or {}, base='A reworded base rationale [S4].')
+            view['finding_dispositions'] = {'F1': 'accepted: wording'}
+            return self.reply(payload, json.dumps(view))
         if prompt.startswith('Address these review findings') and self.unchanged:
             self.requests.append(copy.deepcopy(payload))
             return self.reply(payload, json.dumps({'unchanged': True, 'reason': 'The forecast is supported [S4].',
@@ -78,6 +93,11 @@ class LoopTransport(FullContractTransport):
             def scripted(item):
                 if item == 'prose':
                     return major(self.excerpt)
+                if item == 'computed_F9':  # a method-note style finding on computed text
+                    return dict(major(table, rule='M4', identifier='F9'), issue='The method note overstates the rule',
+                                fix='Limit the note to the house case')
+                if item == 'prose_input':  # quotes the prose and asks for a forecast change
+                    return dict(major(self.excerpt), fix='Raise base growth')
                 if item == 'computed':  # quotes a computed table row and names no forecast input
                     return dict(major(table, rule='M4'), issue='The row contradicts the convention panel',
                                 fix='Reconcile the row with the panel')
@@ -198,11 +218,11 @@ class ForecastCriterionTests(unittest.TestCase):
         self.assertEqual(pipeline._forecast_findings([finding], self.MEMO, (), answered), [])
         self.assertEqual(pipeline._computed_text_findings([finding], self.MEMO, (), answered), ['F1'])
         state = {'revision_base': 0, 'revision_rounds': [
-            {'round': 1, 'cycle': 0, 'forecast_response': 'unchanged', 'valuation_sha256': 'v1',
+            {'round': 1, 'cycle': 0, 'forecast_response': 'unchanged', 'inputs_fingerprint': 'v1',
              'answered': [list(pipeline._finding_key(finding))]},
-            {'round': 2, 'cycle': 0, 'forecast_response': 'corrected', 'valuation_sha256': 'v1', 'answered': [['M1', 'x']]}]}
+            {'round': 2, 'cycle': 0, 'forecast_response': 'corrected', 'inputs_fingerprint': 'v1', 'answered': [['M1', 'x']]}]}
         self.assertEqual(pipeline._answered_forecast(state, 'v1'), answered)
-        self.assertEqual(pipeline._answered_forecast(state, 'v2'), set())  # a new valuation reopens it
+        self.assertEqual(pipeline._answered_forecast(state, 'v2'), set())  # new forecast inputs reopen it
 
     def test_forecast_input_wording(self):
         named = ['Raise base growth', 'The base case margins are too high', 'Lower the bull tax rate',
@@ -221,6 +241,33 @@ class ForecastCriterionTests(unittest.TestCase):
         self.assertEqual([item[0] for item in pipeline._forecast_findings(findings, self.MEMO, ids)],
                          ['valuation-model-missing'])
         self.assertEqual(pipeline._edit_required(findings, self.MEMO, ids), ['citation-unresolved', 'valuation-model-missing'])
+
+
+class PythonOwnedFieldTests(unittest.TestCase):
+    def test_the_forecast_view_drops_python_fields_and_a_response_cannot_set_them(self):
+        fixture = LoopTransport(reviews=[])
+        with tempfile.TemporaryDirectory() as directory:
+            _, state = run_loop(directory, fixture)
+        plan = state['plan']
+        view = pipeline._forecast_view(plan)
+        self.assertNotIn('assumptions_label', view)
+        self.assertNotIn('valuation_timing', view)
+        for key in pipeline.PYTHON_OWNED_PLAN_FIELDS['discount_rate']:
+            self.assertNotIn(key, view.get('discount_rate') or {})
+        for scenario in view['scenarios'].values():
+            for key in pipeline.PYTHON_OWNED_PLAN_FIELDS['scenario']:
+                self.assertNotIn(key, scenario)
+        response = copy.deepcopy(view)
+        response['assumptions_label'] = 'Rewritten by the model'
+        response['scenarios']['base']['probability'] = 0.9
+        restored = pipeline._restore_python_fields(response, plan, view)
+        self.assertEqual(restored['assumptions_label'], plan['assumptions_label'])
+        self.assertEqual(restored['scenarios']['base']['probability'], plan['scenarios']['base']['probability'])
+        # Unchanged expense shares bring back the plan's own expenses, not ones rebuilt from rounded shares.
+        for name, scenario in (restored.get('operating_model') or {}).get('scenarios', {}).items():
+            if 'expenses' in plan['operating_model']['scenarios'][name]:
+                self.assertEqual(scenario['expenses'], plan['operating_model']['scenarios'][name]['expenses'])
+                self.assertNotIn('expense_shares', scenario)
 
 
 class EditApplicationTests(unittest.TestCase):
@@ -355,13 +402,17 @@ class LoopFlowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             folder, state = run_loop(directory, fixture)
             memo = (folder / 'memo.md').read_text()
+            saved = json.loads((folder / 'computed-text-findings.json').read_text())
         sequence = stages(state)
         self.assertEqual(sequence[-2:], ['review_0', 'finding_check_0'])
         self.assertEqual(state['quality_status'], 'unresolved_findings')
         self.assertFalse(state['complete'])
         self.assertEqual(state['computed_text_findings']['ids'], ['F1'])
-        self.assertIn('quote computed text that no revision stage can change', memo)
-        self.assertIn('The row contradicts the convention panel', memo)  # the finding stays visible
+        status = memo.split('## Review status', 1)[1]
+        heading = status.index(pipeline.COMPUTED_TEXT_HEADING)
+        self.assertGreater(status.index('The row contradicts the convention panel'), heading)  # listed, under its line
+        self.assertEqual([f['id'] for f in saved['findings']], ['F1'])
+        self.assertEqual(saved['findings'][0]['rule'], 'M4')
 
     def test_a_forecast_kept_for_a_finding_is_not_reopened_when_it_returns(self):
         fixture = LoopTransport(reviews=[['prose', 'computed_input'], ['computed_input'], ['computed_input']],
@@ -384,6 +435,56 @@ class LoopFlowTests(unittest.TestCase):
         self.assertNotIn('prose_edits_1', sequence)
         self.assertEqual(state['revision_rounds'][-1]['revision'], 'none')
         self.assertEqual(state['quality_status'], 'unresolved_findings')
+
+    def test_the_edit_call_cannot_reopen_the_forecast_for_computed_text(self):
+        fixture = LoopTransport(reviews=[['prose', 'computed_F9']], edit='anchor_flag_F9')
+        with tempfile.TemporaryDirectory() as directory:
+            folder, state = run_loop(directory, fixture)
+            saved = json.loads((folder / 'computed-text-findings.json').read_text())
+            memo = (folder / 'memo.md').read_text()
+        sequence = stages(state)
+        self.assertEqual(sequence[sequence.index('targeted_research_1'):], ['targeted_research_1', 'prose_edits_1', 'review_1'])
+        self.assertNotIn('model_response_1', sequence)
+        self.assertEqual(state['revision_rounds'][0]['revision'], 'edits')
+        self.assertTrue(state['complete'])  # review 1 passes; the computed-text record is cleared
+        self.assertEqual(saved['findings'], [])
+        self.assertNotIn(pipeline.COMPUTED_TEXT_HEADING, memo)
+
+    def test_a_label_only_response_is_not_a_plan_change(self):
+        fixture = LoopTransport(reviews=[['prose_input']], response='label')
+        with tempfile.TemporaryDirectory() as directory:
+            folder, state = run_loop(directory, fixture)
+            response = json.loads((folder / 'reviews' / 'model-response-1.json').read_text())
+        sequence = stages(state)
+        self.assertEqual(sequence[sequence.index('targeted_research_1'):],
+                         ['targeted_research_1', 'model_response_1', 'prose_edits_1', 'review_1'])
+        self.assertNotIn('revise_1', sequence)
+        self.assertEqual(state['revision_rounds'][0]['forecast_response'], 'unchanged')
+        self.assertTrue(response['unchanged'])
+        self.assertNotIn('assumptions_label', fixture.shown_view)
+        reviewer = [row['cached_prefix_sha256'] for row in state['ledger']
+                    if row['model'] == core.REVIEWERS['balanced'] and 'cached_prefix_sha256' in row]
+        self.assertEqual(len(set(reviewer)), 1)  # the reviewer's cached valuation is byte-identical
+
+    def test_a_rationale_only_response_rerenders_the_text_and_edits_the_prose(self):
+        fixture = LoopTransport(reviews=[['prose_input']], response='rationale')
+        with tempfile.TemporaryDirectory() as directory:
+            folder, state = run_loop(directory, fixture)
+            saved = json.loads((folder / 'assumptions.json').read_text())
+        sequence = stages(state)
+        self.assertNotIn('revise_1', sequence)
+        self.assertIn('prose_edits_1', sequence)
+        self.assertEqual(state['revision_rounds'][0]['forecast_response'], 'text_only')
+        self.assertEqual(saved['scenario_rationales']['base'], 'A reworded base rationale [S4].')
+        # The forecast inputs are the same, so the values are the same.
+        first = next(r for r in state['review_history'] if r['iteration'] == 0)
+        self.assertEqual(state['review_history'][-1]['iteration'], 1)
+        self.assertEqual(first['manifest']['valuation_sha256'], pipeline._digest(state['valuation']))
+        # The plan text is part of the reviewer's cached valuation block, so that block changes once.
+        reviewer = [row['cached_prefix_sha256'] for row in state['ledger']
+                    if row['model'] == core.REVIEWERS['balanced'] and 'cached_prefix_sha256' in row]
+        self.assertEqual(len(set(reviewer)), 2)
+        self.assertEqual(pipeline._inputs_fingerprint(state['plan']), state['revision_rounds'][0]['inputs_fingerprint'])
 
     def test_the_loop_stops_after_two_rounds_with_findings_open(self):
         fixture = LoopTransport(reviews=[['prose'], ['prose'], ['prose']])

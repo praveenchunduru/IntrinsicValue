@@ -411,22 +411,101 @@ def _computed_text_findings(findings, memo, python_ids=(), answered=()):
             (not _names_forecast_input(finding) or _finding_key(finding) in answered)]
 
 
-def _answered_forecast(state, valuation_sha256):
-    """(rule, quote) of findings the forecast response answered "unchanged" on this valuation in this cycle.
+def _inputs_fingerprint(plan):
+    """The forecast-input digest of a plan (consensus.fingerprint), or None without one."""
+    return consensus.fingerprint(plan) if isinstance(plan,dict) and not plan.get('unavailable') else None
+
+
+def _answered_forecast(state, inputs_fingerprint):
+    """(rule, quote) of findings answered "unchanged" (or with text only) on these forecast inputs in this cycle.
 
     Carried into later rounds like ``_carried_refutations``: a forecast that was
     kept for a finding is not reopened when the next review raises it again.
     """
     answered=set()
     for entry in state.get('revision_rounds',[]):
-        if (entry.get('cycle')==state.get('revision_base',0) and entry.get('forecast_response')=='unchanged' and
-                entry.get('valuation_sha256')==valuation_sha256):
+        if (entry.get('cycle')==state.get('revision_base',0) and entry.get('forecast_response') in ('unchanged','text_only') and
+                entry.get('inputs_fingerprint')==inputs_fingerprint):
             answered|={tuple(item) for item in entry.get('answered',[]) if isinstance(item,list) and len(item)==2}
     return answered
 
 
-COMPUTED_TEXT_NOTE = ('These blockers or majors quote computed text that no revision stage can change, so the review '
-                      'loop stopped with them open: {ids}.')
+COMPUTED_TEXT_HEADING = 'Findings on computed text (no revision stage can change it):'
+
+
+# Plan fields Python writes or rewrites at lock. They are left out of the proposal the
+# forecast response edits, and a response that returns them is overridden with the
+# current plan's values. A live Microsoft run (2026-11-27) "corrected" the plan by
+# rewriting assumptions_label, paid for a full rewrite and a reviewer cache write, and
+# changed nothing the lock would keep.
+#   assumptions_label: rebuilt by _lock_plan from the bridges and conventions, always.
+#   valuation_timing: set by the market conventions.
+#   discount_rate: the paired Treasury rate and premium, the glide (term_structure,
+#     terminal_unlevered_beta), and the debt, finance-lease and market-equity records
+#     copied from the reported bridges.
+#   each scenario: the house probability, the terminal return and its basis, and the
+#     per-year sales-to-capital and R&D-share paths and R&D basis.
+PYTHON_OWNED_PLAN_FIELDS = {'plan': ('assumptions_label',), 'plan_conventions': ('valuation_timing',),
+                            'discount_rate': ('risk_free_rate','equity_risk_premium','term_structure','terminal_unlevered_beta',
+                                              'financial_debt','finance_lease_debt','market_equity'),
+                            'scenario': ('probability','terminal_roic','terminal_roic_basis','sales_to_capital_path',
+                                         'rnd_share_path','rnd_basis')}
+# Model-owned plan text and diagnostics: they change computed sections but no forecast input.
+MODEL_TEXT_FIELDS = ('scenario_rationales','monitoring','margin_continuity_basis','capital_efficiency_basis',
+                     'calibration_comparisons','counterfactuals','repurchase_tests')
+PROPOSAL_FIELDS = ('assumptions_label','scenario_rationales','scenarios','operating_model','discount_rate','monitoring',
+                   'counterfactuals','calibration_comparisons','forecast_periods','repurchase_tests',
+                   'margin_continuity_basis','capital_efficiency_basis','valuation_timing')
+
+
+def _forecast_view(plan, conventions=True):
+    """The proposal the forecast response edits: the model-owned fields, without Python's own text and pins."""
+    view=_proposal_view({key:plan[key] for key in PROPOSAL_FIELDS if key in plan})
+    view.pop('assumptions_label',None)
+    if conventions:
+        for key in PYTHON_OWNED_PLAN_FIELDS['plan_conventions']:
+            view.pop(key,None)
+        if isinstance(view.get('discount_rate'),dict):
+            for key in PYTHON_OWNED_PLAN_FIELDS['discount_rate']:
+                view['discount_rate'].pop(key,None)
+        for scenario in (view.get('scenarios') or {}).values():
+            if isinstance(scenario,dict):
+                for key in PYTHON_OWNED_PLAN_FIELDS['scenario']:
+                    scenario.pop(key,None)
+    return view
+
+
+def _restore_python_fields(proposal, plan, view, conventions=True):
+    """A response with Python's fields put back from the current plan, and unchanged expense shares as the plan's expenses.
+
+    Expense shares are shown rounded to four places; rebuilding expenses from shares a
+    response copied back moved R&D by up to 0.05% a year and so the value (live run,
+    2026-11-27). Shares equal to the ones shown restore the plan's own expenses.
+    """
+    proposal=copy.deepcopy(proposal)
+    def put(target, source, keys):
+        for key in keys:
+            if isinstance(source,dict) and key in source:
+                target[key]=copy.deepcopy(source[key])
+            else:
+                target.pop(key,None)
+    put(proposal,plan,PYTHON_OWNED_PLAN_FIELDS['plan'])
+    if conventions:
+        put(proposal,plan,PYTHON_OWNED_PLAN_FIELDS['plan_conventions'])
+        if isinstance(proposal.get('discount_rate'),dict):
+            put(proposal['discount_rate'],plan.get('discount_rate'),PYTHON_OWNED_PLAN_FIELDS['discount_rate'])
+        for name,scenario in (proposal.get('scenarios') or {}).items():
+            if isinstance(scenario,dict):
+                put(scenario,((plan.get('scenarios') or {}).get(name)),PYTHON_OWNED_PLAN_FIELDS['scenario'])
+    shown=((view.get('operating_model') or {}).get('scenarios') or {}) if isinstance(view,dict) else {}
+    kept=((plan.get('operating_model') or {}).get('scenarios') or {}) if isinstance(plan,dict) else {}
+    for name,scenario in (((proposal.get('operating_model') or {}).get('scenarios')) or {}).items():
+        if (isinstance(scenario,dict) and 'expense_shares' in scenario and isinstance(shown.get(name),dict) and
+                scenario['expense_shares']==shown[name].get('expense_shares') and
+                isinstance(kept.get(name),dict) and 'expenses' in kept[name]):
+            scenario.pop('expense_shares')
+            scenario['expenses']=copy.deepcopy(kept[name]['expenses'])
+    return proposal
 
 
 def _edit_required(findings, memo, python_ids=()):
@@ -4314,7 +4393,14 @@ def _render(memo, sources, gaps, plan, result, state):
     # in review files for traceability rather than being silently deleted.
     if state.get('review_history'):
         unresolved=state['review_history'][-1].get('findings',[])
-    note='\n'.join(f'- {f["severity"]}: {f["issue"]}' for f in unresolved)
+    computed_text=state.get('computed_text_findings') or {}
+    latest_iteration=(state['review_history'][-1].get('iteration') if state.get('review_history') else None)
+    on_computed=set(computed_text.get('ids') or []) if computed_text.get('iteration')==latest_iteration else set()
+    note='\n'.join(f'- {f["severity"]}: {f["issue"]}' for f in unresolved if f.get('id') not in on_computed)
+    if on_computed:
+        # Python writes this text; the finding is collected for a code fix, not a revision round.
+        note+=(('\n\n' if note else '')+COMPUTED_TEXT_HEADING+'\n'+
+               '\n'.join(f'- {f["severity"]}: {f["issue"]}' for f in unresolved if f.get('id') in on_computed))
     if not note:
         note=('No material finding is recorded. A model review is an assessment and certifies nothing.'
               if state.get('complete') else 'Review is incomplete; unresolved issues are not yet determined.')
@@ -4333,9 +4419,6 @@ def _render(memo, sources, gaps, plan, result, state):
         note+=(f"\n\nReview model: {latest['review_model']}"+
                (f"; author model: {latest['author_model']}" if latest.get('author_model') else '')+
                ('. The same model wrote and reviewed this memo.' if same else '.'))
-    stuck=(state.get('computed_text_findings') or {}).get('ids')
-    if stuck:
-        note+='\n\n'+COMPUTED_TEXT_NOTE.format(ids=', '.join(map(str,stuck)))
     body=reader_view(memo,sources,plan,result,state.get('ticker',''))
     limits=('\n\nRetrieval gaps:\n'+'\n'.join('- '+g for g in gaps)) if gaps else '\n\nNo retrieval gap is recorded.'
     return (body+'\n\n## Sources\n'+refs+limits+
@@ -5204,6 +5287,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         nonlocal plan,result,valuation_context
         apply=not state.get('provided_forecast_digest')
         rate_text=_correction_rate_text(state['sources'],plan,apply)
+        # Python's own fields are not offered for editing (see PYTHON_OWNED_PLAN_FIELDS).
+        sent_view=_forecast_view(plan,apply)
         model_response=call(f'model_response_{iteration+1}',strong,
             'Address these review findings. Return ONLY JSON {"unchanged":true,"reason":"..."} '
             'if the existing valuation plan is still appropriate, otherwise return the COMPLETE corrected '
@@ -5216,10 +5301,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'do not silently drop their scope or invent a discount to satisfy a review. '
             'Forecast changes must be explicit house assumptions and economically justified. '
             +FORECAST_SCHEMA+rate_text+UNDERWRITING_GUIDANCE+PLAN_FIELD_RULES+PLAN_SOURCE_RULE+
-            evidence_above()+'\nCurrent memo (verify allegations against this exact text):\n'+memo+'\nCurrent forecast proposal:\n'+json.dumps(_proposal_view({k:plan[k] for k in
-                ('assumptions_label','scenario_rationales','scenarios','operating_model','discount_rate','monitoring',
-                 'counterfactuals','calibration_comparisons','forecast_periods','repurchase_tests',
-                 'margin_continuity_basis','capital_efficiency_basis','valuation_timing') if k in plan}))+
+            evidence_above()+'\nCurrent memo (verify allegations against this exact text):\n'+memo+'\nCurrent forecast proposal:\n'+json.dumps(sent_view)+
             '\nLocked actuals (reference only; omit from your proposal):\n'+_prompt_json(plan.get('actuals',{}))+
             '\nReported operating lines (reference for year-1 continuity):\n'+
             _prompt_json((plan.get('reported_inputs') or {}).get('operating_reference'))+
@@ -5271,6 +5353,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                     decision='unavailable'
                     break
                 proposal={k:v for k,v in candidate.items() if k not in ('finding_dispositions','unchanged','reason')}
+                proposal=_restore_python_fields(proposal,plan,sent_view,apply)
                 (locked,changes,corrected),omitted=_omit_invalid_optional_sections(
                     proposal,lambda value:_lock_and_value(value,state,apply_conventions=apply,prior=prior_valuation))
                 decision='corrected'
@@ -5292,10 +5375,31 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 candidate,parse_error=parsed(correction,stage)
         dispositions=(candidate.get('finding_dispositions') if isinstance(candidate,dict) else None) or \
                      (original.get('finding_dispositions') if isinstance(original,dict) else None)
+        # "Corrected" counts only when a forecast input changed (consensus.fingerprint).
+        # A response that rewrote text alone keeps the valuation: no rewrite of the
+        # memo, and no new valuation for the reviewer unless model-owned text changed.
+        text_changes=[]
+        if (decision=='corrected' and result is not None and isinstance(plan,dict) and
+                consensus.fingerprint(locked)==consensus.fingerprint(plan)):
+            text_changes=[key for key in MODEL_TEXT_FIELDS if locked.get(key)!=plan.get(key)]
+            decision='text_only' if text_changes else 'unchanged'
+            candidate={'unchanged':True,'reason':'The response changed no forecast input'+
+                       (' and only model-owned text: '+', '.join(text_changes) if text_changes else
+                        '; text Python writes is rebuilt at lock')+'. The valuation is unchanged.',
+                       'finding_dispositions':dispositions}
         if decision=='unchanged':
             adjudication=copy.deepcopy(candidate)
             if repair:
                 adjudication['correction_repairs']=repair
+        elif decision=='text_only':
+            # The same forecast inputs, so the same values; the changed text is re-rendered.
+            # The response's locked plan has the same inputs and Python's fields rebuilt; only the text differs.
+            plan,result=locked,corrected
+            _attach_consensus(state,plan,result)
+            save_valuation(folder,plan,result)
+            state['plan'],state['valuation']=plan,result
+            valuation_context=_model_valuation_context(plan,result)
+            adjudication=dict(candidate,text_changed=text_changes)
         else:
             if decision in ('unavailable','corrected'):
                 backup=folder/'revisions'/f'model-before-{iteration+1}'
@@ -5358,10 +5462,25 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'mode':mode,'edit_required':list(required)}
         checkpoint()
 
+    def record_computed_text(iteration,combined,stuck):
+        # Findings on text Python writes, kept for a code fix: in state for Review status,
+        # and in computed-text-findings.json for collection across runs.
+        if stuck:
+            state['computed_text_findings']={'iteration':iteration,'ids':list(stuck)}
+        else:
+            state.pop('computed_text_findings',None)
+        core.save(folder/'computed-text-findings.json',{
+            'iteration':iteration,'review_model':reviewer,
+            'basis':'Blockers or majors that quote text Python writes (first page, valuation detail, tables, method notes) '
+                    'and name no forecast input, or were already answered without a forecast change. No revision stage '
+                    'can change that text; fix it in code.',
+            'findings':[{key:f.get(key) for key in ('id','severity','rule','issue','current_excerpt','fix','source_refs')}
+                        for f in combined if isinstance(f,dict) and f.get('id') in set(stuck)]})
+        checkpoint()
+
     def stop_on_computed_text(iteration,stuck):
         state['complete']=False
         state['quality_status']='unresolved_findings'
-        state['computed_text_findings']={'iteration':iteration,'ids':list(stuck)}
         state.pop('pending_revision',None)
         checkpoint()
 
@@ -5394,7 +5513,11 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             text=''
             progress(f'Prose edits not applied: {exc}'.split(', so it')[0])
         edits,flags=_edit_response(text)
-        flagged=[item for item in flags if item['finding'] in material]
+        # The edit call may reopen the forecast only for a finding that quotes the prose. Text Python
+        # writes reaches the forecast response only when the finding names a forecast input, which
+        # _forecast_findings already routes (live run, 2026-11-27: a method-note finding paid two rounds).
+        quoted={f.get('id') for f in combined if isinstance(f,dict) and _in_prose(f,memo)}
+        flagged=[item for item in flags if item['finding'] in material and item['finding'] in quoted]
         if flagged and adjudication.get('skipped'):
             # The author says only a forecast change answers these: reopen the forecast once.
             note_round(number,forecast_reasons=[[item['finding'],'the edit call says only a forecast change can answer it']
@@ -5711,21 +5834,21 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         core.save(folder/'source-ledger.json',claim_ledger(report))
         checkpoint()
         if not major:
-            state.pop('computed_text_findings',None)
+            record_computed_text(iteration,combined,[])
             state['complete']=bool(result)
             if not result:
                 state['quality_status']='missing_valuation'
             break
         python_ids={f.get('id') for f in deterministic}|PYTHON_FINDING_IDS
-        answered=_answered_forecast(state,_digest(result))
+        answered=_answered_forecast(state,_inputs_fingerprint(plan))
         reasons=_forecast_findings(combined,memo,python_ids,answered)
         required=_edit_required(combined,memo,python_ids)
         stuck=_computed_text_findings(combined,memo,python_ids,answered)
+        record_computed_text(iteration,combined,stuck)
         if not reasons and not required:
             # Only computed text no stage can change remains: stop with it open.
             stop_on_computed_text(iteration,stuck)
             break
-        state.pop('computed_text_findings',None)
         if _revisions_used(state)==max_revisions:
             state['complete']=False
             state['quality_status']='unresolved_findings'
@@ -5753,9 +5876,9 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         # forecast response that answered "unchanged" for Microsoft and Apple.
         if reasons:
             adjudication,decision=forecast_response(iteration,memo,combined)
-            if decision=='unchanged':
+            if decision in ('unchanged','text_only'):
                 # Kept for these findings: a later review raising them again does not reopen it.
-                note_round(iteration+1,valuation_sha256=_digest(result),
+                note_round(iteration+1,inputs_fingerprint=_inputs_fingerprint(plan),
                            answered=[list(_finding_key(f)) for f in combined if f.get('id') in {item[0] for item in reasons}])
         else:
             adjudication={'skipped':True,'reason':FORECAST_SKIP_REASON,
@@ -5772,7 +5895,9 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         if not required:
             # The forecast stands and no finding quotes the prose: an edit call would change nothing.
             note_round(iteration+1,revision='none',stop_reason='the forecast stands and no blocker or major quotes the prose')
-            stop_on_computed_text(iteration,_computed_text_findings(combined,memo,python_ids,_answered_forecast(state,_digest(result))))
+            stuck=_computed_text_findings(combined,memo,python_ids,_answered_forecast(state,_inputs_fingerprint(plan)))
+            record_computed_text(iteration,combined,stuck)
+            stop_on_computed_text(iteration,stuck)
             break
         save_pending(iteration,memo,combined,adjudication,'edits',record['manifest'],required)
         edit_round(iteration,memo,combined,adjudication,required,record['manifest'])
