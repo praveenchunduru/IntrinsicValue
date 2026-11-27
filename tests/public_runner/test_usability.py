@@ -301,7 +301,8 @@ class Listing(unittest.TestCase):
                 folder = Path(temp) / ticker / 'full-abc'
                 folder.mkdir(parents=True)
                 (folder / 'state.json').write_text(json.dumps({'version': 'full-2', 'ticker': ticker, 'quality_status': status,
-                                                               'complete': status == 'reviewed_draft', 'ledger': [
+                                                               'complete': status == 'reviewed_draft', 'current_memo': 'x',
+                                                               'review_history': [{'iteration': 0}], 'ledger': [
                                                                    {'charged_or_reserved_usd': 1.25, 'status': 'complete', 'usage': {'cost': 1.25}}]}))
                 (folder / 'valuation.json').write_text(json.dumps({'market_price': 100, 'scenarios': {'base': {'per_share_value': base}}}))
                 (folder / 'memo.md').write_text('# memo')
@@ -313,6 +314,14 @@ class Listing(unittest.TestCase):
         self.assertIn('0.36', out)
         self.assertIn('$1.25', out)
         self.assertIn('Finished, review findings open', out)
+
+    def test_a_dry_run_folder_is_listed_as_evidence_only(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp) / 'MSFT' / 'full-abc'
+            folder.mkdir(parents=True)
+            (folder / 'state.json').write_text(json.dumps({'version': 'full-2', 'ticker': 'MSFT', 'quality_status': 'needs_review',
+                                                           'complete': False, 'ledger': [], 'stages': {}}))
+            self.assertEqual(runs.summarize(folder)['label'], 'Evidence collected, no memo yet')
 
     def test_empty_list_says_how_to_start(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -120,8 +120,15 @@ def summarize(folder):
     state = _read_json(folder / 'state.json') or {}
     full = str(state.get('version', '')).startswith('full-') or folder.name.startswith('full-')
     code = state.get('quality_status') if full else ('complete' if state.get('complete') else 'in_progress')
+    reviewed = bool(state.get('review_history')) and not state.get('pending_revision')
     if not full and state.get('complete'):
         label, detail = 'Quick overview finished', 'A four-call overview; it has no valuation model.'
+    elif full and not state.get('complete') and code in (None, 'in_progress', 'needs_review') and \
+            not state.get('current_memo') and not state.get('stages'):
+        label, detail = 'Evidence collected, no memo yet', ('Run the same command (without --dry-run, with a key) '
+                                                             'to write the memo; the evidence is reused.')
+    elif full and code in ('needs_review', 'in_progress') and not state.get('complete') and not reviewed:
+        label, detail = STATUS['in_progress']
     else:
         label, detail = STATUS.get(code, STATUS['in_progress'])
     memo = folder / 'memo.md'

@@ -104,7 +104,7 @@ stopButton.addEventListener('click',async()=>{stopButton.disabled=true;try{const
 function showResult(data){
 if(data.folder){files.textContent='Files: '+data.folder;files.hidden=false;}
 if(data.memo_html&&!data.artifact_integrity_error){memo.srcdoc=data.memo_html;memo.hidden=false;}
-const parts=[];if(data.status_label)parts.push(data.status_label);if(typeof data.cost_usd==='number')parts.push(data.cost_usd>0?'$'+data.cost_usd.toFixed(2)+' spent or held':'nothing charged');if(typeof data.base_value==='string')parts.push(data.base_value);
+const parts=[];if(typeof data.cost_usd==='number')parts.push(data.cost_usd>0?'$'+data.cost_usd.toFixed(2)+' spent or held':'nothing charged');if(typeof data.base_value==='string')parts.push(data.base_value);
 if(parts.length){summary.textContent=parts.join(' · ');summary.hidden=false;}
 downloads.replaceChildren();if(data.artifact_integrity_error)return;
 const names=data.downloads||[];if(names.includes('assumptions.json')&&data.revalue_command){$('revalue-cmd').textContent=data.revalue_command;revalue.hidden=false;}

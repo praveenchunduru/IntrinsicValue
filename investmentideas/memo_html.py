@@ -26,8 +26,7 @@ _FENCE = re.compile(r'^\s*(```|~~~)')
 _PLACEHOLDER = '{}'
 
 STYLE = '''
-:root{--ink:#1d2329;--muted:#5b6670;--rule:#d9dee3;--soft:#f4f6f8;--accent:#1f5f8b;--cite:#5b4a8a}
-@media screen and (prefers-color-scheme:dark){:root{--ink:#e3e8ec;--muted:#a3afb9;--rule:#36424d;--soft:#1b242c;--accent:#8cc4ec;--cite:#c2b5ec}body{background:#11181e}}
+:root{color-scheme:light;--ink:#1d2329;--muted:#5b6670;--rule:#d9dee3;--soft:#f4f6f8;--accent:#1f5f8b;--cite:#5b4a8a}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:#fff;color:var(--ink);font:16.5px/1.62 Charter,"Bitstream Charter","Iowan Old Style","Palatino Linotype",Georgia,serif}
@@ -50,7 +49,7 @@ table{border-collapse:collapse;width:100%;font:14px/1.45 -apple-system,BlinkMacS
 th,td{padding:.42rem .65rem;border-bottom:1px solid var(--rule);vertical-align:top;text-align:left}
 th{background:var(--soft);font-weight:600}
 tbody tr:last-child td{border-bottom:0}
-tbody tr:nth-child(even) td{background:color-mix(in srgb,var(--soft) 55%,transparent)}
+tbody tr:nth-child(even) td{background:#f8f9fa}
 .r{text-align:right}.c{text-align:center}
 footer{margin-top:3rem;padding-top:1rem;border-top:1px solid var(--rule);color:var(--muted);font-size:.85rem}
 @media (max-width:600px){body{font-size:16px}main{padding:1.5rem 1rem 3rem}table{font-size:13px}}
