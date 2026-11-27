@@ -139,14 +139,25 @@ def request_json(url, *, key=None, payload=None, timeout=90):
             pass
         raise HTTPFailure(exc.code, url.split('/')[2], retry_after, category) from None
     except (URLError, TimeoutError, ValueError) as exc:
+        from .preflight import certificate_fix, is_certificate_error
+        if is_certificate_error(exc):
+            raise RuntimeError(certificate_fix()) from None
         raise RuntimeError(f'Network or invalid JSON response from {url.split("/")[2]}') from None
 
 
 def symbol(value):
-    value = value.strip().upper()
-    if not re.fullmatch(r'[A-Z0-9][A-Z0-9.\-^=]{0,14}', value):
-        raise ValueError('Enter a ticker of 1–15 letters, digits, dots or hyphens')
-    return value
+    """The one spelling of a ticker used everywhere: upper case, with a class letter after a hyphen.
+
+    SEC lists Berkshire's B shares as BRK-B and Yahoo prices them as BRK-B, so BRK.B is
+    written BRK-B: one run folder, one quote and one price history per share class.
+    """
+    if not isinstance(value, str):
+        raise ValueError('Enter a ticker of 1 to 15 letters, digits, dots or hyphens')
+    value = value.strip()
+    # Checked before upper(): 'ß'.upper() is 'SS', a different company.
+    if not value.isascii() or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9.\-]{0,14}', value):
+        raise ValueError('Enter a ticker of 1 to 15 letters, digits, dots or hyphens')
+    return value.upper().replace('.', '-')
 
 
 def collect(ticker, *, include_archives=False):
@@ -478,6 +489,13 @@ class Router:
                                   timeout=completion_timeout(max_tokens))
         except HTTPFailure as exc:
             row.update(status='failed_http', http_status=exc.status, retry_after_seconds=exc.retry_after, error_category=exc.category)
+            if exc.status in (400, 401, 402, 403):
+                # OpenRouter answers a malformed request (400), an unknown key (401), an empty
+                # balance (402) or a refused request (403) before any model runs, so nothing was
+                # billed: the reservation is released and does not count against the allowance.
+                row['charged_or_reserved_usd'] = 0.0
+                row['released_reason'] = 'request refused before generation; not billable'
+                self.checkpoint()
             raise
         usage = result.get('usage', {})
         usage = dict(usage) if isinstance(usage,dict) else {}
@@ -543,6 +561,55 @@ class Router:
         return content
 
 
+def _missing_evidence(sources, gaps):
+    """What a quick run could not collect, and what to do about it."""
+    text = ' '.join(gaps)
+    head = ('No evidence could be retrieved' if not sources else
+            'Only a share price was found; no financial evidence was retrieved')
+    if 'SEC contact email required' in text:
+        return (head + ': no SEC contact email was set, so no filings were fetched. Run python3 -m intrinsicvalue '
+                '--setup, or add --sec-contact you@example.com, and run again')
+    if 'ticker not mapped' in text and 'Market snapshot unavailable' in text:
+        return (head + ': neither SEC nor Yahoo answered for this ticker. Check your internet connection and the '
+                'ticker, then run again; nothing is saved from this attempt')
+    if 'ticker not mapped' in text:
+        return head + ': the SEC has no financial facts for this ticker. Check the ticker, or add --evidence FILE with a filing excerpt'
+    return head + '. Check your internet connection and run again, or add --evidence FILE with a filing excerpt'
+
+
+def sec_contact_available():
+    """Whether an SEC contact is configured for this run (scope or environment)."""
+    try:
+        user_agent('https://data.sec.gov/')
+        return True
+    except (SECContactRequired, ValueError):
+        return False
+
+
+def _load_state(path):
+    """A quick run's saved state; an unreadable file is moved aside and the run starts clean."""
+    if not path.exists():
+        return {'ledger': [], 'stages': {}}
+    try:
+        text = path.read_text(encoding='utf-8')
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f'The saved run file {path} cannot be read ({getattr(exc, "strerror", None) or "not UTF-8 text"}). '
+                         f'Move the folder {path.parent} aside, or run again with --output and a new folder') from None
+    try:
+        state = json.loads(text)
+    except (ValueError, RecursionError):
+        problem = 'is empty' if not text.strip() else 'is cut short or damaged'
+        # Not replaced automatically: its ledger records what this run already spent.
+        raise ValueError(f'The saved run file {path} {problem}. Move the folder {path.parent} aside, or run again with '
+                         '--output and a new folder; the new run starts from scratch') from None
+    if not isinstance(state, dict) or not isinstance(state.get('ledger', []), list) or not isinstance(state.get('stages', {}), dict):
+        raise ValueError(f'The saved run file {path} does not hold a saved run. Move the folder {path.parent} aside, or run '
+                         'again with --output and a new folder')
+    state.setdefault('ledger', [])
+    state.setdefault('stages', {})
+    return state
+
+
 def save(path, data):
     temp = path.with_suffix('.tmp')
     temp.write_text(json.dumps(data, indent=2), encoding='utf-8')
@@ -560,16 +627,30 @@ def run(ticker, key, *, profile='economy', budget=2.0, directory='research-outpu
     folder = Path(directory) / ticker / identity
     folder.mkdir(parents=True, exist_ok=True)
     state_path = folder / 'state.json'
-    state = json.loads(state_path.read_text()) if state_path.exists() else {'ledger': [], 'stages': {}}
+    state = _load_state(state_path)
+    contact = sec_contact_available()
+    if 'sources' in state and not state.get('stages') and not state.get('complete') and (
+            not state['sources'] or
+            (contact and not state.get('collected_with_sec_contact') and
+             not any(s.get('kind') == 'sec_facts' for s in state['sources']))):
+        # An empty collection, or one made before the SEC contact was set, is not reused:
+        # nothing has been spent on it yet, so collect again.
+        state.pop('sources', None)
+        state.pop('gaps', None)
     if 'sources' not in state:
         progress('Retrieving keyless market and SEC evidence')
-        state['sources'], state['gaps'] = collect(ticker)
+        sources, gaps = collect(ticker)
         if evidence:
-            state['sources'].append({'id': f'S{len(state["sources"])+1}', 'title': 'User-supplied evidence (verify provenance)',
-                                     'url': None, 'kind': 'user_evidence', 'data': evidence[:100000]})
+            sources.append({'id': f'S{len(sources)+1}', 'title': 'User-supplied evidence (verify provenance)',
+                            'url': None, 'kind': 'user_evidence', 'data': evidence[:100000]})
+        if not sources or all(s.get('kind') == 'market_snapshot' for s in sources):
+            # Not saved: the next attempt collects again.
+            raise RuntimeError(_missing_evidence(sources, gaps))
+        state['sources'], state['gaps'] = sources, gaps
+        state['collected_with_sec_contact'] = contact
         save(state_path, state)
     if not state['sources']:
-        raise RuntimeError('No evidence retrieved. Retry later or provide a filing using --evidence.')
+        raise RuntimeError('No evidence could be retrieved. Check the ticker and your internet connection, or supply a filing excerpt as evidence')
     if all(s.get('kind') == 'market_snapshot' for s in state['sources']):
         raise RuntimeError('Only market metadata is available; no financial evidence. Retry with fresh output or supply --evidence.')
     if state.get('complete'):

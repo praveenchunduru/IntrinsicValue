@@ -1,4 +1,24 @@
-# External audit and repair status
+# Audit and repair status
+
+## Current state (2026-11-27)
+
+- **Pipeline.** Fresh balanced runs on 2026-11-27 cost $3.94 to $7.34 each. Five memos
+  have passed independent review: Apple's first full run after one revision, Alphabet's
+  fresh run after two rounds, and review-only replays of Microsoft, Coca-Cola and Walmart.
+  No first draft has yet passed without a revision round. Details are under
+  [Stabilization](#stabilization-2026-11-27) and the open items under
+  [Still open](#still-open-after-2026-11-14).
+- **Usability.** A new-user review on 2026-11-27 graded first use and ongoing use C and D+.
+  Version 0.3.0 answers it: one-time `--setup`, checks before any work (ticker, SEC email,
+  key), plain progress and a closing summary, `memo.html`, `--list`, `--dry-run`, clean
+  stops and a shorter browser form. See the [changelog](../CHANGELOG.md).
+- **Tests.** 1,137 offline tests pass on Python 3.9, 3.12 and 3.13; CI runs 3.9, 3.10,
+  3.12 and 3.13 with mocked transports only.
+
+The rest of this page is the record, oldest first: the November 6 external audit, the
+repairs it led to, and each live run since.
+
+## The external audit of November 6, 2026
 
 The independent audit supplied on November 6, 2026 assessed the revised Apple memo
 at B− and the process/software at C. Its reported grade supersedes this repository's

@@ -1,7 +1,8 @@
 # Live validation with your OpenRouter key
 
-Start the local app with `python -m investmentideas`, open http://127.0.0.1:8765,
-and enter your own key. No GitHub secret or account connection is required.
+Start the local app with `python3 -m intrinsicvalue`; it opens the address it prints
+(http://127.0.0.1:8765/#token=...) in your browser. Enter your own key, or save it once
+with `python3 -m intrinsicvalue --setup`. No GitHub secret or account connection is required.
 The key remains in process memory; it is not saved in research artifacts, logs
 or browser storage. Stop the app when finished.
 
@@ -17,7 +18,7 @@ retains ambiguous charges after errors. It is not a provider-enforced cap.
 Completed same-day stages are reused; increasing an allowance preserves previous
 charges and reservations. Do not restart empty runs to bypass a local budget.
 
-Full mode defaults to a $10 total planning allowance; quick mode retains $2.
+Full mode defaults to a $20 total planning allowance; quick mode retains $2.
 Explicit user allowances are preserved. Free collection and primary-input coverage
 checks precede all paid searches and model stages. Missing/conflicting essential
 primary inputs stop at zero new paid requests with a coverage report. A same-settings
@@ -41,7 +42,7 @@ allowance and the default single revision $5.37. Simulated reported usage is $1.
 and $4.13 respectively. The fixture omits the calibration sources, so it does not
 exercise the market-consistent rate pins, and it assumes no prompt caching; live
 GPT-5.4 reviews with cached evidence cost about $0.07 instead of $0.40.
-These simulations support the tested $10 default path, not a general price or
+These simulations, made when the default was $10, support that path, not a general price or
 completion promise. They are not observed provider bills or research-quality evidence.
 
 The economy profile uses open-weight DeepSeek V4.1 Flash for extraction/search,
@@ -79,7 +80,7 @@ findings and the numerical checks pass. Evidence gaps and house assumptions
 remain disclosed. Key/account metadata and private repository history are excluded.
 
 CI uses mocked transports and synthetic evidence only. No API key is needed to
-run `python -m unittest discover -s tests/public_runner -v` or to recompute the
+run `python3 -m unittest discover -s tests/public_runner -v` or to recompute the
 example offline. Do not add paid model calls or secrets to push/PR CI.
 
 The [revised AAPL example](../examples/AAPL-2026-11-06-revised/memo.md) adds sourced

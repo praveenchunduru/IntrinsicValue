@@ -324,7 +324,8 @@ def _symbol(value):
     value = value.strip().upper()
     if not re.fullmatch(r'[A-Z0-9][A-Z0-9.\-^=]{0,14}', value):
         raise ValueError('Ticker has unsupported characters')
-    return value
+    # Yahoo prices share classes with a hyphen (BRK-B); BRK.B finds no history.
+    return value.replace('.', '-')
 
 
 def _url(ticker, cutoff, start):

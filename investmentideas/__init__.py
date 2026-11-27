@@ -1,2 +1,2 @@
-"""Portable, OpenRouter-only investment research."""
-__version__ = '0.2.0'
+"""IntrinsicValue: portable, OpenRouter-only valuation research (package name investmentideas)."""
+__version__ = '0.3.0'

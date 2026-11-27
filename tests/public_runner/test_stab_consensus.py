@@ -779,6 +779,8 @@ class SettingsTests(unittest.TestCase):
     def test_cli_option(self):
         from investmentideas import __main__ as cli
         with patch('sys.argv', ['investmentideas', 'AAPL', '--plan-samples', '5']), \
+                patch.dict('os.environ', {'OPENROUTER_API_KEY': 'synthetic', 'SEC_CONTACT_EMAIL': 'fixture@example.org'}), \
+                patch('investmentideas.preflight.check_key', return_value={}), \
                 patch('investmentideas.pipeline.run', return_value=Path('folder')) as run, patch('builtins.print'):
             cli.main()
         self.assertEqual(run.call_args.kwargs['plan_samples'], 5)

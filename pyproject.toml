@@ -4,17 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "investmentideas-research"
-version = "0.2.0"
+version = "0.3.0"
 description = "Portable, evidence-grounded equity research with OpenRouter"
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = []
 license = {file = "investmentideas/LICENSE"}
 
 [project.scripts]
+intrinsicvalue = "investmentideas.__main__:main"
 investmentideas = "investmentideas.__main__:main"
 
 [tool.setuptools.packages.find]
-include = ["investmentideas*"]
+include = ["investmentideas*", "intrinsicvalue*"]
 
 [tool.setuptools.package-data]
 investmentideas = ["company_tickers.json"]

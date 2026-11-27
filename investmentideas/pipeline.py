@@ -5365,29 +5365,41 @@ def run(ticker, key, *, profile='balanced', budget=DEFAULT_BUDGET, directory='re
         raise ValueError('Evidence must be text of at most 100 KB')
     easy,strong=core.MODELS[profile]
     easy,strong=easy_model or easy,strong_model or strong
-    identity_parts=[VERSION,ticker,profile,easy,strong,evidence,source_snapshot,datetime.now(timezone.utc).date().isoformat()]
-    if plan_samples!=default_plan_samples(profile):
-        # A non-default sample count is its own run; the default keeps existing run folders.
-        identity_parts.append(['plan_samples',plan_samples])
-    identity=_digest(identity_parts)[:16]
     base=Path(directory)/ticker
-    folder=base/('full-'+identity)
+    def locate(day):
+        parts=[VERSION,ticker,profile,easy,strong,evidence,source_snapshot,day.isoformat()]
+        if plan_samples!=default_plan_samples(profile):
+            # A non-default sample count is its own run; the default keeps existing run folders.
+            parts.append(['plan_samples',plan_samples])
+        ident=_digest(parts)[:16]
+        found=base/('full-'+ident)
+        if not found.exists():
+            # Preserve legacy metered history, without moving a possibly active run.
+            legacy=base/('full-'+_digest(parts+[core.SYSTEM])[:16])
+            if legacy.is_dir():
+                found=legacy
+            elif base.is_dir():
+                for marker in sorted(base.glob('full-*/run-identity.json')):
+                    try:
+                        marked=_saved_json(marker,'marker').get('id')
+                    except ValueError:
+                        # Another run's damaged marker must not block this one.
+                        progress(f'Skipped {marker}: it is not a readable run marker.')
+                        continue
+                    if marked==ident:
+                        found=marker.parent
+                        break
+        return parts,ident,found
+    today=datetime.now(timezone.utc).date()
+    identity_parts,identity,folder=locate(today)
     if not folder.exists():
-        # Preserve legacy metered history, without moving a possibly active run.
-        legacy=base/('full-'+_digest(identity_parts+[core.SYSTEM])[:16])
-        if legacy.is_dir():
-            folder=legacy
-        elif base.is_dir():
-            for marker in sorted(base.glob('full-*/run-identity.json')):
-                try:
-                    found=_saved_json(marker,'marker').get('id')
-                except ValueError:
-                    # Another run's damaged marker must not block this one.
-                    progress(f'Skipped {marker}: it is not a readable run marker.')
-                    continue
-                if found==identity:
-                    folder=marker.parent
-                    break
+        # The identity carries the UTC day. An unfinished run from the previous UTC day
+        # started within 24 hours is the same research: resume it (see runs.resumable).
+        from .runs import resumable
+        earlier=locate(today-timedelta(days=1))
+        if earlier[2].is_dir() and resumable(earlier[2]):
+            identity_parts,identity,folder=earlier
+            progress('Resuming the unfinished run from the previous UTC day; finished steps are reused')
     folder.mkdir(parents=True,exist_ok=True)
     with _lock(folder):
         marker_path=folder/'run-identity.json'
@@ -5398,6 +5410,8 @@ def run(ticker, key, *, profile='balanced', budget=DEFAULT_BUDGET, directory='re
             progress(f'Rewrote {marker_path}: it was not a readable run marker.')
             marker={}
         marker['id']=identity
+        if not marker_path.exists():
+            marker['started_at']=datetime.now(timezone.utc).isoformat(timespec='seconds')
         if folder.name=='full-'+_digest(identity_parts+[core.SYSTEM])[:16]:
             # The legacy folder digest itself establishes which SYSTEM was
             # used by its old stage keys, which did not include that field.

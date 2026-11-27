@@ -4,49 +4,166 @@ Setup, commands, output files, models and costs, dated examples and test coverag
 valuation rules are in the [underwriting guide](underwriting.md). The external audit,
 live runs and open issues are in [audit status](audit-status.md).
 
+Commands use `python3`, as on macOS and Linux. On Windows, type `py` in its place.
+
 ## Run locally
 
-Install Python 3.10+ and [Git](https://git-scm.com/downloads), then run:
+Install Python 3.9 or newer (the Mac's own `python3` works) and
+[Git](https://git-scm.com/downloads). On a Mac that has never used developer tools, the
+first `git` opens Apple's "install Command Line Tools" window; accept it once. Then:
 
 ```bash
 git clone https://github.com/praveenchunduru/IntrinsicValue.git
 cd IntrinsicValue
-python -m investmentideas
+python3 -m intrinsicvalue --setup
+python3 -m intrinsicvalue MSFT
 ```
 
-If you prefer not to install Git, use **Code → Download ZIP** on this repository,
-unpack it, and run `python -m investmentideas` from the extracted folder.
+Without Git, use **Code → Download ZIP** on the repository page, unpack it, and run the
+same commands from the extracted folder. `python3 -m investmentideas` is the same program
+under its package name.
 
-Open **http://127.0.0.1:8765**, enter your [OpenRouter key](https://openrouter.ai/settings/keys),
-enter a real SEC requester contact email, choose a ticker, profile and spending allowance,
-and generate a full memo. The email identifies requests to SEC; it is not another paid
-API key. It stays in memory and is sent only to SEC. Choose **economy**
-for open-weight analysis or **balanced** for Claude analysis with open-weight research; a different model reviews the memo in both. Use `python3` or Windows
-`py` if that is your Python command. A dedicated key with a provider credit limit
-is recommended. The form holds the key in process memory; it is not stored in the browser,
-research files or logs. This loopback application is for one local user.
+`--setup` asks for your [OpenRouter key](https://openrouter.ai/settings/keys) and your
+email and saves them in a `.env` file in the folder you run from, readable only by you.
+The SEC asks every automated visitor for a contact email before it serves filings; it is
+not another paid key, and it is sent only to sec.gov. The command line and the browser
+form both read `.env` when they start. Only `OPENROUTER_API_KEY` and `SEC_CONTACT_EMAIL`
+are read from it, a value exported in your shell takes priority, and a run never writes
+to it. [`.env.example`](../.env.example) shows the two lines if you prefer to write the
+file by hand. In PowerShell you can instead set `$env:OPENROUTER_API_KEY="sk-or-..."` and
+`$env:SEC_CONTACT_EMAIL="you@example.com"` for one session.
 
-To enter the key and email only once, run `python -m investmentideas --setup`. It asks
-for both and saves them in a `.env` file in the folder you run from, readable only by
-you. The form and the command line both read that file when they start, and the form's
-two fields can then be left blank. Only `OPENROUTER_API_KEY` and `SEC_CONTACT_EMAIL` are
-read from it, a value exported in your shell takes priority, and a run never writes to
-it. [`.env.example`](../.env.example) shows the two lines if you prefer to write the file
-by hand.
+Before any work a run checks, in order: the ticker is in the SEC company list bundled
+with the program (a company name gets ticker suggestions), an SEC email is set, a key is
+set, and OpenRouter accepts the key (one free call). Each failure stops at once with
+what to do next. A dedicated key with a provider credit limit is recommended.
 
-Optional installation adds a command without adding runtime dependencies:
+**Browser form.** Run `python3 -m intrinsicvalue` with no ticker. It prints an address
+ending in `#token=...` and opens it in your browser on macOS, Windows and Linux desktops
+(`--no-browser` to skip). Keep that terminal window open while a run is going. The form
+holds the key and email in the program's memory for the session, never in the browser,
+research files or logs, so a second ticker needs no re-pasting. It shows progress, the
+rendered memo and downloads, and has a Stop button that ends the run after the current
+step. The server listens on 127.0.0.1 only and is for one local user.
+
+**Update.** `git pull` in the folder (or download the ZIP again and keep your
+`research-output` folder). [CHANGELOG.md](../CHANGELOG.md) lists what changed, and
+`python3 -m intrinsicvalue --version` shows the version you have.
+
+Optional installation adds the `intrinsicvalue` and `investmentideas` commands without
+runtime dependencies. On Debian and Ubuntu, `python3 -m venv` needs the `python3-venv`
+package first.
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
+source .venv/bin/activate        # Windows PowerShell: .venv\Scripts\Activate.ps1
+python3 -m pip install .
+intrinsicvalue --help
 ```
 
-Activate it with `source .venv/bin/activate` on macOS/Linux or
-`.venv\Scripts\Activate.ps1` in Windows PowerShell, then run:
+## Commands
 
 ```bash
-python -m pip install .
-investmentideas
+# Once: save your OpenRouter key and your email (for SEC access) in .env in this folder.
+python3 -m intrinsicvalue --setup
+
+# Full memo: Claude Haiku research, Claude Opus analysis (three forecasts), GPT-6.2 Sol review
+python3 -m intrinsicvalue AAPL
+
+# Check inputs and collect evidence for free: no key, no model calls
+python3 -m intrinsicvalue AAPL --dry-run
+
+# Open the finished memo in your browser
+python3 -m intrinsicvalue AAPL --open
+
+# Past runs: date, ticker, status, base value, value / price, cost and memo path
+python3 -m intrinsicvalue --list
+
+# One forecast instead of three, and at most one revision round
+python3 -m intrinsicvalue AAPL --plan-samples 1 --max-revisions 1
+
+# Cheaper full analysis, or a four-call financial overview
+python3 -m intrinsicvalue AAPL --profile economy
+python3 -m intrinsicvalue AAPL --quick --profile economy
+
+# Replay dated sources and review a supplied company-specific forecast
+python3 -m intrinsicvalue AAPL --snapshot sources.json --forecast-plan assumptions.json
+
+# Investigate independent review notes in the same saved full run
+python3 -m intrinsicvalue AAPL --review-notes findings.txt --max-revisions 3
+
+# Re-run the plan, draft and review of a saved run on its frozen evidence
+python3 tools/replay.py research-output/AAPL/full-RUN_HASH replay-output --from draft
+
+# Measure how far the value moves across four plan samples on the same evidence
+python3 tools/replay.py research-output/AAPL/full-RUN_HASH samples-output --plan-samples 4 --budget 8
+
+# Rebuild a saved memo with the current rendering code, at no cost
+python3 tools/rerender.py research-output/AAPL/full-RUN_HASH memo-rerendered.md
+
+# Convert any memo.md to a readable, printable memo.html
+python3 -m investmentideas.memo_html research-output/AAPL/full-RUN_HASH/memo.md
+
+# Choose a different final reviewer without repeating completed research
+python3 -m intrinsicvalue AAPL --review-model moonshotai/kimi-k3.1-pro
 ```
+
+Use `--evidence` for focused text, `--sources` for supplemental source records,
+`--counterfactuals` for computed base-case overrides, and `--draft` for an edited
+author body. `--plan-samples N` (1-5) sets how many forecasts are written and averaged:
+three by default in the balanced profile, one in the others. `--max-revisions N` (0-8,
+default 3) limits the revision rounds after the first review. `--easy-model` and
+`--strong-model` select explicit model IDs; unavailable IDs and unsupported pricing
+fail before paid research. `--sec-contact you@example.com` sets the SEC contact for one
+run without saving it; `SEC_CONTACT_EMAIL` or a contact-bearing `SEC_USER_AGENT` can
+supply it instead. Every file option must name a regular file within its size limit.
+See `--help` and the [underwriting guide](underwriting.md).
+
+A run prints plain steps ("Step 4 of 9: writing the forecast (Claude Opus 5.5)") with the
+time and money so far, and ends with what happened, the base value and value / price, the
+cost, the memo path and the next step. Ctrl+C stops cleanly; run the same command again
+to resume.
+
+## Editable, auditable output
+
+Runs are saved below `research-output/TICKER/` in the folder you run from (`--output`
+chooses another). Full runs use `full-RUN_HASH` folders; `--list` finds them for you.
+The same ticker, models and evidence resume saved stages rather than paying again: on
+the same UTC date, or across midnight UTC for an unfinished run started within the last
+24 hours. A later run starts fresh evidence; use `--output fresh-folder` for a new
+same-day snapshot. OS file locks prevent duplicate concurrent full runs.
+
+- `memo.html`: the memo as a self-contained page that opens in any browser and prints to PDF.
+- `memo.md`: a computed first page, the eight prose sections, the valuation detail,
+  reported history, method notes, sources and review status. A run that stops before
+  writing a memo leaves a short `memo.md` saying why.
+- `sources.json`, `sources_raw/`: provenance, exact excerpts, retrieval dates and document archives.
+- `source-ledger.json`: paragraph-to-citation mapping; citation syntax is not semantic proof.
+- `assumptions.json`, `valuation.json`, `cashflows.csv`, `sensitivity.csv`: editable inputs and reproducible calculations.
+- `plan-consensus.json`: each forecast sample, its value and value impact, and how they were combined.
+- `reviews/`, `revisions/`: frozen drafts, recorded findings, model responses, each round's
+  edits (`edits-N.json`) and covered-file hashes.
+- `computed-text-findings.json`: review findings on text the code writes, collected for a code fix.
+- `budget-preflight.json`: the reservation floors priced before the first paid call.
+- `state.json`, `usage.json`: checkpoints, requested/returned models, reported token usage and costs/reservations.
+- `cost-summary.json`: cumulative stage/model costs, retained estimates and reported token-count coverage.
+
+The browser offers the same files as downloads, named with the ticker and date. Edit
+assumptions and recompute **offline**, at no cost:
+
+```bash
+python3 -m intrinsicvalue --revalue research-output/AAPL/full-RUN_HASH/assumptions.json
+```
+
+It prints the bear, base and bull value per share beside the saved valuation and the
+change, and writes the new files to a `revalued` folder beside the assumptions file
+(`--output` chooses another).
+
+A provided draft archives the previous body and invalidates its approval. Supply the
+author body only; valuation tables, source register and status are regenerated.
+
+An offline revaluation updates model artifacts; it does not silently rewrite or
+reapprove a previous memo. Generate/review a revised memo when inputs change.
 
 ## Research and valuation
 
@@ -142,91 +259,6 @@ accounting conventions, editable plans and limits. Forecasts remain house assump
 this FCFF model does not suit every sector or security and has no detailed refinancing,
 NOL or lease-adjustment schedule.
 
-## CLI
-
-```bash
-# Once: save your OpenRouter key and your email (for SEC access) in .env in this folder.
-# Exporting OPENROUTER_API_KEY and SEC_CONTACT_EMAIL in your shell works too, and wins.
-python -m investmentideas --setup
-
-# Full memo: Claude Haiku research, Claude Opus analysis (three forecasts), GPT-6.2 Sol review
-python -m investmentideas AAPL --profile balanced --budget 20
-
-# One forecast instead of three, and at most one revision round
-python -m investmentideas AAPL --plan-samples 1 --max-revisions 1 --budget 20
-
-# Cheaper full analysis, or a four-call financial overview
-python -m investmentideas AAPL --profile economy --budget 20
-python -m investmentideas AAPL --quick --profile economy --budget 2
-
-# Replay dated sources and review a supplied company-specific forecast
-python -m investmentideas AAPL --snapshot sources.json --forecast-plan assumptions.json --budget 20
-
-# Investigate independent review notes in the same day's saved full run
-python -m investmentideas AAPL --review-notes findings.txt --max-revisions 3 --budget 20
-
-# Re-run the plan, draft and review of a saved run on its frozen evidence
-python tools/replay.py research-output/AAPL/full-RUN_HASH replay-output --from draft
-
-# Measure how far the value moves across four plan samples on the same evidence
-python tools/replay.py research-output/AAPL/full-RUN_HASH samples-output --plan-samples 4 --budget 8
-
-# Rebuild a saved memo with the current rendering code, at no cost
-python tools/rerender.py research-output/AAPL/full-RUN_HASH memo-rerendered.md
-
-# Choose a different final reviewer without repeating completed research
-python -m investmentideas AAPL --review-model moonshotai/kimi-k3.1-pro --budget 20
-
-```
-
-Use `--evidence` for focused text, `--sources` for supplemental source records,
-`--counterfactuals` for computed base-case overrides, and `--draft` for an edited
-author body. `--plan-samples N` (1-5) sets how many forecasts are written and averaged:
-three by default in the balanced profile, one in the others. `--max-revisions N` (0-8,
-default 3) limits the revision rounds after the first review. `--easy-model` and
-`--strong-model` select explicit model IDs; unavailable IDs and unsupported pricing
-fail before paid research. `--sec-contact your-real-email@example.com`
-sets SEC requester identity for one run without saving it. `SEC_CONTACT_EMAIL` or a
-contact-bearing `SEC_USER_AGENT` can supply it instead. See `--help` and the
-[underwriting guide](underwriting.md).
-
-On Windows, `py -m investmentideas --setup` saves the same `.env` file; setting
-`$env:OPENROUTER_API_KEY` in PowerShell or using the browser form also works.
-
-## Editable, auditable output
-
-Runs are saved below `research-output/TICKER/`. Full runs use `full-RUN_HASH` folders.
-The same ticker/models/evidence on the same UTC date resume saved stages rather
-than paying again. A new day refreshes the evidence; use `--output fresh-folder`
-for a new same-day snapshot. OS file locks prevent duplicate concurrent full runs.
-
-- `memo.md`: a computed first page, the eight prose sections, the valuation detail,
-  reported history, method notes, sources and review status.
-- `sources.json`, `sources_raw/`: provenance, exact excerpts, retrieval dates and document archives.
-- `source-ledger.json`: paragraph-to-citation mapping; citation syntax is not semantic proof.
-- `assumptions.json`, `valuation.json`, `cashflows.csv`, `sensitivity.csv`: editable inputs and reproducible calculations.
-- `plan-consensus.json`: each forecast sample, its value and value impact, and how they were combined.
-- `reviews/`, `revisions/`: frozen drafts, recorded findings, model responses, each round's
-  edits (`edits-N.json`) and covered-file hashes.
-- `computed-text-findings.json`: review findings on text the code writes, collected for a code fix.
-- `budget-preflight.json`: the reservation floors priced before the first paid call.
-- `state.json`, `usage.json`: checkpoints, requested/returned models, reported token usage and costs/reservations.
-- `cost-summary.json`: cumulative stage/model costs, retained estimates and reported token-count coverage.
-
-The browser provides authenticated downloads. Edit assumptions and recompute **offline**:
-
-```bash
-python -m investmentideas --revalue assumptions.json --output revalued
-# Or:
-python -m investmentideas.valuation assumptions.json --output revalued
-```
-
-A provided draft archives the previous body and invalidates its approval. Supply the
-author body only; valuation tables, source register and status are regenerated.
-
-An offline revaluation updates model artifacts; it does not silently rewrite or
-reapprove a previous memo. Generate/review a revised memo when inputs change.
-
 ## Model routing and costs
 
 | Profile | Extraction and web research | Forecast, author and correction | Review |
@@ -251,8 +283,9 @@ explicit `--review-model` can name any model, including the author; it is saved 
 the run and invalidates its prior review;
 forecasts and completed research are retained. A run folder saved before the
 cross-model default keeps its saved reviewer unless `--review-model` is given.
-Interrupted/failed requests preserve a reservation because a provider may
-already have charged; completed stages are reused.
+Interrupted or failed requests preserve a reservation because a provider may already
+have charged; a request OpenRouter refuses before any model runs (HTTP 400, 401, 402 or
+403) is booked at zero. Completed stages are reused.
 
 The cost summary separates provider-reported cost from retained estimates.
 `state.json` also records full-versus-presented valuation-context UTF-8 byte sizes.
@@ -326,29 +359,25 @@ fallback for new research.
 Recompute it without an API key:
 
 ```bash
-python -m investmentideas --revalue examples/AAPL-2026-11-06-revised/assumptions.json --output revalued
+python3 -m intrinsicvalue --revalue examples/AAPL-2026-11-06-revised/assumptions.json
 ```
 
 ## Verification and limitations
 
 ```bash
-python -m unittest discover -s tests/public_runner -v
-python -m pip install .
-investmentideas --help
+python3 -m unittest discover -s tests/public_runner -v
+python3 -m pip install .
+intrinsicvalue --help
 ```
 
-The current source passes **1,055 tests** locally on Python 3.9, 3.12 and 3.13 (four
-skip unless saved runs are named for them); the
-v0.2.0 release passed 268. The
-[CI matrix](https://github.com/praveenchunduru/IntrinsicValue/actions/runs/42261827883)
-tests Python 3.10, 3.12 and 3.13. CI runs synthetic evidence and mocked transports without model calls or
-secrets. [Live-validation guidance](openrouter_live_validation.md) explains
-local budget controls and review provenance. Model review is a recorded assessment,
-**not independent publication certification or a guarantee of investment truth**.
-Those primarily mocked tests missed material live-data and workflow failures
-identified by the external audit. A fresh end-to-end baseline is required before
-claiming the automated workflow works in practice. Financial facts, forecasts and
-source support still require careful inspection.
+The current source passes **1,137 tests** locally on Python 3.9, 3.12 and 3.13 (five
+skip unless saved runs are named for them); the v0.2.0 release passed 268. The CI matrix
+tests Python 3.9, 3.10, 3.12 and 3.13 with synthetic evidence and mocked transports,
+without model calls or secrets. [Live-validation guidance](openrouter_live_validation.md)
+explains local budget controls and review provenance. Model review is a recorded
+assessment, **not independent publication certification or a guarantee of investment
+truth**. Live runs are recorded in [audit status](audit-status.md); financial facts,
+forecasts and source support still require careful inspection.
 The canonical input adapter recognizes a bounded set of US-GAAP/DEI concepts from
 inline filings and SEC Companyfacts; unsupported taxonomies or missing bridge components require
 additional primary coverage rather than a model-generated substitute.

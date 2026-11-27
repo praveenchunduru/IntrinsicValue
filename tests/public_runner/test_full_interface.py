@@ -14,13 +14,15 @@ import unittest
 from unittest.mock import Mock, patch
 
 from investmentideas import __main__ as cli
-from investmentideas import web
+from investmentideas import preflight, web
 from investmentideas.sec_http import SECContactRequired, user_agent
 
 
 @contextlib.contextmanager
-def local_server(directory):
-    server = web.create_server(0, directory)
+def local_server(directory, contact='fixture-contact@example.org'):
+    # Changed 2026-11-27: the browser refuses a run with no SEC contact, and checks the
+    # key with OpenRouter before starting; a stand-in check keeps these tests offline.
+    server = web.create_server(0, directory, sec_contact=contact, key_check=lambda key: {})
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     port = server.server_address[1]
@@ -32,8 +34,7 @@ def local_server(directory):
         connection.close()
         return result
     try:
-        _, page, _ = request('/')
-        token = re.search("const csrf='([^']+)'", page.decode()).group(1)
+        token = server.token
         yield request, token
     finally:
         server.shutdown()
@@ -57,7 +58,8 @@ class CommandLineTests(unittest.TestCase):
         for arguments, expected in [(['AAPL'], 'full'), (['AAPL','--quick'], 'quick')]:
             with self.subTest(mode=expected), patch.dict(sys.modules, {'investmentideas.pipeline':full}), \
                     patch.object(cli,'run',return_value=Path('/tmp/quick-result')) as quick, \
-                    patch.dict(os.environ,{'OPENROUTER_API_KEY':'synthetic-key'}), \
+                    patch.dict(os.environ,{'OPENROUTER_API_KEY':'synthetic-key','SEC_CONTACT_EMAIL':'fixture@example.org'}), \
+                    patch.object(preflight,'check_key',return_value={}), \
                     patch.object(sys,'argv',['investmentideas']+arguments), contextlib.redirect_stdout(io.StringIO()):
                 full.run.reset_mock()
                 cli.main()
@@ -77,7 +79,8 @@ class CommandLineTests(unittest.TestCase):
             self.assertNotIn('sec_contact',kwargs)
             return Path('/tmp/full-result')
         full.run=Mock(side_effect=scoped)
-        with patch.dict(sys.modules,{'investmentideas.pipeline':full}),patch.dict(os.environ,{},clear=True), \
+        with patch.dict(sys.modules,{'investmentideas.pipeline':full}),patch.dict(os.environ,{'OPENROUTER_API_KEY':'synthetic-key'},clear=True), \
+                patch.object(preflight,'check_key',return_value={}), \
                 patch.object(sys,'argv',['investmentideas','AAPL','--sec-contact',email]), \
                 contextlib.redirect_stdout(io.StringIO()) as stdout:
             cli.main()
@@ -93,16 +96,17 @@ class CommandLineTests(unittest.TestCase):
         diagnostics = types.ModuleType('investmentideas.pipeline')
         diagnostics.attach_diagnostics = Mock(side_effect=lambda plan, result: result)
         with tempfile.TemporaryDirectory() as temp:
-            path = Path(temp)/'edited.json'; path.write_text('{"edited": true}')
+            path = Path(temp)/'edited.json'; path.write_text('{"edited": true, "scenarios": {}}')
             target = Path(temp)/'recomputed'
             with patch.dict(sys.modules,{'investmentideas.valuation':module,'investmentideas.pipeline':diagnostics}), \
                     patch.object(sys,'argv',['investmentideas','--revalue',str(path),'--output',str(target)]), \
                     patch.dict(os.environ,{},clear=True), patch.object(cli,'run') as quick, \
                     contextlib.redirect_stdout(io.StringIO()):
                 cli.main()
-            module.evaluate.assert_called_once_with({'edited':True})
-            diagnostics.attach_diagnostics.assert_called_once_with({'edited':True},{'base':123})
-            module.save_valuation.assert_called_once_with(target,{'edited':True},{'base':123})
+            edited = {'edited':True,'scenarios':{}}
+            module.evaluate.assert_called_once_with(edited)
+            diagnostics.attach_diagnostics.assert_called_once_with(edited,{'base':123})
+            module.save_valuation.assert_called_once_with(target,edited,{'base':123})
             quick.assert_not_called()
 
     def test_no_ticker_opens_the_requested_local_mode(self):
@@ -156,7 +160,8 @@ class BrowserFlowTests(unittest.TestCase):
                 self.assertEqual(result['cost_usd'],0)
                 self.assertEqual(result['quality_status'],'budget_paused')
                 self.assertIn('budget-preflight.json',result['downloads'])
-                self.assertIn('--budget 10',result['message'])
+                # Changed 2026-11-27: the page names the form field, not the command-line flag.
+                self.assertIn('spending allowance to $10',result['message'])
                 self.assertEqual(request('/download/budget-preflight.json',headers={'X-Research-Token':token})[0],200)
 
     def test_completed_full_download_edits_lose_review_badge_without_rerun_or_get_side_effects(self):

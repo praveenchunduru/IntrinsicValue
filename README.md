@@ -10,29 +10,26 @@ and make mistakes. Do your own work before you invest.
 
 ## Get started
 
-Needs Python 3.10+ and an [OpenRouter API key](https://openrouter.ai/settings/keys).
+Needs Python 3.9 or newer (the Mac's own `python3` works) and an
+[OpenRouter API key](https://openrouter.ai/settings/keys).
 
 ```bash
 git clone https://github.com/praveenchunduru/IntrinsicValue.git
 cd IntrinsicValue
-python3 -m investmentideas
+python3 -m intrinsicvalue --setup
+python3 -m intrinsicvalue MSFT
 ```
 
-Open http://127.0.0.1:8765, paste your key and email, and enter a ticker. The SEC asks
-for a contact email before it serves filings. On Windows use `py` in place of `python3`.
+`--setup` asks once for your key and your email (the SEC asks for a contact before it
+serves filings) and saves them in `.env`. Prefer a form? Run `python3 -m intrinsicvalue`
+with no ticker and your browser opens it. On Windows, use `py` in place of `python3`.
 
-To skip the form, set both values once and name the ticker:
-
-```bash
-export OPENROUTER_API_KEY=sk-or-...
-export SEC_CONTACT_EMAIL=you@example.com
-python3 -m investmentideas MSFT
-```
-
-- **Output:** the run prints the path to the memo. The model and sources sit beside it.
-- **Rerun:** the same ticker on the same day resumes and does not pay twice. A new day refreshes the evidence.
+- **Output:** keep the window open until the run ends. It prints the value, the cost and the path to `memo.html`, which opens in a browser and prints to PDF.
+- **Past runs:** `--list` shows each run's date, value, cost and memo.
+- **Rerun:** an unfinished run of the same ticker resumes within 24 hours and does not pay twice. `--dry-run` checks inputs for free.
 - **Spend:** `--budget` sets the ceiling for a run. The default is $20.
 - **Revalue:** edit `assumptions.json` and recompute offline at no cost with `--revalue`.
+- **Update:** `git pull`. Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## Methodology
 
