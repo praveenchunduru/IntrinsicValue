@@ -618,7 +618,9 @@ class GapAttributionTests(unittest.TestCase):
         self.assertTrue(solved or 'cannot reach the price alone' in table)
 
     def test_sections_and_review_use_the_computed_attribution(self):
-        self.assertIn('which inputs\nalone can and cannot reach the price', pipeline.SECTIONS)
+        # Changed 2026-11-27: the first-page table is named as the full account, the discount rate included.
+        self.assertIn('which inputs alone can and cannot reach the price, the flat discount rate among', pipeline.SECTIONS)
+        self.assertIn('"What the price\nneeds"', pipeline.SECTIONS)
         self.assertIn('Assign the difference between value and price no cause', pipeline.SECTIONS)
         self.assertNotIn('Say plainly whether the', pipeline.SECTIONS)
         self.assertIn('Scenario drivers are house assumptions', pipeline.SECTIONS)

@@ -356,13 +356,23 @@ RUBRIC_RULES = (
     ('M3', 'major', 'a number that is neither in the evidence, nor in the computed output, nor a shown calculation '
                     'from cited figures'),
     ('M4', 'major', 'a statement that contradicts the computed account of which inputs alone can and cannot bring '
-                    'value to the price'),
+                    'value to the price (the first-page table "What the price needs", the flat discount rate included)'),
     ('M5', 'major', 'a material claim contradicted by primary evidence in the run'),
     ('M6', 'major', 'a model output cited to a filing or source as if reported'),
     ('N1', 'minor', 'rounding within the last displayed digit'),
     ('N2', 'minor', 'wording, emphasis or structure'),
     ('N3', 'minor', 'an omission that does not change the conclusion'),
 )
+# The rule the unverified-company-fact check enforces, told to the writer, the fix and edit
+# calls and the reviewer in the same words (rule M1; Walmart's first review, 2026-11-27).
+UNVERIFIED_FACT_RULE = (
+    'A company fact or figure whose only support is an unverified excerpt is deleted, replaced by the primary-source '
+    'figure, or stated as the own view or estimate of an outside party the sentence names (a research firm, an '
+    'analyst, an aggregator, a press report, consensus), in a sentence that draws no company conclusion and makes no '
+    'comparison with the house forecast. An excerpt, or the company\'s own filing quoted through one, is not an outside '
+    'party, and an "unverified" label does not make a company fact acceptable. Wrong: "Advertising revenue rose 37% in '
+    'the quarter [S19, unverified]." Right: "One outside analysis argues that advertising is growing faster than '
+    'merchandise sales [S19, unverified]."')
 RULE_SEVERITY = {rule: severity for rule, severity, _ in RUBRIC_RULES}
 # The trading-layer terms rule B2 names. A B2 finding whose quoted text has none
 # of them is refuted by Python ("accretive" was graded a blocker, 2026-11-15).
@@ -397,7 +407,7 @@ RUBRIC = (
     'reported figure it is compared with. Naming the convention step the value is most sensitive to is required and '
     'is not an attribution of the gap to price. Rounding is never material; unverified excerpts used only for attributed '
     'outside views, consensus or guidance context are not material, but a company fact or number supported only by '
-    'an unverified excerpt is, whatever its label. ' + WRITING_STANDARD)
+    'an unverified excerpt is, whatever its label. ' + UNVERIFIED_FACT_RULE + ' ' + WRITING_STANDARD)
 
 
 # Free checks run on a draft before the paid review. They trace every figure in
@@ -553,6 +563,112 @@ def untraced_figures(text, pools):
     return [display for display, number, decimals, unit in figures if not _traced(number, decimals, unit, pools[0])]
 
 
+# A company fact resting only on unverified web excerpts (rule M1). Every saved first review
+# raised it (Walmart, Microsoft, Coca-Cola, Alphabet and Apple, 2026-11), and the reviewer
+# does not accept an inline "unverified" label on a company fact. What those reviews accepted
+# and rejected sets the test. Accepted: the sentence's subject is an outside party or its view
+# (consensus, an aggregator, an outside analysis, a press report, Morningstar, "one outside
+# view argues", "it holds that"), guidance, or a named speaker's words (management, the CEO or
+# CFO "cited", "describes", said on the call). Rejected: the same figures stated as company
+# results ("advertising rose 37%", "executive pay ties about 82%"); an excerpt as the subject
+# ("an unverified research excerpt estimates concentrate margins of 40% to 60%"); the company's
+# own documents quoted through an excerpt ("the 10-Q describes", "the results reported"); a
+# gap note that restates the figure ("$45.2 billion ... come only from an unverified call
+# excerpt"); a conditional built on an unverified premise ("price investment funded by a
+# refund that does not recur could leave lower prices"); and the house forecast compared with
+# an unverified figure ("the house operating forecast is close to consensus").
+_OUTSIDE_PARTY = re.compile(
+    r'\b(?:consensus|analysts?|aggregators?|outside|third[- ]party|press (?!release)|news|media|surveys?|brokers?|'
+    r'sell[- ]side|bulls?|bears?|critics?|commentators?|investors?|short[- ]sellers?|rating agenc\w+|'
+    r'forecasters?|observers?|opposing (?:case|view)|(?:this|that|one|another|a|the) view|'
+    r'(?:research|brokerage|advisory|consulting) (?:firm|house|note|report)s?)\b', re.I)
+# Named outside parties: research and data providers, banks, and firm names such as "TON618 Capital".
+_NAMED_PARTY = re.compile(
+    r'\b(?:Morningstar|Bloomberg|Reuters|FactSet|Visible Alpha|Zacks|Yahoo|Stock Analysis|MarketWatch|Barron\'s|'
+    r'Seeking Alpha|CNBC|Financial Times|Wall Street Journal|WSJ|Moody\'s|Fitch|Gartner|IDC|Canalys|Counterpoint|'
+    r'Jefferies|Goldman|Morgan Stanley|JPMorgan|J\.P\. Morgan|UBS|Barclays|Citi(?:group)?|Bernstein|Evercore|'
+    r'Wedbush|DBS|Wells Fargo|BofA|Bank of America|Deutsche Bank|HSBC|Mizuho|Nomura|'
+    r'[A-Z][\w&.\'-]*(?: [A-Z][\w&.\'-]*)* (?:Capital|Research|Securities|Partners|Analytics|Advisors|Markets))\b')
+_GUIDANCE = re.compile(r'\bguid(?:ance|ed)\b', re.I)
+_VIEW_VERB = re.compile(r'\b(?:holds?|held|argues?|argued|contends?|contended|claims?|claimed|believes?|believed|'
+                        r'predicts?|predicted|warns?|warned)\b', re.I)
+_PRONOUN_REPORT = re.compile(r'^(?:\W*\w+\W*\*\*\s*)?(?:It|They|He|She|The (?:firm|report|analyst|note|article|author))'
+                             r'\s+(?:also\s+)?(?:notes?|says?|said|reports?|reported|estimates?|expects?|describes?|'
+                             r'cites?|puts?|sees?|calls?|projects?|forecasts?)\b')
+_SPEAKER = re.compile(r'\b(?:management|CEO|CFO|chief (?:executive|financial) officer|executives?|chair(?:man|woman)?)\b'
+                      r'[^.;]{0,60}?\b(?:said|says|cited|cites|described|describes|told|stated|noted|notes|expects?|'
+                      r'expected|called|calls|guided|framed|frames)\b|\bon the (?:earnings |results )?call\b', re.I)
+_EXCERPT_SUBJECT = re.compile(r'\b(?:an?|the)\s+(?:unverified\s+)?(?:[\w-]+\s+){0,2}excerpts?\b', re.I)
+_ONLY_UNVERIFIED = re.compile(r'\b(?:only|solely)\s+(?:in|by|as|from)\b[^.;]{0,40}\bunverified\b|'
+                              r'\bis (?:unverified|outside) context\b|\bcontext only\b|\bonly\b[^.;]{0,30}\bcontext\b', re.I)
+_COMPANY_DOCUMENT = re.compile(r'\b(?:10-[KQ]|8-K|20-F|annual report|quarterly report|proxy(?: statement)?|'
+                               r'earnings release|press release|the release|(?:quarter|year|period)(?:ly)? results|'
+                               r'the results|the filing)\b', re.I)
+_FIGURE = re.compile(r'\d')
+# The house forecast set beside an unverified figure. Raised by the first reviews of
+# Microsoft and Coca-Cola and in Alphabet's second, cited or not; the evidence-tier rule
+# bars an unverified excerpt as the only support for a number used in a comparison.
+_COMPARISON = re.compile(r'\b(?:close to|consistent with|in line with|matches|agrees? with|near(?!-)|ahead of|'
+                         r'above|below|higher than|lower than|compares? with|against|differs? from|differ from|'
+                         r'modestly different from|supports?|confirms?)\b', re.I)
+_UNVERIFIED_REFERENT = re.compile(r'\b(?:consensus|guidance|expectations|(?:outside|analysts?\W?) (?:estimates?|models?|'
+                                  r'figures?)|(?:that|this|those|these) (?:description|estimates?|figures?|guidance))\b', re.I)
+_HOUSE_SUBJECT = re.compile(r'\b(?:house|base(?:-case)? (?:path|case|forecast)|our forecast)\b', re.I)
+
+
+def _attributed_outside(line):
+    """True when an unverified-only sentence presents its content as an outside party's view, guidance or a speaker's words."""
+    figure = bool(_FIGURE.search(re.sub(r'\b(?:19|20)\d\d(?:-\d\d(?:-\d\d)?)?\b', '', line)))
+    if _ONLY_UNVERIFIED.search(line) and not figure:
+        return True  # an evidence-gap note that restates no figure
+    if _SPEAKER.search(line) or _PRONOUN_REPORT.search(line):
+        return True
+    outside = _OUTSIDE_PARTY.search(line) or _NAMED_PARTY.search(line)
+    if not outside and (_EXCERPT_SUBJECT.search(line) or _COMPANY_DOCUMENT.search(line)):
+        return False  # an excerpt or the company's own document is a conduit, not a party
+    return bool(outside or _GUIDANCE.search(line) or _VIEW_VERB.search(line))
+
+
+def _citations(line):
+    return set(re.findall(r'S\d+', ' '.join(re.findall(r'\[([^\]]*S\d[^\]]*)\]', line))))
+
+
+def unverified_company_facts(body, tiers):
+    """Sentences of the prose that rest a company fact, or a comparison with the house forecast, on unverified excerpts.
+
+    ``tiers`` maps a source ID to its tier. Returns (kind, sentence) pairs: 'fact' for a sentence
+    whose citations are all unverified and which presents its content as the company's, and
+    'comparison' for a sentence that sets the house forecast beside consensus, guidance or an
+    outside estimate supported, if at all, only by unverified excerpts. A conclusion that rests
+    on such a figure without naming it is not detected: the saved reviews show no wording that
+    separates it reliably from a conclusion drawn from the primary record.
+    """
+    found = []
+    # "Walmart U.S. advertising" is one sentence.
+    for raw in re.split(r'(?<=[.!?])(?<!\bU\.S\.)(?<!\bU\.K\.)(?<!\bInc\.)(?<!\bCo\.)(?<!\bvs\.)\s+|\n+', body or ''):
+        line = raw.strip()
+        if not line or line.startswith(('#', '|')):
+            continue
+        cited = _citations(line)
+        unverified = bool(cited) and all(tiers.get(ref) in UNVERIFIED_SOURCE_TIERS for ref in cited)
+        # Citations and a bold lead-in ("**Revenue against outside estimates.**") are not the claim.
+        text = re.sub(r'^\W*\*\*[^*]+\*\*\s*', '', re.sub(r'\[[^\]]*\]', '', line))
+        if (not cited or unverified) and _HOUSE_SUBJECT.search(text) and _COMPARISON.search(text) and \
+                _UNVERIFIED_REFERENT.search(text):
+            found.append(('comparison', line[:300]))
+        elif unverified and not _attributed_outside(text):
+            found.append(('fact', line[:300]))
+    return found
+
+
+
+UNVERIFIED_FACT_FIX = (
+    'Delete the claim; or replace it with the primary-source figure if the evidence has one, citing that source; or '
+    'restate it as the own view or estimate of an outside party the sentence names, in a sentence that draws no '
+    'company conclusion from it. Never keep it as a company fact with an "unverified" label. For a comparison of the house forecast with '
+    'an unverified figure, delete the comparison; consensus may stay as attributed context in its own sentence.')
+
+
 def prereview_checks(memo, sources, computed=()):
     """Deterministic defects in a draft's prose, before any paid review.
 
@@ -606,10 +722,16 @@ def prereview_checks(memo, sources, computed=()):
                     unlabelled.append((display, line[:300]))
                 continue
             untraced.append((display, line[:300]))
+    company_facts = unverified_company_facts(body, tiers)
     findings = []
     def add(identifier, severity, issue, fix, items):
         findings.append({'id': identifier, 'severity': severity, 'issue': issue, 'fix': fix, 'source_refs': [],
                          'items': [{'figure': figure, 'sentence': text} for figure, text in items][:25]})
+    if company_facts:
+        add('unverified-company-fact', 'major', f'{len(company_facts)} sentences state a company fact or figure, or '
+            'compare the house forecast with one, whose only support is an unverified web excerpt (rule M1). An '
+            '"unverified" label does not make a company fact acceptable.', UNVERIFIED_FACT_FIX,
+            [('', text) for _, text in company_facts])
     if untraced:
         add('number-untraced', 'minor', f'{len(untraced)} figures in the prose match nothing in the computed output, '
             'the reported inputs or any primary source within display rounding.',

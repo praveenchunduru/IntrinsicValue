@@ -26,7 +26,7 @@ from .fundamentals import yahoo_financials
 from .inputs import canonical_reported_inputs, operating_company_gate, pin_reported_inputs
 from .quality import (WRITING_STANDARD, dollar_amounts, style_added, DIAGNOSTIC_SCOPE, HOUSE_ATTRIBUTION, RUBRIC, TRADING_TERMS, assessment_findings, claim_ledger,
                       inspect_memo, parse_json, parse_review, prereview_checks, prose_words, trace_pools, untraced_figures,
-                      _figures)
+                      _figures, UNVERIFIED_FACT_FIX)
 from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_breakdown_facts, inline_facts, archive_focus_excerpts
 from .evidence_tables import (OUTSIDE_SCANNED, breakdown_markdown, breakdown_tables, depreciation_phrase,
                               repurchase_price_basis, scale_of, filing_supplement_for, historical_baseline,
@@ -59,14 +59,17 @@ table "Conventions that move the value most". It adds the valuation detail, repo
 your text. Do not re-type those tables or restate their figures; name a row only where the argument needs it.
 Each section opens with its conclusion.
 (1) Valuation conclusion (about 150 words). Say what the house concludes and which evidence the conclusion rests
-on most. Assign the difference between value and price no cause beyond the first page's account of which inputs
-alone can and cannot reach the price. A convention step is a row of the convention tables: the base value with one
+on most. Assign the difference between value and price no cause beyond the first page's table "What the price
+needs": it is the full account of which inputs alone can and cannot reach the price, the flat discount rate among
+them, so count inputs from it and from nowhere else. A convention step is a row of the convention tables: the base value with one
 house convention changed. Horizon, rate-regime and country-risk rows are exhibits, and sensitivity rows show scale;
 name them as such. The S&P 500 row is context for reading value / price under the house conventions. Report it, if
 at all, as the index's own ratio; it explains no part of the company's difference.
 (2) Variant view (about 400 words): on the inputs that can close the difference, why the house forecast differs
 from what the price requires, with primary evidence. Answer the strongest sourced opposing case with operating
-evidence (demand, pricing, margins, capital needs). If the operating forecast is close to consensus, say so.
+evidence (demand, pricing, margins, capital needs). Where consensus figures appear only in unverified excerpts,
+report them, if at all, as the aggregator's own figures in their own sentence, and do not compare the house forecast
+with them.
 (3) Business economics, industry and competition (about 450 words), from primary sources and the computed tables.
 (4) Management, capital allocation and financial history (about 450 words), from the reported history and
 breakdown tables; compare buybacks with house value using computed figures. Operating-lease cost is inside EBIT;
@@ -552,7 +555,8 @@ EDIT_INSTRUCTIONS = (
     'computed summary, the exhibits or a source, calculate no new figures, and place each [S#] after the sourced '
     'figure it supports. If a figure you need is not there, make the point without it. Every replacement follows the '
     'writing standard in the quality standard below; Python rejects a replacement that adds "USD" for a dollar filer, a '
-    'number of seven or more digits, an em dash, a ", not" contrast or a sentence narrating an exhibit.')
+    'number of seven or more digits, an em dash, a ", not" contrast or a sentence narrating an exhibit. For a rule M1 '
+    'or unverified-company-fact finding: '+UNVERIFIED_FACT_FIX)
 # The writer prompt's opening; tests and offline harnesses route the draft call on it.
 WRITER_OPENING = 'Write the prose sections of the intrinsic-value memo for '
 
@@ -3511,6 +3515,45 @@ def _requirement_cells(row, result=None, style=None):
     return label,house,needed
 
 
+NUMBER_WORDS = {1:'one',2:'two',3:'three',4:'four',5:'five',6:'six',7:'seven',8:'eight',9:'nine',10:'ten'}
+
+
+def _discount_rate_requirement(result, style):
+    """[label, house, needed] for the flat discount rate at which the headline value equals the price, or None.
+
+    The first-page table listed only operating and terminal inputs, and the writer read it as the
+    full account of what can reach the price; the implied return is another route (rule M4 in the
+    Walmart, Microsoft, Apple and Coca-Cola reviews, 2026-11-27).
+    """
+    implied=(result or {}).get('implied_return_at_price')
+    if not isinstance(implied,dict):
+        return None
+    row=(implied.get('probability_weighted_value') if not _base_headline(result) else None) or \
+        (implied.get('scenarios') or {}).get('base') or implied.get('probability_weighted_value')
+    if not isinstance(row,dict):
+        return None
+    required,solved=row.get('required_return_flat_equivalent'),row.get('implied_return')
+    house=f'{required:.1%} house-equivalent' if _finite_number(required) else 'n/a'
+    if _finite_number(solved):
+        needed=f'{solved:.1%}'
+    elif len(row.get('implied_return_solutions') or [])>1:
+        needed='several rates: '+', '.join(f'{rate:.1%}' for rate in row['implied_return_solutions'])
+    else:
+        bound=row.get('price_bound') if isinstance(row.get('price_bound'),dict) else {}
+        low,high=(bound.get('search_range') or (None,None))[:2] if bound.get('search_range') else (None,None)
+        if bound.get('price_position')=='above_highest_value':
+            needed=(f'cannot reach the price alone; highest value {style.per_share(bound["highest_value"])} at '
+                    f'{bound["rate_at_highest_value"]:.1%}')
+        elif bound.get('price_position')=='below_lowest_value':
+            needed=(f'cannot reach the price alone; lowest value {style.per_share(bound["lowest_value"])} at '
+                    f'{bound["rate_at_lowest_value"]:.1%}')
+        else:
+            needed='cannot reach the price alone'
+        if _finite_number(low) and _finite_number(high):
+            needed+=f' (searched {low:.1%} to {high:.0%})'
+    return ['Discount rate, one flat rate',house,needed]
+
+
 def memo_title(plan, result, sources=(), ticker=''):
     """'Apple Inc. (AAPL): intrinsic value, 2026-11-27'."""
     name=''
@@ -3611,6 +3654,9 @@ def computed_summary(plan, result):
                 cell=', '.join(part for part in ((house_rank and f'house {house_rank}'),
                                                  (needed_rank and f'needed {needed_rank}')) if part)
             body.append([label,house,needed,cell])
+        rate=_discount_rate_requirement(result,style)
+        if rate:
+            body.append(rate+[''])
         header=['Input','House','Needed for value = price']
         if any(row[3] for row in body):
             real=any(((result.get('base_rates') or {}).get('references') or {}).get(key,{}).get('growth_basis')=='real'
@@ -3618,7 +3664,9 @@ def computed_summary(plan, result):
             header.append(f'Base-rate percentile{" of real growth" if real else ""}, {percentile_key} years')
         else:
             body=[row[:3] for row in body]
-        lines+=['','**What the price needs.** Each row changes one base-case input and holds the rest.','']
+        count=NUMBER_WORDS.get(len(body),str(len(body)))
+        lines+=['',f'**What the price needs.** The table lists {count} inputs, each changed alone with the rest held at '
+                'the base case.','']
         lines+=_table(header,body,['---','---:','---']+(['---'] if len(header)>3 else []))
     top=_top_conventions(result)
     if top:
@@ -6100,7 +6148,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'once in the memo; keep each quote to one sentence or less. For an untraced figure, use the exact figure from '
                 'the computed summary, the COMPUTED FROM REPORTED FILINGS tables, the valuation output or a primary source, '
                 'or remove the figure. For a figure found only in unverified excerpts, cite the primary source that contains '
-                'it, label it as unverified context, or remove it. Describe convention rows separately, never as adding up. '
+                'it, label it as unverified context, or remove it. For an unverified company fact (unverified-company-fact): '
+                +UNVERIFIED_FACT_FIX+' Describe convention rows separately, never as adding up. '
                 'For a style problem, rewrite the sentence to the writing standard below. Change nothing else.\n'+
                 EVIDENCE_TIER_RULE+'\n'+WRITING_STANDARD+'\nProblems:\n'+json.dumps(fixable)+'\nCOMPUTED SUMMARY:\n'+computed_summary(plan,result)+
                 evidence_above()+'\nComputed exhibits:\n'+valuation_section(plan,result)+'\nMemo:\n'+memo,tokens=8000,
@@ -6160,7 +6209,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'of the writing standard is minor (N2), and other style preferences are no finding. Check: (1) every figure in the prose against the computed summary, the computed tables, the '
                 'valuation output or the cited source, and every comparison with the price by arithmetic; (2) that the '
                 'memo does not contradict the computed account of which inputs alone can and cannot bring value to the '
-                'price (explaining why the house forecast differs from what the price requires is the variant view and '
+                'price, given in full by the first-page table "What the price needs" (explaining why the house forecast differs from what the price requires is the variant view and '
                 'contradicts nothing; the conclusion need not restate the account); (3) that company facts rest on primary sources and unverified '
                 'excerpts are labelled context; (4) that the strongest sourced opposing case is answered with evidence; '
                 '(5) that no trading-layer language appears; (6) that convention rows are never added together; (7) that '
