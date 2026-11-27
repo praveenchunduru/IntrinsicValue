@@ -35,14 +35,22 @@ reserved separately before transport.
 The [offline budget regression](../tests/public_runner/test_budget_workflow.py) exercises
 fresh-from-ticker collection, complete stage contracts and zero assumed cache hits
 with large archived evidence shapes and explicitly synthetic financial-scope evidence.
-At its stated usage/rate assumptions, the first pass needs a peak $3.09 allowance;
-three full revisions need $9.17. Simulated reported usage is $1.69 and $7.77 respectively.
+At its stated usage/rate assumptions (GPT-5.4 review at $2.50/$15 per million input/output
+tokens), the first pass (draft, its fix call and one review) needs a peak $3.13
+allowance and the default single revision $5.37. Simulated reported usage is $1.89
+and $4.13 respectively. The fixture omits the calibration sources, so it does not
+exercise the market-consistent rate pins, and it assumes no prompt caching; live
+GPT-5.4 reviews with cached evidence cost about $0.07 instead of $0.40.
 These simulations support the tested $10 default path, not a general price or
 completion promise. They are not observed provider bills or research-quality evidence.
 
-The economy profile uses open-weight Qwen for extraction/search and DeepSeek for
-analysis. Balanced uses the same Qwen easy-work routing and Claude Sonnet for
-analysis. Review-model overrides are explicit. Prices and availability are checked
+The economy profile uses open-weight DeepSeek V4.1 Flash for extraction/search,
+DeepSeek V4 Pro for analysis and Kimi K3.1 Pro for review. Balanced uses Claude Haiku
+5.5 for easy work, Claude Opus 5.5 for analysis and GPT-6.2 Sol for review (newest
+generation in each slot, checked 2026-11-26). The runs recorded above used the earlier
+Qwen, Claude Sonnet 4.6 and GPT-5.4 routing. The default reviewer differs from
+the author model. An explicit review-model override can name any model and is saved
+with the run. Prices and availability are checked
 against the live catalog; there are no silent model substitutions or client retries.
 
 Full mode collects evidence, pins supported reported inputs, calculates an editable

@@ -1,13 +1,40 @@
 """Deterministic valuation presentation; saved full math artifacts stay authoritative.
 
-This module neither evaluates assumptions nor rounds reported/computed numbers.
-It removes repeated JSON subtrees and detailed intermediate countercase rows.
+This module never evaluates assumptions. It removes repeated JSON subtrees and
+detailed intermediate countercase rows, and on request shows floats to a fixed
+number of significant figures. Saved plans and results keep full precision.
 """
 from __future__ import annotations
 
 import copy
 import hashlib
 import json
+import math
+
+
+# Floats in model-facing JSON are shown to this many significant figures. A live
+# Microsoft run (2026-11-27) sent values such as 15775815885.096397 and
+# 0.08741803052779258 in every uncached prompt; no memo prints more than four.
+PROMPT_SIGNIFICANT_DIGITS = 6
+
+
+def rounded(value, digits=PROMPT_SIGNIFICANT_DIGITS):
+    """A copy of JSON data with floats to ``digits`` significant figures.
+
+    Integers, booleans, strings and nonfinite values are unchanged; a float that
+    rounds to a whole number below 1e15 is shown as an integer. Only for text
+    sent to a model: saved artifacts and every computation keep the originals.
+    """
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return value
+        shown = float(f'{value:.{digits}g}')
+        return int(shown) if shown.is_integer() and abs(shown) < 1e15 else shown
+    if isinstance(value, dict):
+        return {key: rounded(item, digits) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [rounded(item, digits) for item in value]
+    return value
 
 
 def _json(value):
@@ -81,11 +108,15 @@ def _deduplicate(value, path, seen):
     return value
 
 
-def valuation_context(plan, result):
+def valuation_context(plan, result, *, significant=None):
     """Return compact JSON retaining assumptions and authoritative result headlines.
 
+    With ``significant`` set, floats are shown to that many significant figures
+    (see ``rounded``); the metadata hashes still identify the full-precision inputs.
+
     The full plan and all result fields remain, including unfamiliar calibration,
-    monitoring, sensitivity, diagnostic and reverse-DCF fields. Only cashflows
+    monitoring, sensitivity, diagnostic and reverse-DCF fields, except the plan's
+    monthly ``rate_history`` pairs, which are counted rather than listed. Only cashflows
     directly inside named ``counterfactuals``/``countercases`` are summarized:
     annual FCFF/PV observations plus complete first/last operating rows survive.
     Main-scenario cashflows and every annual revenue path remain complete.
@@ -99,7 +130,14 @@ def valuation_context(plan, result):
     # Validate JSON and nonfinite values before transforming any content.
     plan_hash, result_hash = _sha(plan), _sha(result)
     references_enabled = not (_has_literal_reference(plan) or _has_literal_reference(result))
-    presentation = copy.deepcopy(result)
+    shown_plan = copy.deepcopy(plan) if significant is None else rounded(plan, significant)
+    history = shown_plan.get('rate_history')
+    if isinstance(history, dict) and isinstance(history.get('months'), list):
+        # The monthly rate pairs feed only the computed rate-regime rows in the result;
+        # the saved plan keeps them all.
+        shown_plan['rate_history'] = dict({key: value for key, value in history.items() if key != 'months'},
+                                          months_in_saved_plan=len(history['months']))
+    presentation = copy.deepcopy(result) if significant is None else rounded(result, significant)
     for key in ('counterfactuals', 'countercases'):
         cases = presentation.get(key)
         if isinstance(cases, dict):
@@ -110,14 +148,17 @@ def valuation_context(plan, result):
         'context_metadata': {
             'format': 'valuation-context-v1',
             'full_math_artifacts_authoritative': True,
-            'authority': 'The full original plan and result artifacts are authoritative; this is a deterministic presentation, not new valuation math.',
+            'authority': 'The full original plan and result artifacts are authoritative; this is a deterministic presentation with no new valuation math.',
             'plan_sha256': plan_hash,
             'result_sha256': result_hash,
             'references_enabled': references_enabled,
             'projection_scope': 'Main scenarios and all revenue paths are complete. Countercase cashflows may show annual FCFF/PV aggregates and complete first/last operating rows; intermediate operating detail remains in the full artifact. All other fields are retained.',
             'reference_basis': 'When references_enabled is true, same_as is a plain RFC6901 JSON pointer (not a URI fragment). Resolve it for the exact repeated value; sha256 hashes its compact sorted UTF-8 JSON after cashflow presentation and before reference replacement. References are disabled if an original input contains the reserved two-field same_as/sha256 object, so original literal objects retain their meaning.',
         },
-        'plan': copy.deepcopy(plan),
+        'plan': shown_plan,
         'result': presentation,
     }
+    if significant is not None:
+        payload['context_metadata']['number_precision'] = (
+            f'Floats are shown to {significant} significant figures; the full artifacts keep full precision.')
     return _json(_deduplicate(payload, '', {}) if references_enabled else payload)

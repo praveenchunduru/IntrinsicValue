@@ -144,7 +144,7 @@ def cost_summary(ledger):
         'scope': {
             'costs': 'Provider-reported usage costs and retained ledger estimates; not an invoice reconciliation or a price-performance ranking.',
             'model_grouping': 'by_model uses the requested model; by_stage_model also preserves actual_model when reported.',
-            'tokens': 'Only reported counts are summed; None means no count was reported. Cached prompt tokens are part of provider usage, not extra prompt tokens.',
+            'tokens': 'Only reported counts are summed; None means no count was reported. Cached prompt tokens are part of provider usage and add no prompt tokens.',
             'stage_cache': 'Stage response reuse makes no API ledger row. Stage cache hits are not observable or counted here.',
         },
     }

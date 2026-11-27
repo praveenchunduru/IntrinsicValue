@@ -65,7 +65,7 @@ class CommandLineTests(unittest.TestCase):
                 other = quick if expected == 'full' else full.run
                 self.assertEqual(selected.call_args.args, ('AAPL','synthetic-key'))
                 self.assertEqual(selected.call_args.kwargs['profile'],'balanced')
-                self.assertEqual(selected.call_args.kwargs['budget'],10 if expected=='full' else 2)
+                self.assertEqual(selected.call_args.kwargs['budget'],20 if expected=='full' else 2)
                 other.assert_not_called()
 
     def test_sec_contact_is_scoped_to_cli_run_without_becoming_runner_input(self):
@@ -89,15 +89,19 @@ class CommandLineTests(unittest.TestCase):
         module = types.ModuleType('investmentideas.valuation')
         module.evaluate = Mock(return_value={'base':123})
         module.save_valuation = Mock()
+        # Changed 2026-11-27: the pipeline's diagnostics are attached before saving.
+        diagnostics = types.ModuleType('investmentideas.pipeline')
+        diagnostics.attach_diagnostics = Mock(side_effect=lambda plan, result: result)
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp)/'edited.json'; path.write_text('{"edited": true}')
             target = Path(temp)/'recomputed'
-            with patch.dict(sys.modules,{'investmentideas.valuation':module}), \
+            with patch.dict(sys.modules,{'investmentideas.valuation':module,'investmentideas.pipeline':diagnostics}), \
                     patch.object(sys,'argv',['investmentideas','--revalue',str(path),'--output',str(target)]), \
                     patch.dict(os.environ,{},clear=True), patch.object(cli,'run') as quick, \
                     contextlib.redirect_stdout(io.StringIO()):
                 cli.main()
             module.evaluate.assert_called_once_with({'edited':True})
+            diagnostics.attach_diagnostics.assert_called_once_with({'edited':True},{'base':123})
             module.save_valuation.assert_called_once_with(target,{'edited':True},{'base':123})
             quick.assert_not_called()
 
@@ -130,7 +134,7 @@ class BrowserFlowTests(unittest.TestCase):
                 result=wait_for_result(request,token)
                 self.assertEqual(result['memo'],'Synthetic memo')
                 self.assertNotIn(email,json.dumps(result))
-                self.assertEqual(full.run.call_args.kwargs['budget'],10)
+                self.assertEqual(full.run.call_args.kwargs['budget'],20)
                 self.assertTrue(all(email not in p.read_text() for p in folder.iterdir()))
             with self.assertRaises(SECContactRequired):
                 user_agent('https://data.sec.gov/fixture')

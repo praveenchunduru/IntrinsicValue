@@ -110,6 +110,45 @@ class CalendarAndAlignmentTests(unittest.TestCase):
         self.assertEqual(friday['last_return_week_end'], '2024-04-19')
         self.assertEqual(saturday['last_return_week_end'], '2024-04-26')
 
+    def test_trailing_live_quote_in_the_final_bar_week_is_ignored_not_fatal(self):
+        # Shape observed live on 2026-11-14: the Monday bar for the latest week
+        # is followed by one point stamped exactly meta.regularMarketTime.
+        baseline = weekly_equity_beta(*charts(count=121), as_of='2024-05-04')
+        equity, market = charts(count=121)
+        for payload in (equity, market):
+            live = result(payload)['timestamp'][-1] + 4 * 86400 + 16 * 3600  # Friday 16:00 exchange time.
+            result(payload)['meta']['regularMarketTime'] = live
+            result(payload)['timestamp'].append(live)
+            adjusted(payload).append(adjusted(payload)[-1])
+        fit = weekly_equity_beta(equity, market, as_of='2024-05-04')
+        self.assertTrue(fit['equity_trailing_live_quote_ignored'])
+        self.assertTrue(fit['benchmark_trailing_live_quote_ignored'])
+        self.assertFalse(baseline['equity_trailing_live_quote_ignored'])
+        self.assertEqual(fit['last_return_week_end'], '2024-05-03')
+        self.assertEqual(fit['paired_returns_sha256'], baseline['paired_returns_sha256'])
+        self.assertEqual(fit['beta'], baseline['beta'])
+
+    def test_same_week_duplicates_other_than_the_identified_live_quote_still_fail(self):
+        def extra(payload, *, position, marker):
+            stamps = result(payload)['timestamp']
+            stamp = stamps[position] + 4 * 86400 + 16 * 3600
+            stamps.insert(position + 1, stamp) if position != -1 else stamps.append(stamp)
+            values = adjusted(payload)
+            values.insert(position + 1, values[position]) if position != -1 else values.append(values[-1])
+            if marker is not None:
+                result(payload)['meta']['regularMarketTime'] = marker(stamp)
+        cases = {
+            'final point without a provider marker': dict(position=-1, marker=None),
+            'final point not stamped regularMarketTime': dict(position=-1, marker=lambda stamp: stamp + 1),
+            'non-integer marker': dict(position=-1, marker=lambda stamp: float(stamp)),
+            'interior duplicate stamped regularMarketTime': dict(position=40, marker=lambda stamp: stamp),
+        }
+        for name, case in cases.items():
+            equity, market = charts(count=121)
+            extra(equity, **case)
+            with self.subTest(name), self.assertRaisesRegex(ValueError, 'same exchange calendar week'):
+                weekly_equity_beta(equity, market, as_of='2024-05-04')
+
     def test_holiday_week_labels_align_by_calendar_week_not_exact_epoch(self):
         equity, market = charts()
         result(equity)['timestamp'][50] += 24 * 3600  # Tuesday within the same exchange week.

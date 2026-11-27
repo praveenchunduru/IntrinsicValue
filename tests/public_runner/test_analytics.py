@@ -21,7 +21,7 @@ class AnnualMetricsTests(unittest.TestCase):
         self.assertAlmostEqual(current['net_margin_percent'],26.91506412181824)
         self.assertAlmostEqual(current['revenue_yoy_percent'],6.425511782832749)
         self.assertIn('provider-normalized dates',current['basis'])
-        self.assertIn('not confirmed fiscal-year ends',current['basis'])
+        self.assertIn('fiscal-year ends are unconfirmed',current['basis'])
 
     def test_skipped_years_or_changed_period_ends_are_not_yoy(self):
         for dates in [('2023-09-30','2025-09-30'),('2024-06-30','2025-09-30')]:

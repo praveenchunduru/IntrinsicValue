@@ -11,18 +11,21 @@ from .sec_http import sec_contact_scope
 
 
 def main():
-    parser = argparse.ArgumentParser(description='InvestmentIdeas — OpenRouter-only research')
+    parser = argparse.ArgumentParser(description='InvestmentIdeas: OpenRouter-only research')
     parser.add_argument('ticker', nargs='?')
     parser.add_argument('--quick', action='store_true', help='Use the four-call financial overview instead of the full research pipeline')
     parser.add_argument('--profile', choices=MODELS, default='balanced')
-    parser.add_argument('--budget', type=float, help='Total cumulative USD allowance, including prior uncertain charges (default: full 10, quick 2; not a promised cost)')
+    parser.add_argument('--budget', type=float, help='Total cumulative USD allowance, including prior uncertain charges (default: full 20, quick 2; a ceiling with conservative per-call reservations; the run can cost less)')
     parser.add_argument('--sec-contact',help='Requester contact email for SEC access (memory only; alternatively set SEC_CONTACT_EMAIL)')
     parser.add_argument('--output', default='research-output')
     parser.add_argument('--evidence', type=Path, help='Optional UTF-8 filing or research text (up to 100 KB)')
     parser.add_argument('--easy-model', help='Override extraction model with an OpenRouter model ID')
-    parser.add_argument('--review-model',help='Explicit independent review-model override; saved with the current run')
-    parser.add_argument('--strong-model', help='Override writing/review model with an OpenRouter model ID')
-    parser.add_argument('--max-revisions',type=int,default=3,help='Full memo correction limit, 0–8 (default: 3)')
+    parser.add_argument('--review-model',help='Explicit review-model override, saved with the current run; it is not checked against the author model')
+    parser.add_argument('--strong-model', help='Override the forecast and writing model with an OpenRouter model ID; the default reviewer stays a different model')
+    parser.add_argument('--max-revisions',type=int,default=3,help='Revision rounds after the first review, 0–8 (default: 3); each round edits the prose and rewrites it only when the forecast changed')
+    parser.add_argument('--plan-samples',type=int,choices=range(1,6),metavar='N',
+                        help='Forecast plans written from the same evidence, 1–5; the plan valued combines them input by input '
+                             '(default: 3 for the balanced profile, 1 otherwise; 1 is a single forecast)')
     parser.add_argument('--sources',type=Path,help='Append a JSON list of supplemental archived sources to the same full run (at most 3 MB)')
     parser.add_argument('--snapshot',type=Path,help='Replay a dated S1… source manifest without refreshing evidence or quotes (at most 3 MB)')
     parser.add_argument('--forecast-plan',type=Path,help='Review an explicit forecast JSON against pinned reported inputs; never bypasses review (at most 150 KB)')
@@ -33,7 +36,7 @@ def main():
     parser.add_argument('--port', type=int, default=8765)
     args = parser.parse_args()
     if args.budget is None:
-        args.budget = 2.0 if args.quick else 10.0
+        args.budget = 2.0 if args.quick else 20.0  # pipeline.DEFAULT_BUDGET: a ceiling, not the expected bill
     try:
         if args.revalue:
             if args.ticker or args.quick or args.evidence or args.counterfactuals or args.draft or args.snapshot or args.forecast_plan:
@@ -41,8 +44,16 @@ def main():
             if args.revalue.stat().st_size > 1_000_000:
                 raise ValueError('Assumptions file must be at most 1 MB')
             from .valuation import evaluate, save_valuation
+            # The same diagnostics as a pipeline run (continuity checks, base rates), so a
+            # revalued valuation.json carries what the run's own one does.
+            from .pipeline import attach_diagnostics
             assumptions = json.loads(args.revalue.read_text(encoding='utf-8'))
-            results = evaluate(assumptions)
+            results = attach_diagnostics(assumptions, evaluate(assumptions))
+            # The forecast-sample record of the saved valuation beside it, marked edited if the inputs changed.
+            previous = args.revalue.parent / 'valuation.json'
+            if previous.is_file() and previous.stat().st_size <= 20_000_000:
+                from .consensus import carry
+                carry(json.loads(previous.read_text(encoding='utf-8')), assumptions, results)
             folder = Path(args.output)
             folder.mkdir(parents=True, exist_ok=True)
             save_valuation(folder, assumptions, results)
@@ -68,7 +79,8 @@ def main():
             if args.sources and args.sources.stat().st_size>3000000:
                 raise ValueError('Supplemental source JSON must be at most 3 MB')
             sources=json.loads(args.sources.read_text(encoding='utf-8')) if args.sources else None
-            extra={'max_revisions':args.max_revisions,'review_notes':notes,'extra_sources':sources}
+            extra={'max_revisions':args.max_revisions,'review_notes':notes,'extra_sources':sources,
+                   'plan_samples':args.plan_samples}
             for path, limit, field in ((args.snapshot,3000000,'source_snapshot'),(args.forecast_plan,150000,'forecast_plan')):
                 if path:
                     if path.stat().st_size > limit:
@@ -84,8 +96,8 @@ def main():
                 if args.counterfactuals.stat().st_size>64000:
                     raise ValueError('Counterfactual JSON must be at most 64 KB')
                 extra['counterfactuals']=json.loads(args.counterfactuals.read_text(encoding='utf-8'))
-        elif args.review_notes or args.counterfactuals or args.draft or args.snapshot or args.forecast_plan:
-            raise ValueError('--review-notes, --counterfactuals, --draft, --snapshot and --forecast-plan apply only to full research')
+        elif args.review_notes or args.counterfactuals or args.draft or args.snapshot or args.forecast_plan or args.plan_samples:
+            raise ValueError('--review-notes, --counterfactuals, --draft, --snapshot, --forecast-plan and --plan-samples apply only to full research')
         with sec_contact_scope(args.sec_contact):
             folder = runner(args.ticker, os.environ.get('OPENROUTER_API_KEY', ''), profile=args.profile,
                             budget=args.budget, directory=args.output, evidence=evidence,

@@ -44,7 +44,8 @@ class FakeRouter:
         return .01
     def validate_models(self,models):
         pass
-    def complete(self,stage,model,prompt,max_tokens=6000,web=False):
+    def complete(self,stage,model,prompt,max_tokens=6000,web=False, prefix=None):
+        prompt = (prefix or '') + prompt  # Evidence now arrives as a cached prefix.
         self.calls.append(stage)
         self.ledger.append({'stage':stage,'model':model,'status':'pending','charged_or_reserved_usd':.01})
         self.checkpoint()
@@ -101,7 +102,9 @@ class FullPipelineTests(unittest.TestCase):
                          'kind':'filing','data':{'excerpt':'Revenue 1000000000'},'raw_document':'<html>public filing</html>'}],[])),
                       patch.object(pipeline.core,'Router',FakeRouter),patch.object(pipeline,'inspect_memo',return_value=[]),
                       patch.object(pipeline,'canonical_reported_inputs',side_effect=canonical),
-                      patch.object(pipeline,'pin_reported_inputs',side_effect=pinned)]
+                      patch.object(pipeline,'pin_reported_inputs',side_effect=pinned),
+                      # These tests describe one forecast plan per run; test_stab_consensus covers several.
+                      patch.object(pipeline,'PLAN_SAMPLES',{})]
         for p in self.patches:p.start()
     def tearDown(self):
         for p in reversed(self.patches):p.stop()
@@ -225,7 +228,7 @@ class FullPipelineTests(unittest.TestCase):
         prompts={}
         original=FakeRouter.complete
         def capture(router,stage,model,prompt,**kwargs):
-            prompts[stage]=prompt
+            prompts[stage]=(kwargs.get('prefix') or '')+prompt
             return original(router,stage,model,prompt,**kwargs)
         with tempfile.TemporaryDirectory() as directory,patch.object(FakeRouter,'complete',capture):
             folder=pipeline.run('AAPL','synthetic',directory=directory,evidence=evidence)
@@ -239,7 +242,7 @@ class FullPipelineTests(unittest.TestCase):
         prompts={}
         original=FakeRouter.complete
         def capture(router,stage,model,prompt,**kwargs):
-            prompts[stage]=prompt
+            prompts[stage]=(kwargs.get('prefix') or '')+prompt
             return original(router,stage,model,prompt,**kwargs)
         with tempfile.TemporaryDirectory() as directory,patch.object(FakeRouter,'complete',capture):
             folder=pipeline.run('AAPL','synthetic',directory=directory,source_snapshot=[SOURCE],
@@ -255,7 +258,7 @@ class FullPipelineTests(unittest.TestCase):
         original=FakeRouter.complete
         prompts={}
         def capture(router,stage,model,prompt,**kwargs):
-            prompts[stage]=prompt
+            prompts[stage]=(kwargs.get('prefix') or '')+prompt
             return original(router,stage,model,prompt,**kwargs)
         with tempfile.TemporaryDirectory() as directory,patch.object(FakeRouter,'complete',capture):
             kwargs={'source_snapshot':[SOURCE],'forecast_plan':plan(),'draft':MEMO,'evidence':marker}
@@ -328,16 +331,18 @@ class FullPipelineTests(unittest.TestCase):
     def test_legacy_current_system_folder_preserves_spend_and_reuses_proven_unchanged_stages(self):
         prompts={}
         original=FakeRouter.complete
-        def capture(router,stage,model,prompt,max_tokens=6000,web=False):
-            prompts[stage]=(model,prompt,max_tokens,web)
-            return original(router,stage,model,prompt,max_tokens=max_tokens,web=web)
+        def capture(router,stage,model,prompt,max_tokens=6000,web=False,prefix=None):
+            prompts[stage]=(model,prompt,max_tokens,web,prefix)
+            return original(router,stage,model,prompt,max_tokens=max_tokens,web=web,prefix=prefix)
         with tempfile.TemporaryDirectory() as directory,patch.object(FakeRouter,'complete',capture):
             folder=pipeline.run('AAPL','synthetic',directory=directory)
             state=json.loads((folder/'state.json').read_text())
             old_stages={}
-            for stage,(model,prompt,tokens,web) in prompts.items():
+            for stage,(model,prompt,tokens,web,prefix) in prompts.items():
                 old=stage+':'+pipeline._digest([prompt,model,tokens,web])[:12]
-                current=stage+':'+pipeline._digest([prompt,model,tokens,web,pipeline.core.SYSTEM])[:12]
+                thinking=pipeline.core.reasoning_budget(stage)
+                current=stage+':'+pipeline._digest([prompt,model,tokens,web,pipeline.core.SYSTEM]+([thinking] if thinking else [])+
+                                                   (['prefix',pipeline._digest(prefix)] if prefix else []))[:12]
                 old_stages[old]=state['stages'][current]
             state['stages']=old_stages
             state.pop('workflow_contract')
@@ -360,7 +365,7 @@ class FullPipelineTests(unittest.TestCase):
         prompts={}
         def malformed(router,stage,model,prompt,**kwargs):
             result=original(router,stage,model,prompt,**kwargs)
-            prompts[stage]=prompt
+            prompts[stage]=(kwargs.get('prefix') or '')+prompt
             if stage in ('review_0','review_format_0'):
                 finding={'id':'F1','severity':'major','issue':'Synthetic unresolved economics',
                          'source_refs':['S1'],'fix':'Investigate the forecast',
@@ -397,6 +402,16 @@ class FullPipelineTests(unittest.TestCase):
             self.assertEqual(state['review_history'],[])
             self.assertTrue((folder/'reviews/review-0-unparsed.txt').exists())
             self.assertTrue((folder/'reviews/review-0-reformatted.txt').exists())
+            # The unvalidatable review is not replayed: the next attempt pays for a fresh one.
+            self.assertFalse([name for name in state['stages'] if name.startswith('review_')])
+            self.assertEqual(sum(row['stage'].startswith('review_') for row in state['ledger']),2)
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.object(FakeRouter,'complete',malformed),self.assertRaisesRegex(ValueError,'fresh review'):
+                pipeline.run('AAPL','synthetic',directory=directory)
+            before=len(FakeRouter.calls)
+            folder=pipeline.run('AAPL','synthetic',directory=directory)
+            self.assertTrue(json.loads((folder/'state.json').read_text())['complete'])
+            self.assertEqual(FakeRouter.calls[before:],['review_0'])
 
     def test_provided_snapshot_forecast_and_body_require_only_fresh_review(self):
         snapshot=[copy.deepcopy(SOURCE)]
@@ -450,7 +465,7 @@ class FullPipelineTests(unittest.TestCase):
             self.assertEqual(len(FakeRouter.calls),8)
             self.assertTrue((folder/'sources_raw'/'S2.html').exists())
             self.assertTrue((folder/'cashflows.csv').exists())
-            self.assertIn('Weighted intrinsic value per share',(folder/'memo.md').read_text())
+            self.assertIn('The base-case value is $',(folder/'memo.md').read_text())
             self.assertEqual(pipeline.run('AAPL','secret-synthetic-key',directory=directory),folder)
             self.assertEqual(len(FakeRouter.calls),8)
             for p in folder.rglob('*'):
@@ -492,8 +507,12 @@ class FullPipelineTests(unittest.TestCase):
             folder=next(Path(directory).glob('AAPL/full-*'))
             state=json.loads((folder/'state.json').read_text())
             visible=(folder/'memo.md').read_text()
-            self.assertIn(state['current_memo'].rstrip(),visible)
-            self.assertIn('Weighted intrinsic value per share',visible)
+            # Changed 2026-11-27 (memo redesign): Python writes the title; every other line of the prose is kept.
+            for line in state['current_memo'].strip().splitlines()[1:]:
+                self.assertIn(line,visible)
+            self.assertTrue(visible.startswith('# AAPL: intrinsic value'))
+            self.assertIn('## Summary',visible)
+            self.assertIn('The base-case value is $',visible)
             self.assertIn('needs_review',visible)
             self.assertIn('Review is incomplete',visible)
             self.assertFalse(state['complete'])
@@ -532,7 +551,8 @@ class FullPipelineTests(unittest.TestCase):
             self.assertFalse(state['complete'])
             self.assertEqual(state['quality_status'],'needs_review')
             self.assertIn('needs_review',(folder/'memo.md').read_text())
-            self.assertIn(f"{state['valuation']['weighted_per_share_value']:,.2f}",(folder/'memo.md').read_text())
+            from investmentideas import memo_style
+            self.assertIn(memo_style.Style('USD').per_share(state['valuation']['weighted_per_share_value']),(folder/'memo.md').read_text())
             frozen=(folder/'revisions'/'memo-0.md').read_text()
             count=len(FakeRouter.calls);FakeRouter.fail_revision=False
             pipeline.run('AAPL','synthetic',directory=directory)
@@ -663,7 +683,7 @@ class FullPipelineTests(unittest.TestCase):
             value=json.loads((folder/'valuation.json').read_text())
             self.assertEqual(value['weighted_per_share_value'],initial)
             self.assertIn('growth_10pct',value['counterfactuals'])
-            self.assertIn('Conditional counterfactuals',(folder/'memo.md').read_text())
+            self.assertIn('### Counterfactual cases',(folder/'memo.md').read_text())
             self.assertEqual(json.loads((folder/'assumptions.json').read_text())['counterfactuals'],cases)
             count=len(FakeRouter.calls)
             pipeline.run('AAPL','synthetic',directory=directory,counterfactuals=cases)
@@ -788,7 +808,7 @@ class FullPipelineTests(unittest.TestCase):
             folder=pipeline.run('AAPL','synthetic',directory=directory)
             self.assertFalse((folder/'valuation.json').exists())
             self.assertTrue((folder/'revisions'/'model-before-1'/'valuation.json').exists())
-            self.assertIn('No value target is calculated',(folder/'memo.md').read_text())
+            self.assertIn('No value is calculated',(folder/'memo.md').read_text())
 
     def test_new_notes_at_revision_limit_require_explicit_higher_limit(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -966,14 +986,16 @@ class ComputedMemoExhibitTests(unittest.TestCase):
         text=pipeline.valuation_section(proposal,result)
         # Independent flat-cashflow fixture: market EV 1.92bn / EBIT .2bn,
         # original exit EV1.5bn / EBIT .2bn; unchanged-multiple yield .15/1.92.
-        self.assertIn('9.60×',text)
-        self.assertIn('7.50×',text)
-        self.assertIn('7.81%',text)
-        self.assertIn('USD 11.85',text)  # Weighted15.8 * explicitly selected75%.
-        self.assertIn('USD 15.58',text)  # Remaining1.48bn / remaining95m shares.
-        self.assertIn('5,000,000',text)
-        self.assertIn('first explicit forecast year',text)
-        self.assertIn('not historical fair value',text)
+        self.assertIn('9.6×',text)
+        self.assertIn('7.5×',text)
+        self.assertIn('7.8%',text)
+        # Valuation research only: an entry threshold is never rendered, even if a plan carries one.
+        self.assertNotIn('USD 11.85',text)
+        self.assertNotIn('entry threshold',text.lower())
+        self.assertIn('| 15.6 |',text)  # Remaining1.48bn / remaining95m shares.
+        self.assertIn('| 5.0 |',text)
+        self.assertIn('Entry earnings are the first forecast year',text)
+        self.assertIn('A historical case compares that price with today\'s house value',text)
 
     def test_assumptions_label_follows_canonical_lease_allocation_and_selected_asset_policy(self):
         from tests.public_runner.test_inputs import sources as primary_sources, fact
@@ -988,7 +1010,7 @@ class ComputedMemoExhibitTests(unittest.TestCase):
             locked,_=pipeline._lock_plan(economic_plan(),records)
             label=locked['assumptions_label']
             self.assertIn('Only the cash and investment assets selected in the pinned bridge',label)
-            self.assertIn('Omitted investment categories are not reported zeros',label)
+            self.assertIn('An omitted investment category counts as zero by assumption',label)
             if combined:
                 self.assertIn('already included in the selected combined net-debt subtotal',label)
                 self.assertNotIn('outside the selected financial net-debt subtotal',label)

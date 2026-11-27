@@ -5,7 +5,7 @@ import re
 
 FIELDS = {'annualTotalRevenue': 'revenue', 'annualNetIncome': 'net_income',
           'annualOperatingCashFlow': 'operating_cash_flow'}
-BASIS = 'Calculated from Yahoo annual observations on provider-normalized dates, not confirmed fiscal-year ends'
+BASIS = 'Calculated from Yahoo annual observations on provider-normalized dates; fiscal-year ends are unconfirmed'
 
 
 def _finite(value):

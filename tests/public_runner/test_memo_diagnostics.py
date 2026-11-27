@@ -110,14 +110,21 @@ class MemoDiagnosticsTests(unittest.TestCase):
         # The actual DCF terminal amount is preserved, not replaced by the exhibit.
         self.assertAlmostEqual(result['scenarios']['base']['terminal_enterprise_value'], 1_500_000_000)
 
-    def test_terminal_next_year_and_final_forecast_denominators_are_distinct(self):
+    def test_capitalized_nopat_is_final_year_nopat_unless_tax_or_rnd_change_it(self):
+        # The continuing value capitalizes year-T NOPAT, which the capital in place supports
+        # (2026-11-26); it was year-T NOPAT grown once more (153 million here).
         inputs = plan()
         inputs['scenarios']['base']['terminal_growth'] = .02
         case = evaluate(inputs)['computed_diagnostics']['valuation_multiples']['scenarios']['base']['original_dcf_exit']
         self.assertEqual(case['final_forecast_nopat'], 150_000_000)
-        self.assertAlmostEqual(case['terminal_year_nopat'], 153_000_000)
-        self.assertAlmostEqual(case['ev_to_final_forecast_nopat']['value'] /
-                               case['ev_to_terminal_year_nopat']['value'], 1.02)
+        self.assertAlmostEqual(case['terminal_year_nopat'], 150_000_000)
+        # A terminal tax rate and the net R&D add-back each make the two denominators differ.
+        inputs['scenarios']['base'].update(terminal_tax_rate=.2, rnd_share_path=.1)
+        case = evaluate(inputs)['computed_diagnostics']['valuation_multiples']['scenarios']['base']['original_dcf_exit']
+        amortized = sum(1.02 ** -age for age in range(1, 7)) / 6
+        self.assertAlmostEqual(case['terminal_year_nopat'], 1e9 * .2 * .8 + 1e8 * (1 - amortized))
+        self.assertAlmostEqual(case['ev_to_final_forecast_nopat']['value'] / case['ev_to_terminal_year_nopat']['value'],
+                               case['terminal_year_nopat'] / 150_000_000)
 
     def test_missing_quote_and_nonpositive_earnings_do_not_make_fake_multiples(self):
         inputs = plan()
@@ -221,7 +228,7 @@ class MemoDiagnosticsTests(unittest.TestCase):
         self.assertEqual(tests[1]['post_repurchase_shares'], 90_000_000)
         self.assertAlmostEqual(tests[1]['scenarios']['base']['post_repurchase_per_share_value'], 1_480 / 90)
         self.assertEqual(tests[1]['post_repurchase_nonoperating_cash'], 100_000_000)
-        self.assertIn('not observed historical value destruction', tests[1]['basis'])
+        self.assertIn('retrospective conditional comparison with current underwriting', tests[1]['basis'])
 
     def test_repurchase_bounds_and_cash_bridge_reconciliation(self):
         invalid = [None, {}, [repurchase(amount=200_000_001)], [repurchase(amount=0)],
@@ -292,7 +299,7 @@ class MemoDiagnosticsTests(unittest.TestCase):
         self.assertEqual(calibration['included_debt'], 120_000_000)
         self.assertEqual(calibration['financial_debt'], 120_000_000)
         self.assertEqual(calibration['finance_lease_debt'], 0)
-        self.assertIn('zero is an allocation, not reported absence',
+        self.assertIn('finance_lease_debt zero is an allocation. The separate lease amount is unknown.',
                       calibration['conventions']['financial_debt_input'])
         self.assertIsNone(calibration['valuation_input_reconciliations'][0]['reported_finance_lease_liabilities'])
         self.assertTrue(calibration['valuation_input_reconciliations'][1][
