@@ -133,7 +133,7 @@ class DiscountRateRowTests(unittest.TestCase):
         result = {'implied_return_at_price': {'scenarios': {'base': row}, 'probability_weighted_value': row},
                   'scenarios': {'base': {}}}
         self.assertEqual(pipeline._discount_rate_requirement(result, self.STYLE)[2],
-                         'cannot reach the price alone; highest value $180 at 0.5% (searched 0.5% to 30%)')
+                         'not reached within the range tested (0.5% to 30%; highest value $180 at 0.5%)')
         self.assertIsNone(pipeline._discount_rate_requirement({'scenarios': {}}, self.STYLE))
 
     def test_saved_first_pages_list_the_discount_rate(self):
@@ -154,8 +154,42 @@ class DiscountRateRowTests(unittest.TestCase):
             self.skipTest('INTRINSICVALUE_SAVED_RUNS names no saved run with an implied return')
 
     def test_sections_and_rubric_point_to_the_table(self):
-        self.assertIn('the flat discount rate among', pipeline.SECTIONS)
+        self.assertIn('the flat discount\nrate among', pipeline.SECTIONS)
         self.assertIn('the flat discount rate included', quality.RUBRIC)
+
+
+class ComputedCalledReportedTests(unittest.TestCase):
+    """Rule M6: the final Walmart run's first review raised three computed metrics called reported."""
+    RAISED = (
+        "Walmart's reported ROIC has stayed between 10.0% and 14.4% for five years [S2].",
+        'The reported three-year incremental rate is 2.6 [S2].',
+        'The company reported a 4.6% operating margin for the six months to 2026-07-31 [S2][S5].',
+        'The capital-light point is supported by primary data: capex was 1.9% of revenue in FY2026 and reported ROIC '
+        'was 129.4% [S2].',
+    )
+    ACCEPTED = (
+        'Walmart has never reported a consolidated operating margin above 4.5% in the five years shown [S2].',
+        'Reported consolidated operating margin was 46.8% for FY26, the best annual figure in five years.',
+        'ROIC computed from reported figures stayed between 10.0% and 14.4% [S2].',
+        'The incremental ROIC in the reported table is not meaningful for 2023-2025 [S2].',
+        'KO earns high consolidated ROIC, and reported company revenue grows slowly.',
+    )
+
+    def test_raised_and_accepted(self):
+        for sentence in self.RAISED:
+            with self.subTest(sentence=sentence[:50]):
+                self.assertEqual(quality.computed_called_reported(sentence), [sentence])
+        for sentence in self.ACCEPTED:
+            with self.subTest(sentence=sentence[:50]):
+                self.assertEqual(quality.computed_called_reported(sentence), [])
+
+    def test_it_is_a_minor_free_check_with_the_fix(self):
+        memo = '## 1. Valuation conclusion\n\n' + self.RAISED[1] + '\n'
+        finding = next(item for item in quality.prereview_checks(memo, [{'id': 'S2', 'source_tier': 'regulatory_primary'}])
+                       if item['id'] == 'computed-called-reported')
+        self.assertEqual(finding['severity'], 'minor')
+        self.assertIn('computed from reported figures', finding['fix'])
+        self.assertIn('"computed from reported figures", never "reported"', quality.WRITING_STANDARD)
 
 
 if __name__ == '__main__':

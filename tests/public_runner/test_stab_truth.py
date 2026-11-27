@@ -375,5 +375,76 @@ class WordingRoundTests(unittest.TestCase):
         self.assertEqual(failures, [])
 
 
+def requirement_failures(case, memo, result, plan):
+    """Unreached rows say what was tested, and the quote names its source and session (final Walmart run, 2026-11-27)."""
+    computed = outside_prose(memo)
+    failures = []
+    if 'cannot reach the price' in computed:
+        failures.append(f'{case}: "cannot reach the price" printed for a bounded search')
+    page = computed.split('**What the price needs.**')[1].split('**Conventions')[0] if '**What the price needs.**' in computed else ''
+    for row in (result.get('price_requirements') or {}).get('rows') or []:
+        if row.get('status') != 'not_reachable':
+            continue
+        label = pipeline.REQUIREMENT_LABELS.get(row.get('input'), row.get('label', 'input'))
+        line = next((text for text in page.split('\n') if text.startswith(f'| {label}')), '')
+        reverse = pipeline._reverse_growth(result) if row.get('input') == 'revenue_growth' else None
+        if reverse:
+            rate = memo_style.pct(reverse[0][0])
+            if f'{rate} a year for' not in line:
+                failures.append(f'{case}: revenue cell omits the reverse-DCF answer {rate}')
+            if 'Revenue growth, one constant rate in every forecast year (reverse DCF)' not in computed:
+                failures.append(f'{case}: detail table omits the reverse-DCF row')
+        elif line and 'not reached within the range tested' not in line and 'does not change the value' not in line:
+            failures.append(f'{case}: unreached {row.get("input")} cell does not say what was tested: {line[:120]}')
+    price_refs = ((plan.get('source_refs') or {}).get('market_price')) or []
+    price_refs = price_refs if isinstance(price_refs, list) else [price_refs]
+    summary = computed.split('\n\n| Scenario')[0]
+    for ref in price_refs:
+        if f'[{ref}]' not in summary:
+            failures.append(f'{case}: first-page quote does not cite {ref}')
+    basis = str(((plan.get('input_dates') or {}).get('market_price') or {}).get('basis') or '')
+    if ('regular-session price' in summary) != ('regular-session' in basis):
+        failures.append(f'{case}: first-page session basis does not match the snapshot')
+    return failures
+
+
+class RequirementWordingTests(unittest.TestCase):
+    STYLE = memo_style.Style('USD')
+
+    def test_a_bounded_search_says_what_it_tested(self):
+        row = {'input': 'terminal_roic', 'kind': 'level', 'status': 'not_reachable', 'searched': [0.05, 3.0], 'at': 3.0,
+               'closest_value': 68.79}
+        self.assertEqual(pipeline._not_reached(row, self.STYLE),
+                         'not reached within the range tested (up to 300%; value $68.8)')
+        shift = {'input': 'revenue_growth', 'kind': 'shift', 'status': 'not_reachable', 'searched': [-0.2, 0.3],
+                 'at': 0.3, 'closest_value': 126.32}
+        self.assertEqual(pipeline._not_reached(shift, self.STYLE),
+                         'not reached within the range tested (up to +30 points in every forecast year; value $126)')
+
+    def test_revenue_shows_the_reverse_dcf_when_the_shift_stops_short(self):
+        flows = [{'year': year, 'fcff': -1e9, 'phase': 'explicit'} for year in range(1, 11)]
+        result = {'reverse_dcf': {'status': 'solved', 'constant_annual_growth_solutions': [0.3484],
+                                  'solution_projections': [{'cashflows': flows}]}}
+        row = {'input': 'revenue_growth', 'kind': 'shift', 'status': 'not_reachable', 'searched': [-0.2, 0.3], 'at': 0.3,
+               'closest_value': 126.32, 'house_path': {'over_forecast': .0399, 'years': 10,
+                                                       'measure': 'compound_annual_growth'}}
+        self.assertEqual(pipeline._requirement_cells(row, result, self.STYLE)[2],
+                         '34.8% a year for ten years (free cash flow negative in every forecast year)')
+        flows[0]['fcff'] = 1e9
+        self.assertEqual(pipeline._reverse_growth_cell(result),
+                         '34.8% a year for ten years (free cash flow negative in 9 of 10 forecast years)')
+        result['reverse_dcf']['status'] = 'not_solved'
+        self.assertTrue(pipeline._requirement_cells(row, result, self.STYLE)[2].startswith('not reached within'))
+
+    def test_saved_runs_word_requirements_and_the_quote_truthfully(self):
+        runs = list(rerender_saved())
+        if not runs:
+            self.skipTest('INTRINSICVALUE_SAVED_RUNS names no saved run')
+        failures = []
+        for name, memo, state in runs:
+            failures += requirement_failures(name, memo, state['valuation'], state['plan'])
+        self.assertEqual(failures, [])
+
+
 if __name__ == '__main__':
     unittest.main()

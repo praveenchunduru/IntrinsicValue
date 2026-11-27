@@ -499,9 +499,8 @@ class EdgeDisplayTests(unittest.TestCase):
 
 # Computed metrics a note or label must not call "reported" (live Microsoft review, 2026-11-27:
 # 0.41 sales-to-capital and a 35.8% incremental ROIC computed from filings were called reported).
-COMPUTED_METRIC = re.compile(r'sales-to-capital|incremental|\bROIC\b|net reinvestment|\bmedian\b|percentile', re.I)
-# "computed from reported ..." and "reported lines" name the inputs, not the metric.
-INPUT_PHRASE = re.compile(r'(?:computed|calculated|derived) from (?:the )?reported|reported lines', re.I)
+# The phrase lists are shared with the prose free check (quality.computed_called_reported).
+from investmentideas.quality import COMPUTED_METRIC, INPUT_PHRASE  # noqa: E402
 # True sentences that name a computed metric and a reported input, each justified:
 ALLOWED_REPORTED = (
     # The definition counts acquisitions and finance-lease additions only where the filing reports them.

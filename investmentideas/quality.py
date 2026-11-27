@@ -355,8 +355,8 @@ RUBRIC_RULES = (
     ('M2', 'major', 'one-at-a-time rows added together or called cumulative'),
     ('M3', 'major', 'a number that is neither in the evidence, nor in the computed output, nor a shown calculation '
                     'from cited figures'),
-    ('M4', 'major', 'a statement that contradicts the computed account of which inputs alone can and cannot bring '
-                    'value to the price (the first-page table "What the price needs", the flat discount rate included)'),
+    ('M4', 'major', 'a statement that contradicts the computed account of which inputs alone reach the price within '
+                    'the ranges tested (the first-page table "What the price needs", the flat discount rate included)'),
     ('M5', 'major', 'a material claim contradicted by primary evidence in the run'),
     ('M6', 'major', 'a model output cited to a filing or source as if reported'),
     ('N1', 'minor', 'rounding within the last displayed digit'),
@@ -398,7 +398,9 @@ WRITING_STANDARD = (
     'figure as the house or computed value ("the base-case value is $139"); do not narrate the exhibit it came '
     'from ("the computed summary places it at"). Numbers: the first page names the currency once, so write $139 '
     'a share, prices as quoted ($355.58), aggregates as $34.3B or $850M, never "USD" for a dollar filer and never '
-    'a number of seven or more digits; percentages to one decimal; no decimals unless the precision matters; no '
+    'a number of seven or more digits; percentages to one decimal; call a computed metric (ROIC, an incremental '
+    'return or ratio, sales-to-capital, net reinvestment, a median, a percentile, a margin for an interim period) '
+    '"computed from reported figures", never "reported"; no decimals unless the precision matters; no '
     'em dashes.')
 RUBRIC = (
     'Quality standard (shared by the writer, the automatic checks and the reviewer). Each review finding names the '
@@ -662,6 +664,43 @@ def unverified_company_facts(body, tiers):
 
 
 
+# A computed metric called "reported" (rule M6). The final Walmart run's first review had three
+# such majors: the five-year ROIC range, the 2.6 incremental sales-to-capital and a six-month
+# margin. The metric list is the one the rendered-text guard uses (test_stab_memo), plus margins,
+# which the filings report only as two lines.
+COMPUTED_METRIC = re.compile(r'sales-to-capital|incremental|\bROIC\b|net reinvestment|\bmedian\b|percentile', re.I)
+INPUT_PHRASE = re.compile(r'(?:computed|calculated|derived) from (?:the )?reported|reported lines', re.I)
+# A margin is flagged only as a figure the company "reported" for an interim period ("the company
+# reported a 4.6% operating margin for the six months"): reviewers accepted "reported operating
+# margin" for the annual history in every saved run and raised the six-month figure.
+_MARGIN_REPORTED = re.compile(r'\breported (?:an? )?-?\d[\d.]*%[^.;]{0,40}\bmargin\b[^.;]{0,30}\b(?:(?:three|six|nine|'
+                              r'twelve) months|quarter|year to date)', re.I)
+_REPORTED = re.compile(r'\breport(?:ed|s)\b(?! (?:tables?|history|filings?|figures|inputs|values|lines|data|series of))',
+                       re.I)
+_SAYS_COMPUTED = re.compile(r'\b(?:computed|calculated|derived)\b', re.I)
+COMPUTED_REPORTED_FIX = 'Say computed from reported figures, or drop "reported".'
+
+
+def computed_called_reported(body):
+    """Prose sentences that call a computed metric reported (rule M6), unless they say it is computed.
+
+    A computed metric is ROIC, an incremental return or ratio, sales-to-capital, net reinvestment, a median
+    or a percentile within a few words after "reported", or a margin the company is said to have reported.
+    """
+    found = []
+    for raw in re.split(r'(?<=[.!?])(?<!\bU\.S\.)\s+|\n+', body or ''):
+        line = raw.strip()
+        if not line or line.startswith(('#', '|')):
+            continue
+        text = re.sub(r'\[[^\]]*\]', '', line)
+        if INPUT_PHRASE.search(text) or _SAYS_COMPUTED.search(text):
+            continue
+        if _MARGIN_REPORTED.search(text) or any(COMPUTED_METRIC.search(text[match.end():match.end() + 45])
+                                                for match in _REPORTED.finditer(text)):
+            found.append(line[:300])
+    return found
+
+
 UNVERIFIED_FACT_FIX = (
     'Delete the claim; or replace it with the primary-source figure if the evidence has one, citing that source; or '
     'restate it as the own view or estimate of an outside party the sentence names, in a sentence that draws no '
@@ -723,6 +762,7 @@ def prereview_checks(memo, sources, computed=()):
                 continue
             untraced.append((display, line[:300]))
     company_facts = unverified_company_facts(body, tiers)
+    called_reported = computed_called_reported(body)
     findings = []
     def add(identifier, severity, issue, fix, items):
         findings.append({'id': identifier, 'severity': severity, 'issue': issue, 'fix': fix, 'source_refs': [],
@@ -734,6 +774,10 @@ def prereview_checks(memo, sources, computed=()):
             'compare the house forecast with one, whose only support is an unverified web excerpt (rule M1). An '
             '"unverified" label does not make a company fact acceptable.', UNVERIFIED_FACT_FIX,
             [('', text) for _, text in company_facts])
+    if called_reported:
+        add('computed-called-reported', 'minor', f'{len(called_reported)} sentences call a computed metric (ROIC, '
+            'incremental return, sales-to-capital, a margin, a median, a percentile or net reinvestment) reported '
+            '(rule M6).', COMPUTED_REPORTED_FIX, [('', text) for text in called_reported])
     if untraced:
         add('number-untraced', 'minor', f'{len(untraced)} figures in the prose match nothing in the computed output, '
             'the reported inputs or any primary source within display rounding.',
@@ -762,7 +806,7 @@ def prereview_checks(memo, sources, computed=()):
             'Rewrite to refer to the computed summary, exhibits or reported tables by name.', [('', text) for text in meta])
     if causes:
         add('gap-cause-wording', 'minor', 'The prose assigns the difference between value and price a cause; Python '
-            'states which inputs alone can and cannot close it.',
+            'states which inputs alone reach the price within the ranges tested.',
             'Remove the attribution or replace it with a reference to the computed account in the summary.',
             [('', text) for text in causes])
     if additive:

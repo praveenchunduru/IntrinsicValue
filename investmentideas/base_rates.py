@@ -520,7 +520,7 @@ def memo_exhibit(comparison, style=None):
     if requirement:
         shift = f'{requirement["growth_shift"] * 100:+.1f} points in every forecast year'
         label = (f'Growth the price needs ({shift})' if requirement['status'] == 'solved' else
-                 f'Closest to the price ({shift}; it cannot reach the price)')
+                 f'Closest to the price ({shift}, the edge of the range tested; not reached)')
         lines.append(row(label, requirement['horizons']))
     lines.append('| Reference class mean, standard deviation | ' + ' | '.join(
         f'{refs[key]["mean"]:.1%}, {refs[key]["standard_deviation"]:.1%}' + (' real' if key in real_keys else ' nominal')

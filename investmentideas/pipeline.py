@@ -60,8 +60,9 @@ your text. Do not re-type those tables or restate their figures; name a row only
 Each section opens with its conclusion.
 (1) Valuation conclusion (about 150 words). Say what the house concludes and which evidence the conclusion rests
 on most. Assign the difference between value and price no cause beyond the first page's table "What the price
-needs": it is the full account of which inputs alone can and cannot reach the price, the flat discount rate among
-them, so count inputs from it and from nowhere else. A convention step is a row of the convention tables: the base value with one
+needs": it is the full account of which inputs alone reach the price within the ranges tested, the flat discount
+rate among them, so count inputs from it and from nowhere else. An input not reached within the range tested is not
+shown to be unable to reach the price. A convention step is a row of the convention tables: the base value with one
 house convention changed. Horizon, rate-regime and country-risk rows are exhibits, and sensitivity rows show scale;
 name them as such. The S&P 500 row is context for reading value / price under the house conventions. Report it, if
 at all, as the index's own ratio; it explains no part of the company's difference.
@@ -3480,9 +3481,64 @@ def _growth_effect(result, row, style):
     if abs(closest-house)<max(.005,abs(house)*1e-6):
         return ('does not change the value',
                 f'value stays {style.per_share(house)} over the range searched, because new capital earns its cost after year 10')
-    return (f'cannot reach the price; {style.per_share(closest)} at {memo_style.pct(at)}, through the R&D add-back only',
+    return (f'not reached within the range tested (up to {memo_style.pct(at)}; value {style.per_share(closest)}, through '
+            'the R&D add-back only)',
             f'value moves only through the net R&D add-back, from {style.per_share(house)} at '
             f'{memo_style.pct(base.get("terminal_growth"))} to {style.per_share(closest)} at {memo_style.pct(at)}')
+
+
+def _not_reached(row, style):
+    """The cell for a bounded search that stopped short of the price: what was tested and the value at its edge.
+
+    "Cannot reach the price" was printed for every unreached row, but a search that stops at a bound
+    proves nothing past it: Walmart's revenue shift stopped at +30 points while the constant-growth
+    reverse DCF reached the price at 34.8% (final Walmart review, 2026-11-27).
+    """
+    at,closest,searched=row.get('at'),row.get('closest_value'),row.get('searched')
+    if not _finite_number(at):
+        return 'not reached within the range tested'
+    low=isinstance(searched,list) and len(searched)==2 and _finite_number(searched[0]) and abs(at-searched[0])<1e-9
+    if row.get('kind')=='shift':
+        edge=f'{"down" if low else "up"} to {memo_style.points(at).replace(".0 points"," points")} in every forecast year'
+    elif row.get('input')=='sales_to_capital':
+        edge=f'{"down" if low else "up"} to {memo_style.ratio(at,0 if float(at).is_integer() else 2)}'
+    else:
+        whole=abs(at*100-round(at*100))<1e-9 and abs(at)>=.1
+        edge=f'{"down" if low else "up"} to {memo_style.pct(at,0 if whole else 1)}'
+    value=f'; value {style.per_share(closest)}' if _finite_number(closest) and style else ''
+    return f'not reached within the range tested ({edge}{value})'
+
+
+def _reverse_growth(result):
+    """(rates, caveat) from the constant-growth reverse DCF when it solves, else None.
+
+    The caveat says in how many explicit forecast years the solution's free cash flow is negative.
+    """
+    reverse=(result or {}).get('reverse_dcf') or {}
+    rates=[rate for rate in reverse.get('constant_annual_growth_solutions') or [] if _finite_number(rate)]
+    if reverse.get('status')!='solved' or not rates:
+        return None
+    flows=[flow for flow in ((reverse.get('solution_projections') or [{}])[0] or {}).get('cashflows') or []
+           if flow.get('phase','explicit')=='explicit' and _finite_number(flow.get('fcff'))]
+    negative=sum(1 for flow in flows if flow['fcff']<0)
+    caveat=None
+    if flows and negative==len(flows):
+        caveat='free cash flow negative in every forecast year'
+    elif negative:
+        caveat=f'free cash flow negative in {negative} of {len(flows)} forecast years'
+    return rates,caveat,len(flows)
+
+
+def _reverse_growth_cell(result):
+    """The first-page cell for the constant-growth reverse DCF: "34.8% a year for ten years (caveat)"."""
+    found=_reverse_growth(result)
+    if not found:
+        return None
+    rates,caveat,years=found
+    horizon=NUMBER_WORDS.get(years,str(years))
+    text=(f'{memo_style.pct(rates[0])} a year for {horizon} years' if len(rates)==1 else
+          'several constant rates: '+', '.join(memo_style.pct(rate) for rate in rates))
+    return text+(f' ({caveat})' if caveat else '')
 
 
 def _requirement_cells(row, result=None, style=None):
@@ -3510,8 +3566,12 @@ def _requirement_cells(row, result=None, style=None):
     effect=_growth_effect(result,row,style) if result is not None else None
     if effect:
         needed=effect[0]
+    elif needed is None and row.get('status')=='not_reachable':
+        # Two tests of revenue growth: the parallel shift is bounded; the constant-growth reverse DCF is not.
+        reverse=_reverse_growth_cell(result) if row.get('input')=='revenue_growth' else None
+        needed=reverse or _not_reached(row,style)
     elif needed is None:
-        needed='cannot reach the price alone' if row.get('status')=='not_reachable' else 'not calculated'
+        needed='not calculated'
     return label,house,needed
 
 
@@ -3541,16 +3601,15 @@ def _discount_rate_requirement(result, style):
     else:
         bound=row.get('price_bound') if isinstance(row.get('price_bound'),dict) else {}
         low,high=(bound.get('search_range') or (None,None))[:2] if bound.get('search_range') else (None,None)
+        span=f'{low:.1%} to {high:.0%}' if _finite_number(low) and _finite_number(high) else ''
         if bound.get('price_position')=='above_highest_value':
-            needed=(f'cannot reach the price alone; highest value {style.per_share(bound["highest_value"])} at '
-                    f'{bound["rate_at_highest_value"]:.1%}')
+            edge=f'highest value {style.per_share(bound["highest_value"])} at {bound["rate_at_highest_value"]:.1%}'
         elif bound.get('price_position')=='below_lowest_value':
-            needed=(f'cannot reach the price alone; lowest value {style.per_share(bound["lowest_value"])} at '
-                    f'{bound["rate_at_lowest_value"]:.1%}')
+            edge=f'lowest value {style.per_share(bound["lowest_value"])} at {bound["rate_at_lowest_value"]:.1%}'
         else:
-            needed='cannot reach the price alone'
-        if _finite_number(low) and _finite_number(high):
-            needed+=f' (searched {low:.1%} to {high:.0%})'
+            edge=''
+        inside='; '.join(part for part in (span,edge) if part)
+        needed='not reached within the range tested'+(f' ({inside})' if inside else '')
     return ['Discount rate, one flat rate',house,needed]
 
 
@@ -3616,7 +3675,13 @@ def computed_summary(plan, result):
         sentence=f'The probability-weighted value is {value(result.get("weighted_per_share_value"))} a share'
         ratio=result.get('weighted_value_to_price')
     if _finite_number(price):
-        sentence+=(f' against a price of {style.price(price)}'+(f' on {quoted}' if quoted else '')+
+        # The quote's source and session basis (final Walmart review, 2026-11-27).
+        basis=str((dates.get('market_price') or {}).get('basis') or '')
+        refs=((plan or {}).get('source_refs') or {}).get('market_price') or []
+        refs=refs if isinstance(refs,list) else [refs]
+        session='regular-session ' if 'regular-session' in basis else ''
+        sentence+=(f' against a {session}price of {style.price(price)}'+(f' on {quoted}' if quoted else '')+
+                   (_cite(refs) if refs else '')+
                    (f', a value / price of {_ratio_text(ratio)}' if _finite_number(ratio) else ''))
     if headline:
         sentence+=(f'; the bear and bull stress cases give {value(values["bear"])} and '
@@ -4196,16 +4261,35 @@ def _implied_parts(result, style):
             elif row['status']=='solved':
                 outcome='reaches the price'
             elif row['status']=='not_reachable':
-                outcome=(f'closest {_beside_price(row.get("closest_value"),result.get("market_price"),style)}, '
+                outcome=(f'not reached within the range tested; closest '
+                         f'{_beside_price(row.get("closest_value"),result.get("market_price"),style)}, '
                          f'{"above" if row.get("direction")=="above" else "below"} the price')
             else:
                 outcome,change='not calculated',''
             rows.append([label,house,change,outcome])
+            reverse=_reverse_growth(result) if row.get('input')=='revenue_growth' else None
+            if reverse:
+                rates,caveat,years=reverse
+                path=row.get('house_path') if isinstance(row.get('house_path'),dict) else {}
+                rows.append(['Revenue growth, one constant rate in every forecast year (reverse DCF)',
+                             f'{memo_style.pct(path.get("over_forecast"))} compound' if path else 'n/a',
+                             ', '.join(f'{memo_style.pct(rate)} a year' for rate in rates),
+                             'reaches the price'+(f'; {caveat}' if caveat else '')])
+                if row['status']!='solved':
+                    at_path=row.get('at_path') if isinstance(row.get('at_path'),dict) else {}
+                    notes.append('The two revenue-growth tests differ in what they search. The parallel shift adds the '
+                                 'same points to the house growth path and stops at '+
+                                 memo_style.points(row.get('at')).replace('.0 points',' points')+' in every forecast year'+
+                                 (f', where the path compounds at {memo_style.pct(at_path.get("over_forecast"))}' if at_path
+                                  else '')+'; it does not reach the price. The constant-growth reverse DCF sets one rate in '
+                                 'every forecast year with margins, capital efficiency and rates held at the base case, and '
+                                 'reaches the price at '+' or '.join(memo_style.pct(rate) for rate in rates)+
+                                 (f', with {caveat}' if caveat else '')+'.')
         lines+=['','The full price requirement follows. Each row is an alternative, and the inputs interact.','']+_table(
             ['Input','House','Needed, or the limit searched','Result'],rows,['---','---','---','---'])
         notes.append('Price-requirement rows change one base-case input at a time with every other input fixed. Shifts '
-                     'apply in every explicit forecast year. A row that cannot reach the price shows the value at the '
-                     'edge of the range the engine accepts.')
+                     'apply in every explicit forecast year. A row the search does not reach shows the value at the '
+                     'edge of the range tested, which proves nothing beyond it.')
     return lines,notes
 
 
@@ -4388,6 +4472,9 @@ def _multiples_parts(result, style):
              'Return at the entry multiple'],rows,['---','---','---:','---:','---:','---:'])
         stub=((result.get('discounting') or {}).get('timing') or {}).get('stub_years') or 0
         notes+=['Entry earnings are the first forecast year and exit earnings the final forecast year.',
+                'The entry-multiple column replaces the DCF continuing value with an exit enterprise value equal to the '
+                'entry multiple (market enterprise value over year-1 EBIT or NOPAT) times the same scenario\'s final-year '
+                'EBIT or NOPAT, received at the final model year.',
                 'The return columns hold operating cash flows, opening claims and shares fixed and change only the exit '
                 'value. Each year\'s FCFF is treated as distributed'+(' at its discount time from the valuation date, and '
                 f'year 1 counts only its unexpired {1-stub:.0%}' if stub else ' at whole model years')+'. This is a '
@@ -6208,8 +6295,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'or context is not material, but a company fact or number resting only on one is (rule M1); a breach '
                 'of the writing standard is minor (N2), and other style preferences are no finding. Check: (1) every figure in the prose against the computed summary, the computed tables, the '
                 'valuation output or the cited source, and every comparison with the price by arithmetic; (2) that the '
-                'memo does not contradict the computed account of which inputs alone can and cannot bring value to the '
-                'price, given in full by the first-page table "What the price needs" (explaining why the house forecast differs from what the price requires is the variant view and '
+                'memo does not contradict the computed account of which inputs alone reach the price within the ranges '
+                'tested, given in full by the first-page table "What the price needs" (explaining why the house forecast differs from what the price requires is the variant view and '
                 'contradicts nothing; the conclusion need not restate the account); (3) that company facts rest on primary sources and unverified '
                 'excerpts are labelled context; (4) that the strongest sourced opposing case is answered with evidence; '
                 '(5) that no trading-layer language appears; (6) that convention rows are never added together; (7) that '

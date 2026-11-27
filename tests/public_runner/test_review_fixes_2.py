@@ -611,15 +611,22 @@ class GapAttributionTests(unittest.TestCase):
         rows = result['price_requirements']['rows']
         solved = [row for row in rows if row['status'] == 'solved']
         # Changed 2026-11-27 (memo redesign): one row per input states whether it reaches the price alone.
-        table = summary[summary.index('**What the price needs.**'):]
-        self.assertEqual(table.count('cannot reach the price alone'),
-                         len([row for row in rows if row['status'] == 'not_reachable']))
+        # Changed again 2026-11-27 (final Walmart run): an unreached row says what was tested, or gives the
+        # constant-growth reverse DCF's answer, or that the input does not change the value.
+        table = summary[summary.index('**What the price needs.**'):].split('**Conventions')[0]
+        lines = [line for line in table.split('\n') if line.startswith('| ') and not line.startswith('| Discount rate')]
+        self.assertNotIn('cannot reach the price', table)
+        unreached = sum(1 for line in lines if any(text in line for text in
+                        ('not reached within the range tested', ' a year for ', 'does not change the value')))
+        self.assertEqual(unreached, len([row for row in rows if row['status'] == 'not_reachable']))
         self.assertIn('Each row is an alternative, and the inputs interact.', pipeline.valuation_section(value, result))
-        self.assertTrue(solved or 'cannot reach the price alone' in table)
+        self.assertTrue(solved or unreached)
 
     def test_sections_and_review_use_the_computed_attribution(self):
         # Changed 2026-11-27: the first-page table is named as the full account, the discount rate included.
-        self.assertIn('which inputs alone can and cannot reach the price, the flat discount rate among', pipeline.SECTIONS)
+        # Changed 2026-11-27 (final Walmart run): a bounded search proves nothing past its range.
+        self.assertIn('which inputs alone reach the price within the ranges tested, the flat discount\nrate among',
+                      pipeline.SECTIONS)
         self.assertIn('"What the price\nneeds"', pipeline.SECTIONS)
         self.assertIn('Assign the difference between value and price no cause', pipeline.SECTIONS)
         self.assertNotIn('Say plainly whether the', pipeline.SECTIONS)
