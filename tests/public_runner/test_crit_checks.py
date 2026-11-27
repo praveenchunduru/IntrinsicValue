@@ -382,7 +382,7 @@ class ReinvestmentReferenceTests(unittest.TestCase):
             scenario['sales_to_capital'] = 3.0
         result = pipeline._evaluate(value)
         self.assertIsNone(result['reinvestment_continuity']['scenarios']['base']['reinvestment_floor'])
-        with self.assertRaisesRegex(ValueError, r'(?s)at most 1\.5 times the reported 3-year incremental rate of 1\.89 on the '
+        with self.assertRaisesRegex(ValueError, r'(?s)at most 1\.5 times the 3-year incremental rate \(computed from reported lines\) of 1\.89 on the '
                                                 r'change in invested capital.*base .* sales-to-capital 3\.00'):
             pipeline._check_continuity(value, result, SOURCES)
         for scenario in value['scenarios'].values():

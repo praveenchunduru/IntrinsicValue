@@ -137,7 +137,7 @@ class ReinvestmentContinuityTests(unittest.TestCase):
         result = pipeline._evaluate(value)
         pipeline._check_continuity(value, result, SOURCES)
         self.assertIn('stated basis', '\n'.join(pipeline._reinvestment_lines(result)))
-        self.assertIn('Net reinvestment over forecast years 1-3 against the reported', pipeline.computed_summary(value, result))
+        self.assertIn('billion a year computed from reported lines', pipeline.computed_summary(value, result))
 
     def test_a_basis_citing_an_unknown_source_is_rejected(self):
         value = self.locked({name: 'Management guided capital spending to fall as construction completes [S999].'

@@ -66,14 +66,17 @@ forecast is close to consensus, say so.
 (3) Business economics, industry and competition (about 450 words), from primary sources and the
 computed tables.
 (4) Management, capital allocation and financial history (about 450 words), from the reported
-history and breakdown tables; compare buybacks with house value using computed figures.
+history and breakdown tables; compare buybacks with house value using computed figures. Operating-lease
+cost is inside EBIT; finance-lease additions count as reinvestment; leases signed but not yet commenced are
+disclosed and not deducted. Do not call lease commitments capital expenditure.
 (5) Forecast and scenarios (about 500 words): how the base case (the headline, the expected path) and
 the bear and bull stress cases start from reported results and what drives each. Scenario drivers are house assumptions:
 say so, and cite a source only for the observed fact behind each. Outside estimates appear only as
 labelled unverified context.
 (6) Observations that would change the value (about 300 words), from the computed monitoring cases.
 (7) Risks, including evidence that the valuation framework is wrong (about 300 words).
-(8) Evidence gaps and unresolved questions (about 200 words).'''
+(8) Evidence gaps and unresolved questions (about 200 words). Name each gap without restating a company
+figure that only an unverified excerpt supports.'''
 # Memo stages rewrite the full memo. A live revision overran a 14,000-token
 # limit as the memo grew, so the limit leaves room above the word budget.
 MEMO_TOKENS = 18000
@@ -146,8 +149,8 @@ expense_shares every reported operating cost share is held. A year-1 EBIT margin
 rejected unless margin_continuity_basis (an object keyed by bear, base, bull) explains that
 scenario's step with evidence [S#] from the sources. Reinvestment starts from the reported run-rate
 too: a scenario whose net reinvestment over years 1-3 (revenue change / sales_to_capital) is below
-two thirds of three years at the last reported net reinvestment, or whose sales-to-capital over those
-years is above 1.5 times the reported incremental rate, is rejected unless capital_efficiency_basis
+two thirds of three years at the last year's net reinvestment computed from reported lines, or whose sales-to-capital
+over those years is above 1.5 times the incremental rate computed from reported lines, is rejected unless capital_efficiency_basis
 (keyed by bear, base, bull) explains it with evidence [S#]; the reported rate counts cash acquisitions as
 investment. Final-year EBIT margins have hard ceilings with no exception: bear at most the reported
 five-year average operating margin (the five-year peak where that average is not positive), base and
@@ -869,7 +872,7 @@ def _reinvestment_breaks(locked, result, known, prior):
            if isinstance(acquired,(int,float)) and acquired>0 else
            f'{counts} cash paid for acquisitions as investment, and none was reported in those years.')
     return [f'Reinvestment over forecast years 1-{REINVESTMENT_WINDOW} departs from the reported run-rate: '+floor_text+
-            f'sales-to-capital may be at most {REINVESTMENT_RATIO:g} times the reported {check["years"]}-year incremental rate of '
+            f'sales-to-capital may be at most {REINVESTMENT_RATIO:g} times the {check["years"]}-year incremental rate (computed from reported lines) of '
             f'{check["incremental_sales_to_capital"]:.2f}'+_rate_basis_text(check)+f' [{", ".join(check["source_refs"])}].'+deals+
             ' Outside the band: '+', '.join(breaks)+
             '. Either bring sales_to_capital and reinvestment within the band, or keep the forecast and state its evidence in '
@@ -972,7 +975,7 @@ def _check_continuity(locked, result, sources=(), prior=None):
 CONTINUITY_RULE = ('\nYear-1 continuity: start year-1 gross margins and expenses from the most recent reported run-rate '
                    'in reported_inputs.operating_reference (annual or year to date). A larger step needs '
                    'margin_continuity_basis.<bear|base|bull> with [S#] citations to sources in the evidence. Start '
-                   'reinvestment from the reported net reinvestment and incremental sales-to-capital; a large fall needs '
+                   'reinvestment from the net reinvestment and incremental sales-to-capital computed from reported lines; a large fall needs '
                    'capital_efficiency_basis.<bear|base|bull> with [S#] citations. Final-year EBIT margins may not exceed the '
                    'reported five-year average (bear; the five-year peak where that average is not positive) or the higher of the reported '
                    'five-year peak and the latest twelve-month operating margin, plus 5 points, less for low-margin '
@@ -1410,8 +1413,8 @@ EVIDENCE_TIER_RULE = (
     'Evidence tiers. (1) COMPUTED FROM REPORTED FILINGS and PRIMARY AND OFFICIAL SOURCES support company facts and '
     'numbers. (2) UNVERIFIED WEB EXCERPTS support only attributed outside views, consensus or guidance context and '
     'qualitative colour; label each such use inline as unverified, and never make an unverified excerpt the only '
-    'support for a company fact, a number used in a comparison, or the valuation conclusion. Prefer the primary source '
-    'whenever both contain a fact.')
+    'support for a company fact, a number used in a comparison, or the valuation conclusion. An evidence-gap note '
+    'names the gap without restating such a figure. Prefer the primary source whenever both contain a fact.')
 # Plan text is printed in the exhibits (monitoring cases, counterfactuals,
 # repurchase tests). A live plan (2026-11-14) cited an unverified aggregator
 # beside the 10-K for buyback figures the 10-K holds, and the review flagged it.
@@ -3028,8 +3031,8 @@ def _forecast_roic_lines(result, currency):
     rnd=any(entry.get('continuing_value_nopat_includes_rnd') for entry in returns['scenarios'].values())
     opening=returns['opening_invested_capital']
     amount=f'{opening/1e9:,.1f} billion' if abs(opening)>=1e8 else f'{opening:,.0f}'
-    lines += ['', f'Invested capital starts at {currency} {amount}, the reported '
-                  f'operating-approach invested capital including goodwill and acquired intangibles at the fiscal year end '
+    lines += ['', f'Invested capital starts at {currency} {amount}, the '
+                  f'operating-approach invested capital computed from the reported balance sheet, including goodwill and acquired intangibles, at the fiscal year end '
                   f'{returns.get("fiscal_year_end") or "of the last report"}'+(f' [{refs}]' if refs else '')+', and adds each '
                   'year\'s net reinvestment. ROIC is NOPAT over average capital; 3-year incremental ROIC is the NOPAT change '
                   'over three years over the capital that paid for that growth (the same three years\' capital change, because '
@@ -3083,7 +3086,7 @@ def _reinvestment_text(check):
                     for name,row in check['scenarios'].items())
     base=check.get('net_reinvestment')
     status=check.get('net_reinvestment_status')
-    reported=(f'the reported {base/1e9:,.1f} billion a year' if isinstance(base,(int,float)) and base>0 else
+    reported=(f'{base/1e9:,.1f} billion a year computed from reported lines' if isinstance(base,(int,float)) and base>0 else
               'the reported results (capital expenditure or depreciation not reported for every year, so no floor)'
               if status=='not_reported' else
               'the reported results (net reinvestment in the last year not positive, so no floor)')
@@ -3921,7 +3924,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         prompt=('Build an investment valuation plan for '+ticker+'. Ground actuals in supplied evidence; '
                 'use primary reports where accessible, and reconcile secondary-series dates and definitions.\n'+
                 FORECAST_SCHEMA+_rate_convention(state['sources'],reported.get('currency'))+UNDERWRITING_GUIDANCE+PLAN_FIELD_RULES+PLAN_SOURCE_RULE+'\nIMMUTABLE reported inputs (copy these values exactly; forecast judgments only):\n'+json.dumps(reported)+
-                (('\nReported reinvestment (reference for years 1-3 reinvestment and sales_to_capital):\n'+
+                (('\nReinvestment computed from reported lines (reference for years 1-3 reinvestment and sales_to_capital):\n'+
                   json.dumps(reinvestment_reference(state['sources'],anchor_revenue)))
                  if reinvestment_reference(state['sources'],anchor_revenue) else '')+
                 (('\nReported operating margins (reference for the final-year margin ceilings):\n'+
@@ -4376,7 +4379,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             '\nLocked actuals (reference only; omit from your proposal):\n'+json.dumps(plan.get('actuals',{}))+
             '\nReported operating lines (reference for year-1 continuity):\n'+
             json.dumps((plan.get('reported_inputs') or {}).get('operating_reference'))+
-            ('\nReported reinvestment (reference for years 1-3 reinvestment):\n'+json.dumps(plan['reinvestment_reference'])
+            ('\nReinvestment computed from reported lines (reference for years 1-3 reinvestment):\n'+json.dumps(plan['reinvestment_reference'])
              if plan.get('reinvestment_reference') else '')+
             ('\nReported operating margins (reference for the final-year margin ceilings):\n'+json.dumps(plan['cost_path_reference'])
              if plan.get('cost_path_reference') else '')+

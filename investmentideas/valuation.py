@@ -1892,7 +1892,7 @@ def forecast_return_on_capital(reference, scenarios):
                         'continuing_value_nopat_includes_rnd': bool(result.get('terminal_rnd_net_investment'))}
     return {'opening_invested_capital': float(opening), 'fiscal_year_end': reference.get('fiscal_year_end'),
             'source_refs': copy.deepcopy(reference.get('source_refs') or []), 'scenarios': output,
-            'basis': 'Invested capital starts at the reported operating-approach invested capital (Mauboussin and Callahan '
+            'basis': 'Invested capital starts at the operating-approach invested capital computed from the reported balance sheet (Mauboussin and Callahan '
                      'method, including goodwill and acquired intangibles) at the last reported fiscal year end and adds each '
                      'forecast year\'s net reinvestment. ROIC is NOPAT over the average of opening and closing capital. '
                      'Three-year incremental ROIC is the NOPAT change over three years over the capital that paid for that '
