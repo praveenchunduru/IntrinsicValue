@@ -11,7 +11,8 @@ import copy
 from .valuation import SCENARIOS, evaluate
 
 DRIVER_GROUPS = ('growth path', 'margin path', 'capital efficiency', 'tax', 'discount rate')
-SWAP_ERRORS = (ValueError, KeyError, TypeError, ZeroDivisionError, OverflowError)
+# A swap that cannot be valued is recorded as an error row; it never stops the caller.
+SWAP_ERRORS = (ArithmeticError, AttributeError, IndexError, KeyError, TypeError, ValueError)
 
 
 def _explicit_rows(result, name):

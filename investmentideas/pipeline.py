@@ -105,7 +105,9 @@ the evidence does not contain; the supplied sales-growth base-rate tables may be
 rates are decimals.
 The RATE CONVENTION FOR THIS RUN, stated after these instructions, says whether to give
 scenario wacc and terminal_growth.
-Keep each rationale under 100 words. Do not reproduce historical actuals, cash/debt
+Write each rationale in one or two short sentences: the evidence [S#] and the direction of each
+departure. Do not restate forecast input figures (growth rates, margins, expense shares, tax rate,
+sales-to-capital); Python prints them beside the text. Do not reproduce historical actuals, cash/debt
 reconciliations, source passages, calculated cashflows or valuation targets: Python
 locks reported inputs and independently computes the outputs.
 The unlevered operating-company model uses GAAP EBIT less operating taxes and
@@ -146,11 +148,13 @@ An R&D or SG&A line left out holds its reported share (zero R&D when none is rep
 expense_shares every reported operating cost share is held. A year-1 EBIT margin more than 5 points
 (less for low-margin businesses) from both the reported annual and year-to-date operating margins is
 rejected unless margin_continuity_basis (an object keyed by bear, base, bull) explains that
-scenario's step with evidence [S#] from the sources. Reinvestment starts from the reported run-rate
+scenario's step with evidence [S#] from the sources, in one or two short sentences that state the
+evidence and the direction without restating the plan's input figures. Reinvestment starts from the reported run-rate
 too: a scenario whose net reinvestment over years 1-3 (revenue change / sales_to_capital) is below
 two thirds of three years at the last year's net reinvestment computed from reported lines, or whose sales-to-capital
 over those years is above 1.5 times the incremental rate computed from reported lines, is rejected unless capital_efficiency_basis
-(keyed by bear, base, bull) explains it with evidence [S#]; the reported rate counts cash acquisitions as
+(keyed by bear, base, bull) explains it with evidence [S#], in one or two short sentences of evidence
+and direction without the plan's input figures; the reported rate counts cash acquisitions as
 investment. Final-year EBIT margins have hard ceilings with no exception: bear at most the reported
 five-year average operating margin (the five-year peak where that average is not positive), base and
 bull at most the higher of the reported five-year peak and the latest twelve-month operating margin,
@@ -198,6 +202,8 @@ and exactly one of counterfactual(name) or calibration_comparison(name); the lin
 value in that direction.
 Python supplies each conditional value and change.
 These are analyst-selected decision thresholds. They are neither company guidance nor automatic forecasts.
+The observation, and every counterfactual name or label, states the evidence and the direction in one
+short sentence and does not restate forecast input figures; the threshold carries the one figure.
 Justify reinvestment.
 This is valuation research only: do not supply entry thresholds, margins of safety or other
 trading rules.
@@ -4361,23 +4367,22 @@ def _plan_samples_stage(folder, state, call, checkpoint, progress, prompt, prefi
     chosen = valid[0]
     if not single:
         held = _reported_expense_shares(valid[0]['plan'])
+        proposals = [copy.deepcopy(item['proposal']) for item in valid]
+        valuations, numbers = [item['result'] for item in valid], [item['sample'] for item in valid]
         try:
-            candidate, report = consensus.consensus_plan([copy.deepcopy(item['proposal']) for item in valid],
-                                                         valuations=[item['result'] for item in valid], held_shares=held,
-                                                         numbers=[item['sample'] for item in valid])
+            candidate, report = consensus.consensus_plan(proposals, valuations=valuations, held_shares=held, numbers=numbers)
         except consensus.LOCK_ERRORS as exc:
-            # Samples that each passed but cannot be combined: the first valid sample, recorded.
-            candidate, report = consensus.consensus_plan([copy.deepcopy(valid[0]['proposal'])],
-                                                         valuations=[valid[0]['result']], numbers=[valid[0]['sample']])
-            report['notes'].append(f'The valid samples could not be combined ({str(exc)[:300]}); the plan is sample '
-                                   f'{valid[0]["sample"]}.')
-            valid = valid[:1]
+            # Samples that each passed but cannot be combined: the closest one, recorded with the reason.
+            candidate, report = consensus.closest_sample(proposals, valuations, numbers, str(exc))
 
         def lock(plan):
             outcome = _omit_invalid_optional_sections(plan, lambda item: _lock_and_value(item, state))
             return outcome[0][2], outcome
-        if len(valid) == 1:
-            consensus.finish_report(report, chosen['result'], 'single_valid_sample')
+        if report['method'] in consensus.SINGLE_METHODS:
+            # One sample, whole: its own lock and valuation stand.
+            chosen = next(item for item in valid if item['sample'] == report['representative_sample'])
+            consensus.finish_report(report, chosen['result'], 'single_valid_sample' if report['method'] == 'single_sample'
+                                    else report['method'])
         else:
             candidate, ((locked, changes, result), omitted) = consensus.lock_consensus(
                 candidate, report, lock, {item['sample']: item['proposal'] for item in valid})
@@ -4387,9 +4392,13 @@ def _plan_samples_stage(folder, state, call, checkpoint, progress, prompt, prefi
         report['consensus_proposal'] = candidate
         report['plan_fingerprint'] = consensus.fingerprint(chosen['plan'])
         if len(valid) > 1 and report.get('plan_used') == 'consensus':
-            # Ranked by value: each sample's driver group swapped into the plan valued.
-            report['value_impact'] = consensus.value_impact(
-                chosen['plan'], chosen['result'], [(item['sample'], item['plan'], item['result']) for item in valid])
+            # Ranked by value: each sample's driver group swapped into the plan valued. A diagnostic:
+            # nothing in it may stop a run whose samples are already paid for.
+            try:
+                report['value_impact'] = consensus.value_impact(
+                    chosen['plan'], chosen['result'], [(item['sample'], item['plan'], item['result']) for item in valid])
+            except Exception as exc:  # noqa: BLE001
+                report['value_impact'] = {'error': f'{type(exc).__name__}: {str(exc)[:300]}', 'groups': []}
     state.setdefault('actual_input_corrections', []).extend(chosen['changes'])
     _reset_plan_notes(state)
     _record_omitted_sections(state, chosen['omitted'], 'forecast plan\'s')
