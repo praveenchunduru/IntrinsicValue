@@ -1345,7 +1345,9 @@ def _computed_diagnostics(actuals, definitions, scenarios, weighted):
         'percentage_delta_basis': 'Signed value difference / absolute baseline value * 100; null for a zero baseline or nonfinite comparison.',
         'base_wacc': {'baseline_wacc': base_rates[0], 'baseline_per_share_value': baseline,
                       'fixed_assumptions': ('The whole discount-rate path, including the terminal rate, shifts by the stated amount. ' if glide else '')+
-                                           'All other base-case forecast and terminal inputs, net debt, claims and shares are fixed.',
+                                           ('The terminal return on new capital follows the shifted terminal rate. '
+                                            if base.get('terminal_roic_follows_rate') else '')+
+                                           'The forecast cash-flow inputs, terminal growth, net debt, claims and shares are fixed.',
                       'changes': wacc_changes},
         'uniform_tax': {'baseline_weighted_per_share_value': weighted,
                         'baseline_scenario_tax_rates': {name: definitions[name]['tax_rate'] for name in SCENARIOS},

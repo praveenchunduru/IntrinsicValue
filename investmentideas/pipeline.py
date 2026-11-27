@@ -3068,7 +3068,7 @@ def _pin_terminal_return(locked, sources, changes):
         scenario['terminal_roic']=pinned
     return ['Terminal return on new capital equals the terminal discount rate, Mauboussin\'s steady state. The 10-year '
             'forecast is the house horizon for excess returns. After year 10, new investment earns its cost of capital, so '
-            'growth adds no value. The rate alternatives keep this rule. The convention panel shows the value with a terminal '
+            'growth adds no value. '+RATE_TEST_RULE+' The convention panel shows the value with a terminal '
             'return 4 points above the terminal rate, at 15% and 25%, and at the earlier house rule where that differs from '
             'these. The earlier rule is the median ROIC computed from reported values, at most 15%. The panel also shows '
             'horizons of 5, 15 and 20 years and Mauboussin\'s industry fade rate where the industry mapping has one.']
@@ -3220,7 +3220,7 @@ PANEL_LABELS = {
     'terminal_return_equals_terminal_rate': 'Terminal return on new capital at the terminal rate',
     'terminal_return_earlier_house_rule': 'Terminal return at the five-year median ROIC, at most 15%',
     'terminal_return_rate_plus_4_points': 'Terminal return on new capital 4 points above the terminal rate',
-    'base_margin_held_at_reported_peak': 'EBIT margin capped at the reported five-year peak',
+    'base_margin_held_at_reported_peak': 'EBIT margin capped at the five-year peak',
     'terminal_return_15_percent': 'Terminal return on new capital of 15%',
     'terminal_return_25_percent': 'Terminal return on new capital of 25%',
     'terminal_reinvestment_continues_forecast': 'Terminal reinvestment at the forecast capital efficiency',
@@ -3229,7 +3229,8 @@ PANEL_LABELS = {
     'required_return_plus_1_point': 'Whole discount-rate path 1 point higher',
 }
 PANEL_NOTES = {
-    'constant_initial_rate': 'The current-rate row holds the year-1 discount rate in every year and in the terminal value.',
+    'constant_initial_rate': ('The current-rate row holds the year-1 discount rate in every year and in the terminal '
+                              'value, and the terminal return on new capital follows that rate.'),
     'damodaran_default_terminal_rate': ('The risk-free-plus-premium row is the Damodaran spreadsheet default: the terminal '
                                         'rate is the risk-free rate plus the equity risk premium at any leverage.'),
     'tax_to_marginal_rate': ('The marginal-tax row is the Damodaran default. Applied to every firm, it values the index '
@@ -3240,10 +3241,13 @@ PANEL_NOTES = {
                                    'Apple in 2024.'),
     'terminal_return_25_percent': 'The 25% row assumes new investment keeps earning well above the market forever.',
     'terminal_reinvestment_continues_forecast': ('The forecast-capital-efficiency row keeps the forecast sales-to-capital '
-                                                 'after year 10, so reinvestment does not step up at the end of the forecast.'),
+                                                 'after year 10, so reinvestment does not step up at the end of the forecast. '
+                                                 'It also keeps R&D expensed in the continuing value, as the forecast years '
+                                                 'do, so it drops the house net R&D add-back.'),
     'terminal_rnd_expensed': ('The R&D-expensed row is the earlier house rule. It adds no net R&D investment back to '
                               'NOPAT, so new R&D after the forecast earns below its cost.'),
-    'base_margin_held_at_reported_peak': 'The peak-margin row keeps the base-case EBIT margin at or below the best reported year.',
+    'base_margin_held_at_reported_peak': ('The peak-margin row keeps the base-case EBIT margin at or below the highest '
+                                          'operating margin of the last five fiscal years.'),
 }
 
 
@@ -3348,6 +3352,12 @@ def _requirement_percentiles(result, row):
     house=house_rows.get(key,{}).get('description')
     needed=needed_rows.get(key,{}).get('description') if row.get('status')=='solved' else None
     return key,(_percentile_word(house) if house else None),(_percentile_word(needed) if needed else None)
+
+
+def _implied_follows(implied):
+    """True when the implied-return search let the terminal return follow the solved rate (it starts at the 0.50% floor)."""
+    floors=[row.get('search_floor') for row in (implied.get('scenarios') or {}).values() if isinstance(row,dict)]
+    return bool(floors) and all(_finite_number(value) and abs(value-.005)<1e-9 for value in floors)
 
 
 def _requirement_cells(row):
@@ -3543,7 +3553,12 @@ def _implied_return_sentence(row, which, money):
     return None
 
 
+# What every rate test does to the terminal return, checked against valuation._project: each
+# rate-changing call keeps terminal_roic_follows_rate, so the return on new capital is the tested
+# terminal rate (memo audit, 2026-11-27; a review read the old wording as a held return).
+RATE_TEST_RULE = ('Every rate test moves the terminal return on new capital with the terminal rate it tests: the whole-path shifts, the Treasury-rate and monthly rows, the rate methods, the beta checks, the country-risk row, the constant-rate and Damodaran-default rows and the implied return.')
 ASSUMPTION_REWRITES = (
+    ('The rate alternatives keep this rule.', RATE_TEST_RULE),
     (' are house forecasts, not reported facts or company guidance.', ' are house forecasts.'),
     ('Omitted investment categories are not reported zeros. ', 'An omitted investment category counts as zero by assumption. '),
     ('; an absent concept is not a reported zero, and undisclosed borrowings would lower equity value',
@@ -3553,8 +3568,8 @@ ASSUMPTION_REWRITES = (
      'is the house horizon for excess returns, after which new investment earns its cost of capital, so growth beyond it '
      'adds no value; rate alternatives keep this.',
      'Terminal return on new capital equals the terminal discount rate, Mauboussin\'s steady state. The 10-year forecast '
-     'is the house horizon for excess returns. After year 10, new investment earns its cost of capital, so growth adds no value. '
-     'The rate alternatives keep this rule.'),
+     'is the house horizon for excess returns. After year 10, new investment earns its cost of capital, so growth adds no value. '+
+     RATE_TEST_RULE),
 )
 
 
@@ -3603,9 +3618,9 @@ def _equity_bridge_parts(plan, result, style):
         return style.amount(value) if text=='0' and value else text
     rows=[['Enterprise value',money(base['enterprise_value']),'present value of base-case free cash flow']]
     if _finite_number(base.get('net_debt')) and base['net_debt']<0:
-        rows.append(['Plus net cash',money(-base['net_debt']),f'cash less debt on {day}'+_cite(refs.get('net_debt'))])
+        rows.append(['Plus net cash',money(-base['net_debt']),f'selected cash and investments less debt on {day}'+_cite(refs.get('net_debt'))])
     else:
-        rows.append(['Less net debt',money(base.get('net_debt')),f'debt less cash on {day}'+_cite(refs.get('net_debt'))])
+        rows.append(['Less net debt',money(base.get('net_debt')),f'debt less selected cash and investments on {day}'+_cite(refs.get('net_debt'))])
     components=claims.get('components') if isinstance(claims.get('components'),dict) else None
     notes=[]
     if components is not None:
@@ -3793,6 +3808,7 @@ def _discount_parts(result, style):
         rows=[]
         for row in comparisons:
             name=str(row.get('name','')).replace('_',' ')
+            name=name[:1].upper()+name[1:]
             if row.get('per_share_value') is None:
                 rows.append([name,memo_style.pct(row.get('wacc'),2)]+(['n/a','n/a'] if with_growth else [])+
                             ['not calculated','']+(['n/a'] if with_growth else []))
@@ -3839,8 +3855,11 @@ def _implied_parts(result, style):
         notes+=['The implied return is the one discount rate, used in every year and in the terminal value, at which value '
                 'equals the price. The required return is the same flat rate at the house value. Neither is a forecast of '
                 'shareholder returns.',
-                'A terminal spread under two points marks a fragile result. Where the terminal return follows the rate, '
-                'the continuing value is NOPAT over the rate, so the search starts at 0.50%, below terminal growth.']
+                ('The terminal return follows the solved rate, so the continuing value is NOPAT over that rate. A narrow '
+                 'spread between the rate and terminal growth then has no outsized effect, no implied-return row is '
+                 'marked fragile, and the search starts at 0.50%, below terminal growth.' if _implied_follows(implied) else
+                 'A terminal spread under two points between the implied return and terminal growth marks a fragile '
+                 'result.')]
     requirements=(result.get('price_requirements') or {}).get('rows') or []
     if requirements:
         rows=[]
@@ -3890,8 +3909,8 @@ def _panel_parts(result, style):
         if step:
             lines+=['',step]
         notes+=['Convention rows are alternatives a careful analyst could defend. Each changes one convention from the '
-                'house case with every other input fixed. They carry no probability, are not forecasts and are never '
-                'tuned to the price, and they are never added together.']
+                'house case and keeps the other inputs; the notes below name any input a row changes with it. They carry '
+                'no probability, are not forecasts and are never tuned to the price, and they are never added together.']
         notes+=[PANEL_NOTES[row['name']] for row in conventions if row.get('name') in PANEL_NOTES]
     skipped=[row for row in rows if row.get('kind')=='convention' and row.get('status')=='not_applicable']
     for row in skipped:
@@ -3907,11 +3926,15 @@ def _panel_parts(result, style):
                      'and capital efficiency while growth moves in equal steps to terminal growth; the rate path is unchanged.')
         fade=next((row.get('fade') for row in horizons if isinstance(row.get('fade'),dict)),None)
         sectors=(fade or {}).get('sectors') or []
-        if sectors:
+        groups={}
+        for item in sectors:
+            if _finite_number(item.get('fade_rate')):
+                entry=groups.setdefault((item.get('industry_group'),item['fade_rate']),0.0)
+                groups[(item.get('industry_group'),item['fade_rate'])]=entry+(item.get('weight') or 0.0)
+        if groups:
             notes.append('The industry fade row uses the fade rates in Mauboussin\'s Exhibit 25: '+', '.join(
-                f'{item.get("industry_group")} {item.get("fade_rate"):.2f}'+
-                (f' at {item["weight"]:.0%} of revenue' if len(sectors)>1 and _finite_number(item.get('weight')) else '')
-                for item in sectors if _finite_number(item.get('fade_rate')))+'.')
+                f'{group} {rate:.2f}'+(f' at {weight:.0%} of revenue' if len(groups)>1 and weight else '')
+                for (group,rate),weight in groups.items())+'.')
     regimes=[row for row in rows if row.get('kind') in ('sensitivity','rate_regime')]
     if regimes:
         lines+=['','### Rate regimes','']+_table(header('Rate case'),_panel_rows(regimes,style))
@@ -3920,10 +3943,12 @@ def _panel_parts(result, style):
             lines+=['',f'The median base value across the {history["calculated"]} monthly Treasury rate and premium pairs '
                        f'from {history["first"][:7]} to {history["last"][:7]} is {style.per_share(history["median_per_share_value"])}.'+
                        (f' {len(history["not_calculated"])} months give no valid rate path.' if history.get('not_calculated') else '')]
-        notes.append('Sensitivity rows shift the whole discount-rate path and show scale only.')
+        notes.append('Sensitivity rows shift the whole discount-rate path, terminal rate included, and show scale only. '
+                     'The terminal return on new capital follows the shifted terminal rate.')
         notes.append('Treasury-rate rows hold the cash flows fixed and move the Treasury rate, with the debt cost moving by '
                      'the same amount and the premium held. Month rows use another month\'s Treasury rate and premium. '
-                     'Where terminal growth equals the risk-free rate it moves with it.')
+                     'In both, the terminal return on new capital follows the new terminal rate, and terminal growth that '
+                     'equals the risk-free rate moves with it.')
     extra=[note for note in panel.get('exhibit_notes') or [] if note]
     notes+=extra
     country=[row for row in rows if row.get('kind')=='country_risk']
@@ -3960,14 +3985,19 @@ def _monitoring_parts(result, style):
     if monitoring:
         rows=[]
         for row in monitoring:
-            rows.append([str(row['name']).replace('_',' '),row.get('review_by',''),
+            case=row.get('counterfactual') or row.get('calibration_comparison')
+            rows.append([str(row['name']).replace('_',' ')+(f' (case: {str(case).replace("_"," ")})' if case else ''),
+                         row.get('review_by',''),
                          (dollar_amounts(row['threshold']) if style.code=='USD' else row['threshold'])+_cite(row.get('source_refs')),
                          memo_style.bare_per_share(row['conditional_per_share_value']),
                          memo_style.bare_change(row['value_change']['dollar_delta'],row['conditional_per_share_value'])])
-        lines+=['','### Monitoring tests','']+_table(['Observation','Review by','Threshold',f'Value per share ({u})',
-                                                     f'Change ({u})'],rows,['---','---','---','---:','---:'])
-        notes.append('Monitoring deadlines and thresholds are house decision rules. A result holds only with its exact '
-                     'changed inputs, and correlated cases do not add.')
+        lines+=['','### Monitoring tests','',
+                'Each value is the base case under the overrides of the case the test names. Crossing a threshold does '
+                'not change the base value by itself.','']+_table(
+            ['Observation','Review by','Threshold',f'Value under the named overrides ({u})',f'Change ({u})'],rows,
+            ['---','---','---','---:','---:'])
+        notes.append('Monitoring deadlines and thresholds are house decision rules. A value holds only with the exact '
+                     'overrides of its named case, and correlated cases do not add.')
     cases=result.get('counterfactuals') or {}
     if cases:
         rows=[[str(name).replace('_',' '),memo_style.bare_per_share(case.get('per_share_value')),
@@ -4057,9 +4087,11 @@ def _continuity_parts(result, style):
         latest=cost.get('latest_run_rate') if isinstance(cost.get('latest_run_rate'),dict) else None
         if latest:
             kind='twelve months' if latest.get('basis')=='trailing_twelve_months' else 'year to date'
-            notes.append(f'The reported operating margin for the {kind} to {(latest.get("period") or {}).get("end_date")} '
-                         f'is {memo_style.pct(latest["operating_margin"])}{_cite(latest.get("source_refs"))}.')
-        notes.append(f'Final-year margin ceilings use the reported operating margins of the last {cost.get("years")} years. '
+            notes.append(f'The operating margin for the {kind} to {(latest.get("period") or {}).get("end_date")}, '
+                         f'computed from reported results, is {memo_style.pct(latest["operating_margin"])}'
+                         f'{_cite(latest.get("source_refs"))}.')
+        notes.append(f'Final-year margin ceilings use the operating margins of the last {cost.get("years")} fiscal years, '
+                     'computed from reported results. '
                      'The bear ceiling is the average, or the peak where the average is not positive. The base and bull '
                      'ceiling is the higher of the peak and the latest twelve-month margin, plus 5 points, less for '
                      'low-margin businesses.')
@@ -4068,21 +4100,21 @@ def _continuity_parts(result, style):
         unit,scale,decimals=memo_style.table_scale([row.get('net_reinvestment') for row in reinvestment['scenarios'].values()])
         base=reinvestment.get('net_reinvestment')
         status=reinvestment.get('net_reinvestment_status')
-        reported=(f'{memo_style.scaled(base,scale,decimals)} a year' if _finite_number(base) and base>0 else
+        reported=(f'{memo_style.scaled(base,scale,decimals)} a year, computed' if _finite_number(base) and base>0 else
                   'not reported every year' if status=='not_reported' else 'not positive')
         years=reinvestment.get('years') or REINVESTMENT_WINDOW
         rows.append([f'Net reinvestment, years 1-{REINVESTMENT_WINDOW} ({style.unit(unit)})',reported]+
                     [memo_style.scaled((reinvestment['scenarios'].get(name) or {}).get('net_reinvestment'),scale,decimals)
                      for name in names])
         rows.append([f'Sales-to-capital, years 1-{REINVESTMENT_WINDOW}',
-                     f'{memo_style.ratio(reinvestment.get("incremental_sales_to_capital"))}, {years}-year incremental']+
+                     f'{memo_style.ratio(reinvestment.get("incremental_sales_to_capital"))}, {years}-year incremental, computed']+
                     [memo_style.ratio((reinvestment['scenarios'].get(name) or {}).get('sales_to_capital')) for name in names])
         for name,row in reinvestment['scenarios'].items():
             if row.get('stated_basis') and not row.get('within_band'):
                 extra.append(f'- {name.title()} reinvestment basis: {row["stated_basis"]}')
         basis=_rate_basis_text(reinvestment).strip()
         if basis:
-            notes.append(f'The reported incremental sales-to-capital is measured {basis}.')
+            notes.append(f'The historical incremental sales-to-capital is computed from reported values and measured {basis}.')
         if not (_finite_number(base) and base>0):
             notes.append('The reinvestment floor uses the last year of net reinvestment where it is positive. Here it is '
                          + ('not reported for every year' if status=='not_reported' else 'not positive') + ', so there is no floor.')
@@ -4095,8 +4127,9 @@ def _continuity_parts(result, style):
         return [],[]
     when=(continuity.get('period') or {}).get('end_date') or reinvestment.get('fiscal_year_end') or cost.get('fiscal_year_end')
     lines=['','### Forecast against reported results','',
-           f'Reported figures are for the fiscal year ending {when}{_cite(list(dict.fromkeys(refs)))}.','']
-    lines+=_table(['Check','Reported','Bear','Base','Bull'],rows)
+           f'History figures are for the fiscal year ending {when}{_cite(list(dict.fromkeys(refs)))}. Margins are '
+           'computed from reported results; net reinvestment and sales-to-capital are computed from reported lines.','']
+    lines+=_table(['Check','History','Bear','Base','Bull'],rows)
     if extra:
         lines+=['']+extra
     return lines,notes
@@ -4258,7 +4291,8 @@ def _history_table(names, columns, style, notes, letter='B'):
         label=HISTORY_LABELS.get(name.strip(),name.strip()[:1].upper()+name.strip()[1:])
         label=label.replace('{B}',style.unit(letter)).replace('{U}',style.unit(''))
         if all(cell=='n/a' for cell in cells):
-            empty.append(label.split(' (')[0].lower())
+            word=label.split(' (')[0]
+            empty.append(word if word[1:2].isupper() or word[1:2]=='&' else word[:1].lower()+word[1:])
             continue
         lines.append(f'| {label} | '+' | '.join(cells)+' |')
     if empty:

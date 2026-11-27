@@ -906,8 +906,10 @@ def method_notes(record, style):
             f'forecasts requested failed validation after {"their" if len(dropped) > 1 else "its"} repairs and '
             f'{"were" if len(dropped) > 1 else "was"} left out.' if dropped else '')
     excluded = (record.get('structure_decision') or {}).get('excluded') or []
-    other = (f' {WORDS.get(len(excluded), len(excluded)).capitalize()} used a different set of segments or horizon and '
-             f'{"were" if len(excluded) > 1 else "was"} left out.' if excluded and combined(record) else '')
+    other = (f' {WORDS.get(len(excluded), len(excluded)).capitalize()} of the others used a different set of segments or '
+             f'horizon and {"were" if len(excluded) > 1 else "was"} left out.' if excluded and combined(record) else '')
+    written = (f'{WORDS.get(count, count)} of the {WORDS.get(requested, requested)}'
+               if isinstance(requested, int) and requested > count else WORDS.get(count, count))
     if combined(record):
         if record.get('method') == 'mean' or count == 2:
             how = ('Growth, gross margins, expense shares, sales-to-capital and tax rates are averaged year by year'
@@ -915,7 +917,7 @@ def method_notes(record, style):
                       'drops out' if record.get('sector_weight_method') == 'median' and count > 2 else '') + '.')
         else:
             how = 'Each forecast input is the median of the forecasts, year by year.'
-        note = (f'The forecast combines {WORDS.get(count, count)} forecasts written independently from the same evidence '
+        note = (f'The forecast combines {written} forecasts written independently from the same evidence '
                 f'and request. {how} The rationales and named cases come from the forecast closest to the per-year '
                 f'median revenue and EBIT paths.{values}{left}{other}')
     elif record.get('plan_used') == 'representative_sample_fallback':
