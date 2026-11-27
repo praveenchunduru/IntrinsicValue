@@ -26,7 +26,7 @@ from .fundamentals import yahoo_financials
 from .inputs import canonical_reported_inputs, operating_company_gate, pin_reported_inputs
 from .quality import (WRITING_STANDARD, dollar_amounts, style_added, DIAGNOSTIC_SCOPE, HOUSE_ATTRIBUTION, RUBRIC, TRADING_TERMS, assessment_findings, claim_ledger,
                       inspect_memo, parse_json, parse_review, prereview_checks, prose_words, trace_pools, untraced_figures,
-                      _figures, UNVERIFIED_FACT_FIX)
+                      _figures, UNVERIFIED_FACT_FIX, PROSE_WORD_BUDGET, word_limit)
 from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_breakdown_facts, inline_facts, archive_focus_excerpts
 from .evidence_tables import (OUTSIDE_SCANNED, breakdown_markdown, breakdown_tables, depreciation_phrase,
                               repurchase_price_basis, scale_of, filing_supplement_for, historical_baseline,
@@ -53,41 +53,46 @@ DEFAULT_BUDGET = 20.0
 # inputs changed. The loop stops as soon as no blocker or major survives, or when only
 # computed text remains. Live reviews raise about ten findings a pass (KO, 2026-11-27).
 DEFAULT_MAX_REVISIONS = 3
-SECTIONS = '''Write these eight sections, in this order, starting with the heading "## 1. Valuation conclusion".
-Python writes the title and the first page above your text: the values, the table "What the price needs" and the
-table "Conventions that move the value most". It adds the valuation detail, reported history and method notes after
-your text. Do not re-type those tables or restate their figures; name a row only where the argument needs it.
-Each section opens with its conclusion.
-(1) Valuation conclusion (about 150 words). Say what the house concludes and which evidence the conclusion rests
-on most. Assign the difference between value and price no cause beyond the first page's table "What the price
-needs": it is the full account of which inputs alone reach the price within the ranges tested, the flat discount
-rate among them, so count inputs from it and from nowhere else. An input not reached within the range tested is not
-shown to be unable to reach the price. A convention step is a row of the convention tables: the base value with one
-house convention changed. Horizon, rate-regime and country-risk rows are exhibits, and sensitivity rows show scale;
-name them as such. The S&P 500 row is context for reading value / price under the house conventions. Report it, if
-at all, as the index's own ratio; it explains no part of the company's difference.
-(2) Variant view (about 400 words): on the inputs that can close the difference, why the house forecast differs
-from what the price requires, with primary evidence. Answer the strongest sourced opposing case with operating
-evidence (demand, pricing, margins, capital needs). Where consensus figures appear only in unverified excerpts,
-report them, if at all, as the aggregator's own figures in their own sentence, and do not compare the house forecast
-with them.
-(3) Business economics, industry and competition (about 450 words), from primary sources and the computed tables.
-(4) Management, capital allocation and financial history (about 450 words), from the reported history and
-breakdown tables; compare buybacks with house value using computed figures. Operating-lease cost is inside EBIT;
-finance-lease additions count as reinvestment; leases signed but not yet commenced are disclosed and not deducted.
-Lease commitments are not capital expenditure.
-(5) Forecast and scenarios (about 500 words): how the base case (the headline, the expected path) and the bear and
-bull stress cases start from reported results and what drives each. Scenario drivers are house assumptions: say
-so, and cite a source only for the observed fact behind each. Outside estimates appear only as labelled
-unverified context.
-(6) Observations that would change the value (about 300 words), from the computed monitoring cases.
-(7) Risks, including evidence that the valuation framework is wrong (about 300 words).
-(8) Evidence gaps and unresolved questions (about 200 words). Name each gap once, without restating a company
-figure that only an unverified excerpt supports.'''
+SECTIONS = '''Write the sections below in this order, with each heading exactly as given. Python writes the title and
+the first page (the values, the scenario table, "What the price needs" and "Conventions that move the value most"),
+shows your In brief on it, and adds the valuation detail, reported history and method notes after your text.
+Each fact has one home, given below: state it there and refer to it elsewhere by name ("the growth the price
+needs"). The first page is the home of the values and of what the price needs; repeat one of its figures only
+where an argument turns on it. A paragraph that lists figures a table already shows is cut.
+"## In brief": three sentences, at most 80 words in all. The first says what the company does and what it earns.
+The second says why our value differs from the price: what our forecast assumes for the input on which it and the
+price differ most, against what the price needs. The third names the observation that would change the value most, with
+its review date when the monitoring cases give one. No computed return.
+"## 1. Conclusion and the gap to price" (about 450 words). Open with the thesis: the economic reason our value
+differs from the price, argued from primary evidence. The table "What the price needs" is the full account of which
+inputs alone reach the price within the ranges tested, the flat discount rate among them, so count inputs from it
+and from nowhere else; an input not reached within the range tested is not shown to be unable to reach the price.
+Make each input that reaches the price concrete with one comparison from the record (a base-rate percentile, the
+best reported margin, a segment that already earns it). Then give the strongest sourced opposing case and say, with
+operating evidence (demand, pricing, margins, capital needs), whether it closes the gap. The S&P 500 row is context
+for reading value / price under these conventions; report it, if at all, as the index's own ratio, since it
+explains no part of the company's difference.
+"## 2. Business economics" (about 400 words): how the company earns its returns on capital, by segment, cost
+structure and competitive position.
+"## 3. Forecast and scenarios" (about 450 words): how the base, bear and bull cases start from reported results and
+what drives each. Scenario drivers are our assumptions: say so once, and cite a source only for the observed fact
+behind each. Explain here, once, the discount rate and what the method assumes after year 10 (new capital then earns
+only its cost; the computed exit multiple shows what that implies). A computed return at the price, if used at all,
+appears here once, as a discount rate.
+"## 4. Capital allocation and claims on value" (about 350 words): buybacks and dividends against our value, from
+the computed figures; financing; leases and off-balance-sheet commitments; the balance-sheet date and what has
+changed since. Operating-lease cost is inside EBIT, finance-lease additions count as reinvestment, and leases signed
+but not yet commenced are disclosed and not deducted. A buyback price above today's value says nothing about value
+on the purchase date, which the model does not estimate.
+"## 5. What would change the value" (about 350 words): the dated observations from the computed monitoring cases,
+ranked by effect, each with its threshold, review date and value; then the evidence that the method itself could be
+wrong (the return on new capital after year 10, the horizon, the rate), each with its computed value.
+"## 6. Evidence gaps": at most six bullets, ranked by effect on value, each a gap a reader would act on, named once
+without restating a figure that only an unverified excerpt supports. Retrieval mechanics are no evidence gap.'''
 # Memo stages rewrite the full memo. A live revision overran a 14,000-token
 # limit as the memo grew, so the limit leaves room above the word budget.
 MEMO_TOKENS = 18000
-MEMO_WORDS = 'about 3,000 words of prose in total; Python adds the tables, and a revision replaces text and adds none'
+MEMO_WORDS = PROSE_WORD_BUDGET+' words of prose in total; Python adds the tables, and a revision replaces text and adds none'
 FORECAST_SCHEMA = """Return ONLY compact JSON for house forecasts:
 {"assumptions_label":"House forecasts",
  "scenario_rationales":{"bear":"Evidence and economic mechanism for this scenario [S#]","base":"...","bull":"..."},
@@ -556,8 +561,10 @@ EDIT_INSTRUCTIONS = (
     'computed summary, the exhibits or a source, calculate no new figures, and place each [S#] after the sourced '
     'figure it supports. If a figure you need is not there, make the point without it. Every replacement follows the '
     'writing standard in the quality standard below; Python rejects a replacement that adds "USD" for a dollar filer, a '
-    'number of seven or more digits, an em dash, a ", not" contrast or a sentence narrating an exhibit. For a rule M1 '
-    'or unverified-company-fact finding: '+UNVERIFIED_FACT_FIX)
+    'number of seven or more digits, an em dash, a ", not" contrast or a sentence narrating an exhibit. For an empty or '
+    'unfinished section (section-empty, rule B4), quote its last sentence, or its heading when it has none, and replace '
+    'it with that text followed by the rest of the section. For a rule M1 or unverified-company-fact finding: '
+    +UNVERIFIED_FACT_FIX)
 # The writer prompt's opening; tests and offline harnesses route the draft call on it.
 WRITER_OPENING = 'Write the prose sections of the intrinsic-value memo for '
 
@@ -583,9 +590,11 @@ def _edit_response(text):
 # M4 and M5 are corrected with the computed or reported figure itself: the live
 # GOOGL and KO edits for M5 findings (2026-11-27) were rejected here, all with
 # figures that traced to the filings, and the round fell back to a rewrite.
-FIGURE_RULES = frozenset({'B1','B3','M1','M3','M4','M5'})
+# M7 (prose against a table or note) is corrected with the table's figure, and an empty section
+# (B4, section-empty) is answered by writing it, figures included; the trace still applies.
+FIGURE_RULES = frozenset({'B1','B3','B4','M1','M3','M4','M5','M7'})
 FIGURE_CHECK_IDS = frozenset({'number-untraced','number-unverified-only','cite-primary-source','comparison-direction',
-                              'valuation-value-mismatch','valuation-model-missing'})
+                              'valuation-value-mismatch','valuation-model-missing','section-empty'})
 _SCENARIO_WORD = re.compile(r'\b(bear|base|bull|weighted)\b', re.I)
 
 
@@ -607,6 +616,28 @@ def _figure_list(text):
     return [(display,number,decimals) for display,number,decimals,_ in _figures(text or '')]
 
 
+_FIGURE_SCALE={'b':1e9,'bn':1e9,'billion':1e9,'m':1e6,'mm':1e6,'million':1e6,'t':1e12,'trillion':1e12}
+
+
+def _scaled_figures(text):
+    """(display, value in units, decimals, scale, unit class) for each figure: $11,599M and $11.6B are one amount."""
+    out=[]
+    for display,number,decimals,unit in _figures(text or ''):
+        unit=(unit or '').strip().lower()
+        scale=_FIGURE_SCALE.get(unit,1)
+        out.append((display,number*scale,decimals,scale,'amount' if unit in _FIGURE_SCALE or not unit else unit))
+    return out
+
+
+def _same_figure(old, new):
+    """Whether ``new`` writes the figure ``old``: the same number, or the same amount at the same or a coarser precision."""
+    _,value,_,old_scale,kind=old
+    _,shown,decimals,scale,other=new
+    if value/old_scale==shown/scale:
+        return True
+    return kind==other and abs(value-shown)<=0.5*10**-decimals*scale+1e-9*max(1,abs(value))
+
+
 def _shows(number, decimals, value):
     return abs(number-abs(value))<=0.5*10**-decimals+1e-9
 
@@ -626,14 +657,16 @@ def _scope_breach(quote, replacement, finding, values):
     dropped=cited(quote)-cited(replacement)-set((finding or {}).get('source_refs') or [])
     if dropped:
         return 'replacement drops citations the finding does not name: '+', '.join(sorted(dropped))
-    # Matched by value, so a restyled amount ($36.3B for USD 36.3 billion) is the same figure.
-    before=[number for _,number,_ in _figure_list(quote)]
+    # Matched by value at the replacement's precision, so a restyled amount ($36.3B for USD 36.3
+    # billion, $11.6B for $11,599M) is the same figure (number style, 2026-11-27).
+    before=_scaled_figures(quote)
     added=[]
-    for item in _figure_list(replacement):
-        if item[1] in before:
-            before.remove(item[1])
+    for item in _scaled_figures(replacement):
+        match=next((old for old in before if _same_figure(old,item)),None)
+        if match is not None:
+            before.remove(match)
         else:
-            added.append(item)
+            added.append((item[0],item[1]/item[3],item[2]))
     if not added:
         return None
     rule=(finding or {}).get('rule')
@@ -708,10 +741,18 @@ def _apply_finding_edits(memo, edits, finding_ids, pools, dollars=True, values=N
             elif _scope_breach(quote,replacement,(findings or {}).get(record['finding']),values):
                 record['reason']=_scope_breach(quote,replacement,(findings or {}).get(record['finding']),values)
             else:
-                memo=memo.replace(quote,replacement)
+                memo=_tidy_deletion(memo.replace(quote,replacement),replacement)
                 record['applied']=True
         records.append(record)
     return memo,records
+
+
+def _tidy_deletion(memo, replacement):
+    """After an edit that deletes text, close the run of blank lines it leaves.
+
+    The Walmart memo of 2026-11-27 shipped with five blank lines where edits had cut most of section 1.
+    """
+    return re.sub(r'\n{3,}','\n\n',memo) if not replacement.strip() else memo
 
 
 def _dollar_filer(plan, result):
@@ -1940,7 +1981,7 @@ def _apply_edits(memo, edits, dollars=True):
         if count==2 and not replacement.strip():
             # Deleting a duplicated passage removes its second occurrence.
             position=memo.rfind(quote)
-            memo=memo[:position]+memo[position+len(quote):]
+            memo=_tidy_deletion(memo[:position]+memo[position+len(quote):],'')
             applied+=1
             continue
         if count!=1:
@@ -1952,7 +1993,7 @@ def _apply_edits(memo, edits, dollars=True):
         if broken:
             skipped.append('replacement breaks the writing standard ('+', '.join(broken)+'): '+quote[:80])
             continue
-        memo=memo.replace(quote,replacement)
+        memo=_tidy_deletion(memo.replace(quote,replacement),replacement)
         applied+=1
     return memo,applied,skipped
 
@@ -5889,26 +5930,22 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
     if not state.get('current_memo'):
         draft=call('full_draft',strong,
             WRITER_OPENING+ticker+', '+MEMO_WORDS+'. '+SECTIONS+
-            '\nThe FIRST PAGE below is placed above your text; the valuation detail, reported history and method notes '
-            'follow it. Copy any computed or reported figure exactly as the first page, the COMPUTED FROM REPORTED '
-            'FILINGS tables, the valuation output or a source shows it, rounded to the memo\'s number style. Calculate '
-            'no new figures (growth rates, margins, per-share amounts, differences or sums); if a figure you need is '
-            'missing, make the point without it. Cite every factual claim with [S#] from the evidence; a causal claim '
-            '(driven by, reflected, helped by) needs a source that states that cause. Name a model output as a house or '
-            'computed figure ("the base-case value is $139", "the house forecast"), and place each [S#] directly after '
-            'the reported or sourced figure it supports. A model output carries no [S#].\n'+
+            '\nThe FIRST PAGE below is placed above your text. Copy any computed or reported figure exactly as the first '
+            'page, the COMPUTED FROM REPORTED FILINGS tables, the valuation output or a source shows it, in the memo\'s '
+            'number style. Calculate no new figures (growth rates, margins, per-share amounts, differences or sums); if a '
+            'figure you need is missing, make the point without it. Cite every factual claim with [S#] from the evidence, '
+            'placed directly after the reported or sourced figure it supports; a causal claim (driven by, reflected, '
+            'helped by) needs a source that states that cause. Name a model output as ours or computed ("our forecast", '
+            '"the computed exit multiple"); it carries no [S#].\n'+
             EVIDENCE_TIER_RULE+'\n'+RUBRIC+'\n'
-            'Engage the strongest sourced opposing economic case and answer it with evidence; a target or rating alone '
-            'is not an argument. Use the computed monitoring cases, counterfactuals, multiples and repurchase tests for '
-            'those topics and say which inputs they hold fixed; reverse-DCF and implied-return figures are conditional '
-            'on named fixed assumptions and describe no market belief. GAAP EBIT already expenses stock compensation, which is a '
-            'real cost. Missing evidence narrows the conclusion; state each gap once instead of repeating caveats. '
-            'Do not invent transcripts, guidance, consensus, dates or quotes. Valuation research only: no ratings, '
-            'target prices, entry levels, margins of safety, upside or downside, or position sizing; write value / '
-            'price. Do not reproduce outside ratings, price targets or recommendations either, even attributed or '
-            'labelled unverified; give an outside view as its economic argument. Write plain analytical prose without '
-            'slogans or superlatives. Name a table only where the argument needs the reader to find it; never mention '
-            'Python, prompts or instructions, and add no tables of your own.'
+            'Take monitoring, counterfactual, multiple and repurchase figures from the computed cases and say which '
+            'inputs each holds fixed; reverse-DCF and implied-return figures are conditional on named fixed assumptions and describe no '
+            'market belief. GAAP EBIT already expenses stock compensation, which is a real cost. Do not invent '
+            'transcripts, guidance, consensus, dates or quotes. Valuation research only: no ratings, target prices, '
+            'entry levels, margins of safety, upside or downside, or position sizing; write value / price. '
+            'Do not reproduce outside ratings, price targets or recommendations either, even attributed or labelled '
+            'unverified; give an outside view as its economic argument. Write plain analytical prose without slogans or '
+            'superlatives. Never mention Python, prompts or instructions, and add no tables of your own.'
             '\nFIRST PAGE (placed above your text):\n'+computed_summary(plan,result)+
             evidence_above()+'\nSynthesis:\n'+thesis+'\nValuation:\n'+valuation_context+'\nGaps:\n'+gaps,tokens=MEMO_TOKENS,
             prefix=_evidence_prefix(context))
@@ -5929,28 +5966,26 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'Revise the complete memo to address every material finding below. Do not hide missing evidence '
             'or change actuals/valuation numbers to make a review disappear. Use the newly recomputed model below '
             'and drop stale values from the prior draft. Explain material valuation changes and why the evidence '
-            'or house assumptions justified them. Retain all required decision sections and specific citations. '
+            'or our assumptions justified them. Retain all required decision sections and specific citations. '
             'Correct verified defects and preserve legitimate disclosed assumptions; do not copy invalid reviewer '
             'accusations or unsupported fixes into reader prose. A valid narrative finding still needs correction '
             'when the model response says it has no forecast impact; do not confuse that with a false accusation. '
-            'Distinguish evidence that falsifies the house '
+            'Distinguish evidence that falsifies our '
             'valuation conclusion from evidence that falsifies a competing bullish/bearish case. '
             'Use computed_diagnostics for sensitivity statements; do not mentally invent tax or WACC ranges. '
             'All reverse-DCF statements are conditional on fixed named assumptions and explicit horizon. '
-            'Retain the source-to-driver links, named outside challenge, rate build and computed monitoring table. '
-            'Preserve the genuine outside-to-house variant bridge or an honest admission of no operating '
-            'edge; normalized one-off margin, inventory/procurement cash and reinvestment links; and the '
-            'strongest sourced opponent across the saved quote. Explain computed market/exit multiple '
-            'and consistent return comparisons, and repurchase economics against current house value. '
+            'Keep the source-to-driver links, the strongest sourced opposing case and the answer to it, the rate '
+            'build, the dated monitoring cases, the computed exit multiple and the repurchase comparison with our '
+            'value, each once, in the section that holds it. '
             'Adopt a reviewer-proposed number only when it appears in the computed output or a source; otherwise '
             'keep the computed figure. Copy computed and reported figures exactly and do not calculate new ones; '
-            'name a model output as a house or computed figure, never narrating the exhibit, and place each [S#] after '
+            'name a model output as ours or computed, never narrating the table, and place each [S#] after '
             'the sourced figure it supports. Python places the first page above your text and the valuation detail '
             'after it; do not re-type their tables. Do not resolve a finding by inventing '
             'a policy discount, nonrecurring adjustment, source passage or double-counted cash distribution. '
-            'Return the full revised memo only, '+MEMO_WORDS+'. The current prose is '+str(prose_words(memo))+
-            ' words; the revision must not be longer, and should be shorter where the current prose exceeds 3,000 words. '
-            'Keep the required section order.\n'+EVIDENCE_TIER_RULE+'\n'+RUBRIC+evidence_above()+
+            'Return the full revised memo only, '+word_limit(memo)[1]+' words of prose in total; Python adds the tables. '
+            'The current prose is '+str(prose_words(memo))+' words; the revision must not be longer, and should be '
+            'shorter where it exceeds that budget. Keep the current headings and their order.\n'+EVIDENCE_TIER_RULE+'\n'+RUBRIC+evidence_above()+
             ('\nNo forecast response was requested for these findings; the valuation below is unchanged.'
              if isinstance(candidate,dict) and candidate.get('skipped') else '')+
             ('\nThe forecast correction for these findings was rejected; the valuation below is unchanged. Do not '
@@ -6323,7 +6358,11 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'or remove the figure. For a figure found only in unverified excerpts, cite the primary source that contains '
                 'it, label it as unverified context, or remove it. For an unverified company fact (unverified-company-fact): '
                 +UNVERIFIED_FACT_FIX+' Describe convention rows separately, never as adding up. '
-                'For a style problem, rewrite the sentence to the writing standard below. Change nothing else.\n'+
+                'For an empty or unfinished section, quote its last sentence, or its heading when it has none, and '
+                'replace it with that text followed by the rest of the section. For a figure repeated across sections, '
+                'keep it in the section that owns it and refer to it by name elsewhere. The In brief may be quoted and '
+                'replaced whole. For a style problem, rewrite the sentence to the writing standard below. Change '
+                'nothing else.\n'+
                 EVIDENCE_TIER_RULE+'\n'+WRITING_STANDARD+'\nProblems:\n'+json.dumps(fixable)+'\nCOMPUTED SUMMARY:\n'+computed_summary(plan,result)+
                 evidence_above()+'\nComputed exhibits:\n'+valuation_section(plan,result)+'\nMemo:\n'+memo,tokens=8000,
                 prefix=_evidence_prefix(context))
@@ -6376,19 +6415,21 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 json.dumps([{key:finding.get(key) for key in ('id','severity','issue')} for finding in earlier.get('findings',[])])
                 if earlier else '')
         prompt=('Review this equity memo against its supplied evidence and the Python valuation, using the shared quality '
-                'standard below, and classify each defect as blocker, major or minor by that standard. Rounding within '
-                'the last displayed digit is never material; an unverified excerpt used only as attributed outside view '
-                'or context is not material, but a company fact or number resting only on one is (rule M1); a breach '
-                'of the writing standard is minor (N2), and other style preferences are no finding. Check: (1) every figure in the prose against the computed summary, the computed tables, the '
-                'valuation output or the cited source, and every comparison with the price by arithmetic; (2) that the '
-                'memo does not contradict the computed account of which inputs alone reach the price within the ranges '
-                'tested, given in full by the first-page table "What the price needs" (explaining why the house forecast differs from what the price requires is the variant view and '
-                'contradicts nothing; the conclusion need not restate the account); (3) that company facts rest on primary sources and unverified '
-                'excerpts are labelled context; (4) that the strongest sourced opposing case is answered with evidence; '
-                '(5) that no trading-layer language appears; (6) that convention rows are never added together; (7) that '
-                'repurchase, multiple and monitoring statements use the computed diagnostics and their fixed inputs. A '
-                'disclosed house forecast is a judgment and is a defect only when primary evidence contradicts it or it is '
-                'unexplained. Never write a fix that asks the author to compute a value the engine has not computed. '
+                'standard below, and classify each defect as blocker, major or minor by that standard. A breach of the '
+                'writing standard is minor (N2), and other style preferences are no finding. Check: (1) every figure in '
+                'the prose against the computed summary, the computed tables, the valuation output or the cited source, '
+                'and every comparison with the price by arithmetic; (2) that the prose agrees with the first page, the '
+                'tables, the method notes and its own other sections: a contradiction is major under M7 whatever its '
+                'value effect, and the finding quotes the prose side and names what it contradicts; (3) that the memo does not contradict the computed account of which inputs alone reach the '
+                'price within the ranges tested, given in full by the first-page table "What the price needs" '
+                '(explaining why our forecast differs from what the price requires contradicts nothing, and the prose '
+                'need not restate the account); (4) that company facts rest on primary sources and unverified excerpts '
+                'are labelled context; (5) that the strongest sourced opposing case is answered with evidence; (6) that '
+                'no trading-layer language appears; (7) that convention rows are never added together; (8) that '
+                'repurchase, multiple and monitoring statements use the computed diagnostics and their fixed inputs; '
+                '(9) that no section of the prose is empty or stops mid-sentence (B4). A disclosed forecast assumption '
+                'is a judgment and is a defect only when primary evidence contradicts it or it is unexplained. Never '
+                'write a fix that asks the author to compute a value the engine has not computed. '
                 'Before flagging an omission, check the whole memo. Report every material defect you find and at most '
                 'three minor ones; there is no target number of findings. '
                 'Every finding must quote one contiguous passage of the CURRENT draft (between the draft markers) verbatim, without added quotation '

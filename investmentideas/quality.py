@@ -350,6 +350,7 @@ RUBRIC_RULES = (
     ('B2', 'blocker', 'a trading-layer term (rating, target price, entry level, margin of safety, upside or downside, '
                       'position size)'),
     ('B3', 'blocker', 'a valuation figure that differs from the computed output'),
+    ('B4', 'blocker', 'a section of the prose that is empty or stops mid-sentence'),
     ('M1', 'major', 'a company fact or a number supported only by an unverified web excerpt, or an unverified excerpt '
                     'used without an inline "unverified" label'),
     ('M2', 'major', 'one-at-a-time rows added together or called cumulative'),
@@ -359,8 +360,13 @@ RUBRIC_RULES = (
                     'the ranges tested (the first-page table "What the price needs", the flat discount rate included)'),
     ('M5', 'major', 'a material claim contradicted by primary evidence in the run'),
     ('M6', 'major', 'a model output cited to a filing or source as if reported'),
+    # The 2026-11-27 readability review found five such contradictions in four approved
+    # memos; the reviewer had checked only that each number traced to some output.
+    ('M7', 'major', 'prose that contradicts the first page, a table, a method note or another section: a figure '
+                    'that differs from its table, one name for two quantities, or a process or claim the method '
+                    'notes rule out'),
     ('N1', 'minor', 'rounding within the last displayed digit'),
-    ('N2', 'minor', 'wording, emphasis or structure'),
+    ('N2', 'minor', 'wording, emphasis, structure or a figure repeated across sections'),
     ('N3', 'minor', 'an omission that does not change the conclusion'),
 )
 # The rule the unverified-company-fact check enforces, told to the writer, the fix and edit
@@ -369,7 +375,7 @@ UNVERIFIED_FACT_RULE = (
     'A company fact or figure whose only support is an unverified excerpt is deleted, replaced by the primary-source '
     'figure, or stated as the own view or estimate of an outside party the sentence names (a research firm, an '
     'analyst, an aggregator, a press report, consensus), in a sentence that draws no company conclusion and makes no '
-    'comparison with the house forecast. An excerpt, or the company\'s own filing quoted through one, is not an outside '
+    'comparison with our forecast. An excerpt, or the company\'s own filing quoted through one, is not an outside '
     'party, and an "unverified" label does not make a company fact acceptable. Wrong: "Advertising revenue rose 37% in '
     'the quarter [S19, unverified]." Right: "One outside analysis argues that advertising is growing faster than '
     'merchandise sales [S19, unverified]."')
@@ -378,7 +384,8 @@ RULE_SEVERITY = {rule: severity for rule, severity, _ in RUBRIC_RULES}
 # of them is refuted by Python ("accretive" was graded a blocker, 2026-11-15).
 TRADING_TERMS = re.compile(r'\b(?:ratings?|rated|buy|sell|overweight|underweight|outperform|underperform|target price|'
                            r'price target|entry (?:price|level|point)|margin of safety|upside|downside|position siz\w*)\b', re.I)
-HOUSE_ATTRIBUTION = re.compile(r'\b(?:house|computed)\b', re.I)
+# The writer now says "our value" and "our forecast" where it used to say "house" (2026-11-27).
+HOUSE_ATTRIBUTION = re.compile(r'\b(?:house|computed|our (?:value|forecast|base case|estimate|model)s?)\b', re.I)
 _SEVERITY_RANK = {'minor': 0, 'major': 1, 'blocker': 2}
 
 
@@ -386,37 +393,50 @@ def _rules(severity):
     return '; '.join(f'{rule} {text}' for rule, level, text in RUBRIC_RULES if level == severity)
 
 
-# The owner's voice rules (2026-08-02) and the memo's number style (2026-11-27), told to the
-# writer and judged by the reviewer as wording (N2); the free checks below count the
-# mechanical ones.
+# The owner's voice rules (2026-08-02), the memo's number style (2026-11-27) and the plain-word
+# list from the 2026-11-27 readability review, told to the writer and judged by the reviewer as
+# wording (N2); the free checks below count the mechanical ones.
 WRITING_STANDARD = (
-    'Writing standard (rule N2), for the eight prose sections only: the first page, computed tables, labels Python '
-    'prints and the method notes are not graded for style. Open each section with its conclusion. Write short declarative sentences that state '
-    'the positive claim. Never use "X, not Y" or any other contrast formula, and end no paragraph on a summary '
-    'sentence. Use concrete nouns, never consultant abstractions or metaphors. State a limit once, plainly, with '
-    'no commentary on what the evidence does or does not prove. Do not restate the first page\'s tables. State a '
-    'figure as the house or computed value ("the base-case value is $139"); do not narrate the exhibit it came '
-    'from ("the computed summary places it at"). Numbers: the first page names the currency once, so write $139 '
-    'a share, prices as quoted ($355.58), aggregates as $34.3B or $850M, never "USD" for a dollar filer and never '
-    'a number of seven or more digits; percentages to one decimal; call a computed metric (ROIC, an incremental '
-    'return or ratio, sales-to-capital, net reinvestment, a median, a percentile, a margin for an interim period) '
-    '"computed from reported figures", never "reported"; no decimals unless the precision matters; no '
-    'em dashes.')
+    'Writing standard (rule N2), for the writer\'s sections only (In brief and the numbered sections); the first '
+    'page, computed tables, labels Python prints and method notes are not graded for style. Open each section and '
+    'each paragraph with its claim, and keep only the figures that support it. Write short declarative sentences '
+    'that state the positive claim. Never use "X, not Y" or any other contrast formula, and end no paragraph on a '
+    'summary sentence. Use concrete nouns, never consultant abstractions or metaphors. Give a claim one caveat at '
+    'most, stated plainly. State each figure once and refer to it by name afterwards; do not restate the first page\'s tables. '
+    'Write for a reader who did not build the model: "our value", "our forecast", "the base case", and a test named '
+    'by what it changes ("if new capital kept earning 15% after year 10, the value would be ..."). Plain words '
+    'replace internal labels: the bear or bull case (stress case), the single equivalent rate (house-equivalent '
+    'rate), every year\'s rate one point higher (whole-path shift), the step from enterprise to equity value '
+    '(bridge), the rest of the year (stub), new capital earning its cost (steady state). State a figure as ours '
+    'or computed; do not narrate the table it came from ("the computed summary places it at"). Numbers as a reader '
+    'reads them: no "USD" for a dollar filer, since the first page names the currency; aggregates with at most one '
+    'decimal ($11.6B for 11,599 million, $3.9T for 3,946 billion, $850M); per-share amounts from $100 in whole '
+    'dollars ($464); 85 million shares, never 85.0 million; percentages to one decimal at most; no number of seven '
+    'or more digits; a computed metric (ROIC, an incremental return or ratio, sales-to-capital, net reinvestment, a '
+    'median, a percentile, an interim margin) is "computed from reported figures", never "reported"; no em dashes.')
 RUBRIC = (
     'Quality standard (shared by the writer, the automatic checks and the reviewer). Each review finding names the '
     'rule it breaks. Blocker: ' + _rules('blocker') + '. Major: ' + _rules('major') + '. Minor: ' + _rules('minor') +
-    '. A house or computed figure that the prose names as such is attributed, even when the sentence also cites the '
-    'reported figure it is compared with. Naming the convention step the value is most sensitive to is required and '
-    'is not an attribution of the gap to price. Rounding is never material; unverified excerpts used only for attributed '
-    'outside views, consensus or guidance context are not material, but a company fact or number supported only by '
-    'an unverified excerpt is, whatever its label. ' + UNVERIFIED_FACT_RULE + ' ' + WRITING_STANDARD)
+    '. A model figure the prose names as ours, a case\'s or computed is attributed, even when the sentence also cites '
+    'the reported figure it is compared with. Naming the assumption of the method that moves the value most gives the '
+    'gap to price no cause. A prose figure matches the table that shows it at that table\'s precision; other rounding '
+    'within the last digit shown is never material. Unverified excerpts used only for '
+    'attributed outside views, consensus or guidance context are not material, but a company fact or number supported '
+    'only by an unverified excerpt is, whatever its label. ' + UNVERIFIED_FACT_RULE + ' ' + WRITING_STANDARD)
 
 
 # Free checks run on a draft before the paid review. They trace every figure in
 # the prose to the computed output, the reported inputs or a primary source, and
 # catch the defects a live review spent three paid rounds on (2026-11-14).
 UNVERIFIED_SOURCE_TIERS = {'search_excerpt_unverified'}
-PROSE_WORD_LIMIT = 3600
+# Words of the writer's prose (numbers not counted) before the length finding. The six-section
+# outline asks for about 2,200; the four approved memos of 2026-11-27 ran 2,470 to 2,830 under
+# the eight-section outline, whose own budget (about 3,000, limit 3,600) still applies to bodies
+# saved before the change.
+PROSE_WORD_LIMIT = 2600
+PROSE_WORD_BUDGET = 'about 2,200'
+LEGACY_PROSE_WORD_LIMIT = 3600
+LEGACY_PROSE_WORD_BUDGET = 'about 3,000'
 _NUMBER = re.compile(r'(?<![\w.\[/-])(-?\$?\d[\d,]*(?:\.\d+)?)(\s*(?:%|bps|bp|x|×|billion|bn|B|million|mm|M|trillion|T|percentage points?|points?|pts|pp)\b|%)?', re.I)
 _SCALES = {'%': (1e-2, 1), 'points': (1e-2, 1), 'point': (1e-2, 1), 'pts': (1e-2, 1), 'pp': (1e-2, 1),
            'percentage points': (1e-2, 1), 'percentage point': (1e-2, 1), 'bps': (1e-4, 1), 'bp': (1e-4, 1), 'billion': (1e9, 1e3, 1), 'bn': (1e9, 1e3, 1),
@@ -521,6 +541,201 @@ def prose_words(memo):
     return len(re.findall(r"[A-Za-z][A-Za-z'\-]*", writer_prose(memo)))
 
 
+# ---------------------------------------------------------------- outline and structure
+#
+# The writer's outline since the 2026-11-27 readability review: "## In brief", then six
+# numbered sections. Bodies saved before it have eight numbered sections (or, in the oldest
+# examples, unnumbered ones); the checks below never fault those for their outline.
+IN_BRIEF_HEADING = '## In brief'
+IN_BRIEF_WORDS = 80
+IN_BRIEF_SENTENCES = 3
+_IN_BRIEF = re.compile(r'^##\s+\**\s*in brief\b', re.I)
+_NUMBERED = re.compile(r'^##\s+\**\s*(\d+)\.\s')
+_LEGACY_TITLE = re.compile(r'^##\s+\**\s*\d+\.\s+(?:valuation conclusion|variant view)\b', re.I)
+_WORD = re.compile(r"[A-Za-z][A-Za-z'\-]*")
+# A gaps section is a list of bullets and may hold one short item; every other section argues.
+_GAPS_TITLE = re.compile(r'gaps?|unresolved|diligence|questions|limitation', re.I)
+SECTION_MIN_WORDS = 50
+GAPS_MIN_WORDS = 1
+IN_BRIEF_MIN_WORDS = 15
+BLANK_RUN = 3
+
+
+def prose_sections(prose):
+    """(heading, body) for each level-2 section of the writer's prose, in order; text before the first heading is dropped."""
+    sections, heading, lines = [], None, []
+    for line in (prose or '').split('\n'):
+        if re.match(r'##\s', line) and not line.startswith('###'):
+            if heading is not None:
+                sections.append((heading, '\n'.join(lines)))
+            heading, lines = line.strip(), []
+        elif heading is not None:
+            lines.append(line)
+    if heading is not None:
+        sections.append((heading, '\n'.join(lines)))
+    return sections
+
+
+def prose_outline(prose):
+    """'six' for the outline with "## In brief" and six numbered sections, 'legacy' for anything older.
+
+    A body counts as the new outline when it has an In brief heading, or numbered sections 1 to 6
+    and no other; eight-section bodies and the unnumbered examples are legacy.
+    """
+    headings = [heading for heading, _ in prose_sections(prose)]
+    if any(_IN_BRIEF.match(heading) for heading in headings):
+        return 'six'
+    numbers = {int(match.group(1)) for match in (_NUMBERED.match(heading) for heading in headings) if match}
+    if numbers == set(range(1, 7)) and not any(_LEGACY_TITLE.match(heading) for heading in headings):
+        return 'six'
+    return 'legacy'
+
+
+def word_limit(prose):
+    """(limit, budget words) for the outline the prose follows."""
+    if prose_outline(prose) == 'six':
+        return PROSE_WORD_LIMIT, PROSE_WORD_BUDGET
+    return LEGACY_PROSE_WORD_LIMIT, LEGACY_PROSE_WORD_BUDGET
+
+
+def _words(text):
+    return len(_WORD.findall(re.sub(r'\[[^\]\n]*\]', '', text or '')))
+
+
+def structure_problems(prose):
+    """Sentences describing each section that is empty, near-empty, unfinished or padded with blank lines.
+
+    The Walmart memo of 2026-11-27 shipped with a section 1 of 39 words followed by five blank
+    lines, and its review passed it. Thresholds: an argued section needs 50 words, the In brief
+    15, and a gaps section anything at all; a section is unfinished when its last line ends in a
+    comma, semicolon or colon; three or more consecutive blank lines are padding.
+    """
+    problems = []
+    for heading, body in prose_sections(prose):
+        name = re.sub(r'^#+\s*', '', heading).strip('* ')
+        words = _words(body)
+        minimum = (IN_BRIEF_MIN_WORDS if _IN_BRIEF.match(heading) else
+                   GAPS_MIN_WORDS if _GAPS_TITLE.search(name) else SECTION_MIN_WORDS)
+        lines = [line.rstrip() for line in body.split('\n')]
+        text_lines = [line for line in lines if line.strip() and not line.lstrip().startswith(('|', '#'))]
+        run = longest = 0
+        for line in lines:
+            run = run + 1 if not line.strip() else 0
+            longest = max(longest, run)
+        if words == 0:
+            problems.append(f'"{name}" is empty.')
+            continue
+        if words < minimum:
+            problems.append(f'"{name}" has {words} words; the section needs at least {minimum}.')
+        if text_lines and re.search(r'[,;:]\s*$', text_lines[-1]):
+            problems.append(f'"{name}" stops mid-sentence: "{text_lines[-1].strip()[-80:]}"')
+        if longest >= BLANK_RUN:
+            problems.append(f'"{name}" is followed by or contains a run of {longest} blank lines.')
+    return problems
+
+
+# One sentence ends at a full stop, question or exclamation mark followed by space and a capital,
+# a digit or a citation, outside "U.S.", "Inc." and decimals.
+_SENTENCE_END = re.compile(r'(?<=[.!?])(?<!\bU\.S\.)(?<!\bU\.K\.)(?<!\bInc\.)(?<!\bCo\.)(?<!\bvs\.)(?<!\be\.g\.)'
+                           r'(?<!\bi\.e\.)\s+(?=[A-Z0-9\[$"(])')
+
+
+def in_brief_problems(prose):
+    """What is wrong with the In brief: missing (new outline only), too long, or not three sentences."""
+    sections = prose_sections(prose)
+    found = [(index, body) for index, (heading, body) in enumerate(sections) if _IN_BRIEF.match(heading)]
+    if not found:
+        return ['The prose has no "## In brief" section.'] if prose_outline(prose) == 'six' else []
+    index, body = found[0]
+    text = ' '.join(line.strip() for line in body.split('\n') if line.strip())
+    problems = []
+    if index:
+        problems.append('"In brief" is not the first section.')
+    words = _words(text)
+    if words > IN_BRIEF_WORDS:
+        problems.append(f'"In brief" has {words} words; the limit is {IN_BRIEF_WORDS}.')
+    sentences = [part for part in _SENTENCE_END.split(text) if _words(part)]
+    if text and len(sentences) != IN_BRIEF_SENTENCES:
+        problems.append(f'"In brief" has {len(sentences)} sentences; it needs {IN_BRIEF_SENTENCES}.')
+    return problems
+
+
+def _figure_key(number, unit):
+    unit = (unit or '').strip().lower()
+    unit = {'billion': 'b', 'bn': 'b', 'million': 'm', 'mm': 'm', 'trillion': 't', 'percent': '%', 'x': 'x', '×': 'x',
+            'point': 'points', 'pts': 'points', 'pp': 'points', 'percentage points': 'points',
+            'percentage point': 'points'}.get(unit, unit)
+    return (round(number, 6), unit)
+
+
+FIGURE_SECTIONS = 2
+
+
+def repeated_figures(prose):
+    """(figure, section names) for each figure the prose states in more than two sections.
+
+    The In brief is a summary placed on the first page and is not counted. Years, dates,
+    citations and whole numbers under 100 are not figures here (see ``_figures``).
+    """
+    seen, display = {}, {}
+    for heading, body in prose_sections(prose):
+        if _IN_BRIEF.match(heading):
+            continue
+        name = re.sub(r'^#+\s*', '', heading).strip('* ')
+        short = (_NUMBERED.match(heading).group(1) if _NUMBERED.match(heading) else name[:40])
+        text = '\n'.join(line for line in body.split('\n') if not line.lstrip().startswith(('|', '#')))
+        for shown, number, decimals, unit in _figures(text):
+            key = _figure_key(number, unit)
+            display.setdefault(key, shown)
+            seen.setdefault(key, [])
+            if short not in seen[key]:
+                seen[key].append(short)
+    return [(display[key], names) for key, names in seen.items() if len(names) > FIGURE_SECTIONS]
+
+
+# Amounts a reader has to decode (rule N2): thousands of millions or billions, cents on
+# large amounts, needless decimals. The Coca-Cola memo of 2026-11-27 had about 20 "$11,599M"
+# strings; Walmart wrote "85.0 million" and "+30.0 points", Microsoft "$395.97B".
+_SCALED_AMOUNT = r'(?:\s?(?:M|B|T|bn|mn|million|billion|trillion)\b)'
+AMOUNT_FORMAT = (
+    ('thousands of millions or billions', re.compile(r'(?<![\w.,])\$?\d{1,3}(?:,\d{3})+(?:\.\d+)?' + _SCALED_AMOUNT)),
+    ('two or more decimals on a scaled amount', re.compile(r'(?<![\w.,])\$?\d+\.\d{2,}' + _SCALED_AMOUNT)),
+    ('cents on an amount of $100 or more', re.compile(r'\$\d{3,}(?:,\d{3})*\.\d{2}(?![\d])(?!' + _SCALED_AMOUNT + ')')),
+    ('two or more decimals on a percentage', re.compile(r'(?<![\w.,])\d+\.\d{2,}\s?%')),
+    # Percentages keep one decimal throughout (32.0% beside 26.5%), so only other figures count here.
+    ('a trailing ".0"', re.compile(r'(?<![\w.,])\d[\d,]*\.0(?![\d])(?!\s?%)')),
+)
+
+
+def amount_format_problems(prose):
+    """Sentences of the prose that write an amount in a form the number style rules out."""
+    found = []
+    for line in _sentences(prose):
+        if line.lstrip().startswith('|'):
+            continue
+        kinds = [label for label, pattern in AMOUNT_FORMAT if pattern.search(line)]
+        if kinds:
+            found.append(line[:300])
+    return found
+
+
+# House vocabulary the readability review found in the reading path (2026-11-27). Each has a plain
+# equivalent in the writing standard. A few uses are tolerated, as for the counted style rules.
+# Bodies in the eight-section outline were written to a standard that asked for "the house
+# value", so the check reads only the six-section outline.
+HOUSE_VOCABULARY = re.compile(
+    r'\bhouse\b|\bconvention (?:rows?|steps?)\b|\bexhibits?\b|\bnamed overrides?\b|\bforecast-end\b|'
+    r'\bstress cases?\b|\b(?:house|flat)-equivalent\b|\bwhole-path\b|\bparallel[- ]shifts?\b|\bmonth rows\b|'
+    r'\brate pairs\b|\bsteady state\b|\bstub\b|\bterminal step\b|\b(?:equity )?bridge\b', re.I)
+VOCABULARY_ALLOWANCE = 2
+
+
+def house_vocabulary(prose):
+    """Sentences that use the house vocabulary, when more than the allowance do."""
+    found = [line[:300] for line in _sentences(prose) if HOUSE_VOCABULARY.search(line)]
+    return found if len(found) > VOCABULARY_ALLOWANCE else []
+
+
 def trace_pools(sources, computed=()):
     """Sorted numeric pools: (primary sources and computed output, unverified excerpts, computed output)."""
     primary, unverified, house = set(), set(), set()
@@ -615,7 +830,7 @@ _COMPARISON = re.compile(r'\b(?:close to|consistent with|in line with|matches|ag
                          r'modestly different from|supports?|confirms?)\b', re.I)
 _UNVERIFIED_REFERENT = re.compile(r'\b(?:consensus|guidance|expectations|(?:outside|analysts?\W?) (?:estimates?|models?|'
                                   r'figures?)|(?:that|this|those|these) (?:description|estimates?|figures?|guidance))\b', re.I)
-_HOUSE_SUBJECT = re.compile(r'\b(?:house|base(?:-case)? (?:path|case|forecast)|our forecast)\b', re.I)
+_HOUSE_SUBJECT = re.compile(r'\b(?:house|base(?:-case)? (?:path|case|forecast)|our (?:forecast|value|base case|estimate)s?)\b', re.I)
 
 
 def _attributed_outside(line):
@@ -815,9 +1030,42 @@ def prereview_checks(memo, sources, computed=()):
     dollars = any(isinstance(item, dict) and str(item.get('currency') or '').upper() == 'USD' for item in computed)
     for identifier, issue, fix, items in style_findings(body, dollars):
         add(identifier, 'minor', issue, fix, [('', text) for text in items])
+    # Structure. Only an empty or unfinished section blocks: a reader cannot use it, and the
+    # Walmart review of 2026-11-27 passed one. The other structural checks are minor, so a
+    # false alarm can never hold up an approval on its own.
+    structure = structure_problems(body)
+    if structure:
+        add('section-empty', 'blocker', 'A section of the prose is empty, too short, unfinished or padded with blank '
+            'lines (rule B4): ' + ' '.join(structure), 'Write the section in full under its heading from the evidence '
+            'and the computed output, finish the last sentence, and remove the blank lines.',
+            [('', text) for text in structure])
+    brief = in_brief_problems(body)
+    if brief:
+        add('in-brief', 'minor', ' '.join(brief) + f' The In brief opens the prose in {IN_BRIEF_SENTENCES} sentences of '
+            f'at most {IN_BRIEF_WORDS} words in total.', 'Write three sentences: what the company does and earns, why '
+            'our value differs from the price, and the observation that would change the value most.',
+            [('', text) for text in brief])
+    repeated = repeated_figures(body)
+    if repeated:
+        add('figure-repeated', 'minor', f'{len(repeated)} figures are stated in more than {FIGURE_SECTIONS} sections.',
+            'Keep each figure in the section that owns it and refer to it by name elsewhere.',
+            [(figure, 'sections ' + ', '.join(names)) for figure, names in repeated])
+    amounts = amount_format_problems(body)
+    if amounts:
+        add('amount-format', 'minor', f'{len(amounts)} sentences write an amount as thousands of millions or '
+            'billions, with cents on a large amount, or with needless decimals.',
+            'Write $11.6B for 11,599 million, $3.9T for 3,946 billion, $464 for a per-share amount over $100, 85 '
+            'million for 85.0 million, and percentages to one decimal.', [('', text) for text in amounts])
+    vocabulary = house_vocabulary(body) if prose_outline(body) == 'six' else []
+    if vocabulary:
+        add('house-vocabulary', 'minor', f'{len(vocabulary)} sentences use internal labels (house, convention row, '
+            'exhibit, stress case, bridge, stub and the like).', 'Use the plain equivalent the writing standard '
+            'gives: our value, our forecast, the bear case, the test named by what it changes.',
+            [('', text) for text in vocabulary])
     words = prose_words(memo)
-    if words > PROSE_WORD_LIMIT:
-        add('length', 'minor', f'The prose is {words} words; the budget is about 3,000.',
+    limit, budget = word_limit(body)
+    if words > limit:
+        add('length', 'minor', f'The prose is {words} words; the budget is {budget}.',
             'Cut repetition and secondary detail, keeping every section.', [])
     return findings
 
@@ -1066,18 +1314,19 @@ def inspect_memo(memo, sources, valuation=None):
     if valid and not references:
         findings.append(_finding('citations-absent', 'major', 'The memo body has no source citations.', 'Attach preserved source IDs to material factual claims.'))
     headings = _headings(memo)
+    # The patterns match both outlines: the eight sections used until 2026-11-27 and the In brief
+    # plus six sections since ("Conclusion and the gap to price", "Capital allocation and claims on
+    # value", "What would change the value", "Evidence gaps").
     groups = {
-        'executive-view': (r'executive|investment view|conclusion|recommendation|thesis|decision', 'major'),
+        'executive-view': (r'executive|investment view|conclusion|recommendation|thesis|decision|in brief', 'major'),
         'business-economics': (r'business|economics|industry|competitive|company overview', 'minor'),
-        'financial-analysis': (r'financial|historical|cash flow|balance sheet|unit economics', 'major'),
-        'valuation': (r'valuation|intrinsic value|discounted cash flow|\bdcf\b|what is priced|\bmodel\b', 'major'),
+        'financial-analysis': (r'financial|historical|cash flow|balance sheet|unit economics|capital allocation', 'major'),
+        'valuation': (r'valuation|intrinsic value|discounted cash flow|\bdcf\b|what is priced|\bmodel\b|gap to (?:the )?price', 'major'),
         'scenarios': (r'scenario|\bbear\b|\bbull\b|stress', 'major'),
-        'risks': (r'\brisk|downside', 'major'),
-        # The memo structure names these "Risks, including evidence that the
-        # framework is wrong" and "Observations that would change the value".
+        'risks': (r'\brisk|downside|what would change the value', 'major'),
         'disconfirming-evidence': (r'disconfirm|counter.?thesis|what would change|would change the value|framework.{0,40}wrong|falsif|why we might be wrong|alternative explanation|kill criteria|contrary', 'minor'),
-        'catalysts': (r'catalyst|monitor|watch|milestone|signpost|observations? that would change', 'minor'),
-        'diligence-questions': (r'question|diligence|unknown|missing evidence|limitation|unresolved', 'minor')
+        'catalysts': (r'catalyst|monitor|watch|milestone|signpost|observations? that would change|what would change the value', 'minor'),
+        'diligence-questions': (r'question|diligence|unknown|missing evidence|limitation|unresolved|evidence gaps?', 'minor')
     }
     if not headings:
         findings.append(_finding('memo-structure', 'minor', 'No clear memo section headings were detected.', 'Make the decision, evidence, valuation and risks easy to locate.'))

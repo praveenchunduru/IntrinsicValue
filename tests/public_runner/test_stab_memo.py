@@ -170,15 +170,18 @@ class LayoutTests(unittest.TestCase):
 
 class WriterStandardTests(unittest.TestCase):
     def test_the_standard_reaches_writer_and_reviewer(self):
-        for rule in ('Open each section with its conclusion', '"X, not Y"', 'summary', 'do not narrate the exhibit',
-                     '$34.3B or $850M', 'seven or more digits', 'em dashes'):
+        for rule in ('Open each section and each paragraph with its claim', '"X, not Y"', 'summary',
+                     'do not narrate the table', '$11.6B for 11,599 million', '$464', 'seven or more digits',
+                     'em dashes', 'our value', 'the bear or bull case'):
             self.assertIn(rule, quality.WRITING_STANDARD)
         self.assertIn(quality.WRITING_STANDARD, quality.RUBRIC)
-        self.assertIn('## 1. Valuation conclusion', pipeline.SECTIONS)
-        self.assertIn('Each section opens with its conclusion', pipeline.SECTIONS)
+        self.assertIn('"## In brief": three sentences, at most 80 words', pipeline.SECTIONS)
+        self.assertIn('"## 1. Conclusion and the gap to price"', pipeline.SECTIONS)
+        self.assertIn('"## 6. Evidence gaps"', pipeline.SECTIONS)
+        self.assertIn('Each fact has one home', pipeline.SECTIONS)
         # The evidence-tier and attribution rules stay.
         self.assertIn('M1', quality.RUBRIC)
-        self.assertIn('A house or computed figure that the prose names as such is attributed', quality.RUBRIC)
+        self.assertIn("A model figure the prose names as ours, a case's or computed is attributed", quality.RUBRIC)
 
 
 class StyleCheckTests(unittest.TestCase):
@@ -355,7 +358,7 @@ class ModelTextRestyleTests(unittest.TestCase):
         self.assertEqual(quality.untraced_figures('The label says 2.74M shares.', pools), [])
 
     def test_style_rules_cover_the_prose_sections_only(self):
-        self.assertIn('for the eight prose sections only', quality.WRITING_STANDARD)
+        self.assertIn("for the writer's sections only (In brief and the numbered sections)", quality.WRITING_STANDARD)
         value = headline_plan()
         result = evaluate(value)
         view = pipeline.reader_view(PROSE.replace('below the price', 'below the price — by USD 4'), SOURCES, value, result, 'EXMP')
