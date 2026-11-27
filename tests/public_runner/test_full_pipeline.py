@@ -102,7 +102,9 @@ class FullPipelineTests(unittest.TestCase):
                          'kind':'filing','data':{'excerpt':'Revenue 1000000000'},'raw_document':'<html>public filing</html>'}],[])),
                       patch.object(pipeline.core,'Router',FakeRouter),patch.object(pipeline,'inspect_memo',return_value=[]),
                       patch.object(pipeline,'canonical_reported_inputs',side_effect=canonical),
-                      patch.object(pipeline,'pin_reported_inputs',side_effect=pinned)]
+                      patch.object(pipeline,'pin_reported_inputs',side_effect=pinned),
+                      # These tests describe one forecast plan per run; test_stab_consensus covers several.
+                      patch.object(pipeline,'PLAN_SAMPLES',{})]
         for p in self.patches:p.start()
     def tearDown(self):
         for p in reversed(self.patches):p.stop()

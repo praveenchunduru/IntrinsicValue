@@ -43,6 +43,8 @@ pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#18242e;padding:20px;
 <label for="ticker">Ticker</label><input id="ticker" required value="AAPL" maxlength="15">
 <label for="mode">Research depth</label><select id="mode"><option value="full" __FULL_SELECTED__>Full memo — research, editable valuation, review and revision</option><option value="quick" __QUICK_SELECTED__>Quick financial overview — four model calls</option></select>
 <label for="profile">Model profile</label><select id="profile"><option value="balanced">Balanced — Claude Opus analysis, GPT-6.2 review</option><option value="economy">Economy — open-weight DeepSeek analysis, Kimi review</option></select>
+<label for="samples">Forecast plans</label><select id="samples"><option value="">Profile default — three for Balanced, one for Economy</option><option value="1">One forecast</option><option value="3">Three forecasts, combined input by input</option><option value="5">Five forecasts, combined input by input</option></select>
+<small>Full research only. Each extra forecast is the same request sent again; with Balanced it reads the cached evidence (about $0.30 each).</small>
 <label for="budget">Total spending allowance (USD)</label><input id="budget" type="number" min="1" max="50" step="0.01" value="__DEFAULT_BUDGET__" required>
 <small>Full research starts with a $20 allowance (a ceiling: each call reserves conservatively before it is sent; a full run is expected to cost far less); quick overview starts with $2. This is not a promised charge or completion. Free evidence collection precedes a budget preflight. Requests stop before the next reservation exceeds your allowance; prior charges and uncertain requests count when resuming. Also set a provider credit limit on your dedicated key.</small>
 <details><summary>Additional evidence</summary><label for="evidence">Optional dated source text or filing excerpt</label><textarea id="evidence" rows="5" maxlength="100000" placeholder="Include source URLs, dates and units. Useful if public sources are unavailable."></textarea></details>
@@ -55,10 +57,10 @@ const csrf='__TOKEN__';let polling;
 const form=document.getElementById('form'),start=document.getElementById('start'),memo=document.getElementById('memo');
 const keyInput=document.getElementById('key'),summary=document.getElementById('summary'),downloads=document.getElementById('downloads'),revalue=document.getElementById('revalue');
 const secContact=document.getElementById('sec-contact');
-const ticker=document.getElementById('ticker'),mode=document.getElementById('mode'),profile=document.getElementById('profile'),budget=document.getElementById('budget'),evidence=document.getElementById('evidence');
+const ticker=document.getElementById('ticker'),mode=document.getElementById('mode'),profile=document.getElementById('profile'),budget=document.getElementById('budget'),evidence=document.getElementById('evidence'),samples=document.getElementById('samples');
 let budgetEdited=false;budget.addEventListener('input',()=>{budgetEdited=true;});mode.addEventListener('change',()=>{if(!budgetEdited)budget.value=mode.value==='quick'?'2.00':'20.00';});
 form.addEventListener('submit',async(e)=>{e.preventDefault();clearTimeout(polling);start.disabled=true;memo.hidden=true;summary.hidden=true;revalue.hidden=true;downloads.replaceChildren();statusText('Starting…');
-const payload={key:keyInput.value,sec_contact:secContact.value,ticker:ticker.value,mode:mode.value,profile:profile.value,budget:Number(budget.value),evidence:evidence.value};keyInput.value='';secContact.value='';
+const payload={key:keyInput.value,sec_contact:secContact.value,ticker:ticker.value,mode:mode.value,profile:profile.value,budget:Number(budget.value),evidence:evidence.value,plan_samples:samples.value?Number(samples.value):null};keyInput.value='';secContact.value='';
 try{const response=await fetch('/run',{method:'POST',headers:{'Content-Type':'application/json','X-Research-Token':csrf},body:JSON.stringify(payload)});
 const result=await response.json();if(!response.ok)throw Error(result.error);await poll();
 }catch(err){statusText(err.message);start.disabled=false;}});
@@ -254,8 +256,11 @@ def create_server(port=8765, directory='research-output', default_mode='full', *
                 evidence = data.get('evidence', '')
                 if not isinstance(evidence, str) or len(evidence.encode()) > 100000:
                     raise ValueError('Evidence must be text of at most 100 KB')
+                plan_samples = data.get('plan_samples')
+                if plan_samples is not None and (isinstance(plan_samples, bool) or plan_samples not in (1, 2, 3, 4, 5)):
+                    raise ValueError('Forecast plans must be 1 to 5')
             except (ValueError, TypeError, AttributeError):
-                return self.response(400, {'error': 'Check your key, SEC contact email, ticker, research mode, profile, budget ($1–$20), and evidence (100 KB maximum)'})
+                return self.response(400, {'error': 'Check your key, SEC contact email, ticker, research mode, profile, forecast plans (1–5), budget ($1–$20), and evidence (100 KB maximum)'})
             with lock:
                 if not state['done']:
                     return self.response(409, {'error': 'A run is already active'})
@@ -269,13 +274,15 @@ def create_server(port=8765, directory='research-output', default_mode='full', *
 
             def work():
                 try:
+                    extra = {}
                     if mode == 'full':
                         from .pipeline import run as runner
+                        extra['plan_samples'] = plan_samples
                     else:
                         runner = run
                     with sec_contact_scope(contact or configured_contact):
                         folder = Path(runner(ticker, key, profile=profile, budget=budget, directory=directory,
-                                             evidence=evidence, progress=update))
+                                             evidence=evidence, progress=update, **extra))
                     result = _result_metadata(folder,full=mode=='full')
                     memo_text = (folder / 'memo.md').read_text(encoding='utf-8')
                     with lock:

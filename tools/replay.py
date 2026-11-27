@@ -4,17 +4,23 @@ Usage:
   python tools/replay.py SAVED_RUN_FOLDER OUTPUT_DIR [--from plan|draft] [--max-revisions 1]
                          [--budget 20] [--profile balanced] [--strong-model ID] [--review-model ID]
   python tools/replay.py SAVED_RUN_FOLDER OUTPUT_DIR --plan-samples N [--budget 8] [--resume]
+  python tools/replay.py SAVED_RUN_FOLDER OUTPUT_DIR --plan-samples N --consensus-only
 
 --plan-samples N measures repeatability: the forecast plan is requested N times
 on the identical prompt, one request after another in one provider cache session,
 and each answer is locked, validated, repaired if needed and valued. No draft,
 review or web research runs. Results go to OUTPUT_DIR/TICKER/plan-samples/
-plan-samples.json, with a table and a driver decomposition printed at the end.
+plan-samples.json, with a table and a driver decomposition printed at the end,
+followed by the consensus of the valid samples (every subset of three, and all
+of them), locked and valued as a run does (tools/consensus_check.py).
+--consensus-only makes no request: it reports the consensus of the first N
+samples already saved under OUTPUT_DIR/TICKER/plan-samples/.
 
 The saved folder's sources (cut to those that existed when its first draft was
 written), archived documents and paid web-research answers are copied into a
 new folder. Everything from the chosen stage onward is recomputed with the
-current code and prompts: --from plan rebuilds the forecast plan, --from draft
+current code and prompts: --from plan rebuilds the forecast plan (as many plan
+samples as the profile takes by default, three for balanced), --from draft
 keeps the saved first plan, and --from review keeps the saved plan and current
 draft so only the free checks, their fix call and the review run. Primary documents are re-derived from their
 archives by the normal per-run refresh, so evidence-extraction changes apply.
@@ -37,6 +43,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from investmentideas import core, pipeline  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import consensus_check  # noqa: E402  (tools/, beside this script)
 from investmentideas.valuation import SCENARIOS, evaluate  # noqa: E402
 
 
@@ -147,12 +155,12 @@ def _sampling_router(base, session, requests):
             # pipeline._run names the session after its folder; all samples share one.
             pass
 
-        def complete(self, stage, model, prompt, max_tokens=3500, *, web=False, prefix=None):
+        def complete(self, stage, model, prompt, max_tokens=3500, *, web=False, prefix=None, **options):
             if web or not stage.startswith(SAMPLING_STAGES):
                 raise PlanStageDone(stage)
             if stage.startswith('valuation_plan'):
                 requests.append({'stage': stage, 'sha256': _request_digest(prompt, prefix)})
-            return super().complete(stage, model, prompt, max_tokens, web=web, prefix=prefix)
+            return super().complete(stage, model, prompt, max_tokens, web=web, prefix=prefix, **options)
     return SamplingRouter
 
 
@@ -618,9 +626,27 @@ def sample_plans(saved_folder, output, *, samples, key, easy, strong, reviewer, 
         if stopped:
             break
     report = _report(root, saved_folder, samples, budget, models, stopped)
+    if report['summary'].get('samples_valued', 0) >= 2:
+        # The consensus of the valid samples, locked and valued as a run does; printed first.
+        report['consensus'] = consensus_check.check(root)
+        core.save(root / 'plan-samples.json', report)
+        progress(consensus_check.table(report['consensus']))
     progress(sampling_table(report))
     progress(f'plan samples: {root / "plan-samples.json"}')
     return report
+
+
+def consensus_only(saved_folder, output, *, samples, progress=print):
+    """The consensus of the first ``samples`` saved plan samples; no request is made."""
+    saved = json.loads((Path(saved_folder).resolve() / 'state.json').read_text())
+    root = Path(output).resolve() / saved['ticker'] / 'plan-samples'
+    if not root.is_dir():
+        raise ValueError(f'{root} has no saved plan samples; run --plan-samples first')
+    result = consensus_check.check(root, limit=samples)
+    core.save(root / 'plan-consensus-check.json', result)
+    progress(consensus_check.table(result))
+    progress(f'consensus check: {root / "plan-consensus-check.json"}')
+    return result
 
 
 def main():
@@ -636,7 +662,17 @@ def main():
     parser.add_argument('--resume', action='store_true', help='continue an existing replay folder (prior charges count)')
     parser.add_argument('--plan-samples', type=int, metavar='N',
                         help='request only the forecast plan N times on the identical prompt and compare the values')
+    parser.add_argument('--consensus-only', action='store_true',
+                        help='with --plan-samples N: report the consensus of the first N saved samples, with no request')
     args = parser.parse_args()
+    if args.consensus_only:
+        if args.plan_samples is None:
+            raise SystemExit('--consensus-only needs --plan-samples N')
+        try:
+            consensus_only(args.saved, args.output, samples=args.plan_samples)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
+        return
     key = os.environ.get('OPENROUTER_API_KEY', '').strip()
     if not key:
         raise SystemExit('Set OPENROUTER_API_KEY')
@@ -674,7 +710,8 @@ def main():
     try:
         with pipeline._lock(target):
             pipeline._run(target, saved['ticker'], key, easy, strong, args.budget, '', print, args.max_revisions, '', [],
-                          None, None, args.review_model, None, None, default_reviewer=reviewer)
+                          None, None, args.review_model, None, None, default_reviewer=reviewer,
+                          plan_samples=pipeline.default_plan_samples(args.profile))
     finally:
         print(scorecard(target))
 
