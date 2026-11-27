@@ -91,9 +91,10 @@ adviser, before you invest.
 On 2026-11-27 the first three live runs (Microsoft, Apple and Coca-Cola) produced one
 memo that passed the model review, Apple's, after one revision. The pipeline was then
 rebuilt to write three forecasts and answer findings with exact edits. On the rebuilt
-pipeline, fresh runs of Microsoft, Alphabet, Coca-Cola and Walmart produced one passing
-memo, Alphabet's after two rounds, and review-only replays of Microsoft and Coca-Cola
-passed. No first draft has passed without a round. An external audit in
+pipeline, a fresh run of Alphabet passed after two rounds. Fresh runs of Microsoft,
+Coca-Cola and Walmart each stopped on findings about notes the code writes; after those
+notes were corrected, review-only replays of all three passed. No first draft has
+passed without a round. An external audit in
 early November 2026 graded an earlier version's showcase memo B− and its process C; the
 benchmark-parity claim made before it is withdrawn. What has been repaired since, what
 each live run found and what is still open are in [audit status](docs/audit-status.md).
@@ -427,7 +428,7 @@ python -m pip install .
 investmentideas --help
 ```
 
-The current source passes **1,042 tests** locally on Python 3.9, 3.12 and 3.13 (four
+The current source passes **1,047 tests** locally on Python 3.9, 3.12 and 3.13 (four
 skip unless saved runs are named for them); the
 v0.2.0 release passed 268. The
 [CI matrix](https://github.com/praveenchunduru/IntrinsicValue/actions/runs/42261827883)

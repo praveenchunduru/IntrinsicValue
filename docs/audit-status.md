@@ -856,30 +856,40 @@ rounds (83f3b08).
   flags such sentences before review, with its rule in the shared standard (8b92aa9,
   d5dd853). Run offline on four first drafts, it would have caught 7 of the 9 findings
   of this kind.
-- **Walmart, final fresh run on abd9600:** [PLACEHOLDER, to be filled in: still running
-  when this section was written.]
+- **Walmart, final fresh run on abd9600:** $4.03, three edit rounds, no rewrite and no
+  forecast reopening. The first review had one finding of the unverified-excerpt kind
+  against six in the earlier run, and every finding on the prose was resolved by the
+  third round. One major remained, on computed text: the first-page row said revenue
+  growth "cannot reach the price alone", although the engine's constant-growth reverse
+  DCF reaches it at 34.8% a year. A bounded search that stops short now says what it
+  tested, the first page gives the constant-growth answer, and a free check flags prose
+  that calls a computed figure "reported" (b9fcbea).
+- **Walmart, review-only replay on b9fcbea:** $0.42, approved in one read with 3 minors.
 
-Approved memos on the rebuilt pipeline so far: Microsoft (review-only replay), Alphabet
-(fresh run) and Coca-Cola (review-only replay).
+Approved memos on the rebuilt pipeline: Alphabet (fresh run), and Microsoft, Coca-Cola
+and Walmart (review-only replays after fixes to computed text).
 
 The reviewer audits computed text as strictly as it audits prose. Free audits of the
 computed text by independent readers, before paying for a review, found far more
 problems per dollar than paid runs did.
 
-Spending on 2026-11-26 and 2026-11-27 before the final Walmart run is $46.67, matching
-the saved runs' cost summaries: $14.75 for the first three runs, $4.55 for the plan
-samples, $1.17 for the smoke runs, $7.34 for the Microsoft full run, $1.73 for the
-Microsoft replay, $5.47 for Coca-Cola, $4.77 for Alphabet, $2.23 and $0.41 for the
-Coca-Cola replays and $4.26 for Walmart. The suite has 1,042 offline tests, passing on
-Python 3.9, 3.12 and 3.13.
+Spending on 2026-11-26 and 2026-11-27 is $51.12, matching the saved runs' cost
+summaries: $14.75 for the first three runs, $4.55 for the plan samples, $1.17 for the
+smoke runs, $7.34 for the Microsoft full run, $1.73 for the Microsoft replay, $5.47 for
+Coca-Cola, $4.77 for Alphabet, $2.23 and $0.41 for the Coca-Cola replays, $4.26 and
+$4.03 for the two Walmart runs and $0.42 for the Walmart replay. The suite has 1,047
+offline tests, passing on Python 3.9, 3.12 and 3.13.
 
 ### Still open after 2026-11-14
 
-- Four memos have passed review: Apple's first full run after one revision, and on the
+- Five memos have passed review: Apple's first full run after one revision, and on the
   rebuilt pipeline Alphabet's fresh run after two rounds and the review-only replays of
-  Microsoft and Coca-Cola. No first draft has passed without a round.
-- Whether a fresh run on an unseen company passes within three rounds:
-  [PLACEHOLDER, to be filled in from the final Walmart run on abd9600.]
+  Microsoft, Coca-Cola and Walmart. No first draft has passed without a round.
+- One fresh run on a company not used before has passed within three rounds unaided
+  (Alphabet). Walmart's fresh run resolved every prose finding in three rounds and was
+  held by one computed-text finding, fixed in code before its replay passed. Each new
+  company so far has exposed at least one computed note or table that was untrue for
+  it; `computed-text-findings.json` records them for fixing.
 - The plan-prompt evidence-tier rule and the rubric clarification have not been run live.
 - No paid run has yet shown a first draft with no surviving major finding; replay 2 does
   so only when the later fact-check is applied offline.
