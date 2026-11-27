@@ -267,10 +267,13 @@ class MappingTests(unittest.TestCase):
                                      'Rest of Asia Pacific'})
         self.assertEqual(rows['Americas less United States']['revenue'], 198083e6 - 167746e6)
         americas = [name for name in region('North America', 'Central and South America', 'Caribbean') if name != 'United States']
+        # Apple's own definitions (2026-11-27 memo audit): Europe includes European countries,
+        # India, the Middle East and Africa; Greater China is China mainland, Hong Kong and Taiwan.
         asia_pacific = [name for name in region('Asia', 'Australia & New Zealand')
-                        if name not in ('China', 'Hong Kong', 'Macao', 'Taiwan', 'Japan')]
+                        if name not in ('China', 'Hong Kong', 'Taiwan', 'Japan', 'India')]
+        europe = region('Western Europe', 'Eastern Europe & Russia', 'Middle East', 'Africa') + ['India']
         expected = {'United States': 0.0, 'Americas less United States': gdp_premium(americas),
-                    'Europe': gdp_premium(region('Western Europe')), 'Greater China': page_premium('China'),
+                    'Europe': gdp_premium(europe), 'Greater China': page_premium('China'),
                     'Japan': page_premium('Japan'), 'Rest of Asia Pacific': gdp_premium(asia_pacific)}
         for label, premium in expected.items():
             self.assertAlmostEqual(rows[label]['premium_over_us'], premium, places=12, msg=label)
@@ -292,7 +295,9 @@ class MappingTests(unittest.TestCase):
         self.assertEqual(set(rows), {'United States', 'Americas less United States', 'United Kingdom', 'Germany',
                                      'EMEA less United Kingdom and Germany', 'Japan', 'Asia Pacific less Japan'})
         self.assertAlmostEqual(rows['EMEA less United Kingdom and Germany']['revenue'], 15297e6 - 2816e6 - 1993e6)
-        emea = [name for name in region('Western Europe', 'Middle East', 'Africa') if name not in ('United Kingdom', 'Germany')]
+        # EMEA includes Eastern Europe and Russia (2026-11-27 memo audit).
+        emea = [name for name in region('Western Europe', 'Eastern Europe & Russia', 'Middle East', 'Africa')
+                if name not in ('United Kingdom', 'Germany')]
         self.assertAlmostEqual(rows['EMEA less United Kingdom and Germany']['premium_over_us'], gdp_premium(emea), places=12)
         self.assertAlmostEqual(rows['Germany']['premium_over_us'], -.0023, places=12)  # rated above the US
 

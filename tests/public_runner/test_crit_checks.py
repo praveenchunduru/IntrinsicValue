@@ -243,7 +243,8 @@ class QuarterlyTableTests(unittest.TestCase):
         text = render_quarterly(baseline, 'S2')
         self.assertIn('Reported fiscal quarters [S2]', text)
         self.assertIn('2023-10-29 | Q3 | 18.1 | 205.5% | 57.5% | 4.8 | 0.5', text)
-        self.assertIn('2023-01-29 | Q4 (derived)', text)
+        # Only the computed cells are marked derived; reported quarter-end balances are not.
+        self.assertIn('2023-01-29 | Q4 | 6.1 (derived) | -20.8% (derived) | 20.8% (derived) | 5.2 | 0.4', text)
         self.assertIn('Trailing twelve months to 2023-10-29', text)
         rows = [{'fiscal_year_end': '2023-01-29', 'currency': 'USD', 'revenue': 26974e6}]
         for key in ('revenue_growth', 'gross_margin', 'operating_margin', 'research_and_development_to_revenue',
@@ -253,7 +254,8 @@ class QuarterlyTableTests(unittest.TestCase):
         source = {'id': 'S2', 'historical_baseline': dict(baseline, rows=rows)}
         self.assertIn('Reported fiscal quarters [S2]', pipeline._computed_tables([source]))
         section = '\n'.join(pipeline.reported_tables_section([source]))
-        self.assertIn('| Measure | 2022-01-30 Q4 (derived) | 2022-05-01 Q1 |', section)
+        self.assertIn('| Measure | 2022-01-30 Q4 | 2022-05-01 Q1 |', section)
+        self.assertIn('| Revenue ($B) | 7.6 (derived) | 8.3 |', section)
         self.assertIn('| Growth on the year-earlier quarter |', section)
         self.assertIn('| Deferred revenue, quarter end ($B) |', section)
 

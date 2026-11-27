@@ -28,7 +28,7 @@ import hashlib
 from pathlib import Path
 import re
 
-from . import memo_style, roic
+from . import country_risk, memo_style, roic
 
 ANNUAL_FORMS = {'10-K', '10-K/A', '20-F', '20-F/A', '40-F', '40-F/A'}
 REVENUE = ('RevenueFromContractWithCustomerExcludingAssessedTax', 'RevenueFromContractWithCustomerIncludingAssessedTax',
@@ -848,6 +848,7 @@ def historical_baseline(payload, years=5, as_of=None, supplement=None):
                                           'shares_outstanding_as_of', 'shares_outstanding_concept',
                                           'lease_commitments_not_commenced_concept')}
         item['selling_general_administrative_concept'] = row.get('selling_general_administrative_concept')
+        item['fiscal_year_start'] = row['fiscal_year_start']
         # A change between counts on different dates or bases is not a change.
         same_basis = bool(prior and (row['shares_outstanding_as_of'] == row['fiscal_year_end']) ==
                           (prior['shares_outstanding_as_of'] == prior['fiscal_year_end']))
@@ -875,6 +876,7 @@ def historical_baseline(payload, years=5, as_of=None, supplement=None):
     _attach_roic(table, gaap, as_of)
     # The first period exists only to compute the first year's growth.
     table = table[1:] if len(table) > years else table
+    _mark_outside_supplement(table, supplement)
     result = {'rows': table, 'concepts': concepts, 'source': 'SEC companyfacts annual filings (10-K/20-F/40-F)',
               'basis': 'Reported annual values; ratios computed by Python. Missing concepts are blank, never zero.'}
     if supplement and any(_from_filing(row) for row in table):
@@ -1097,14 +1099,60 @@ def quarterly_table(payload, as_of=None, quarters=QUARTERS_SHOWN):
     return output
 
 
-def _member_label(member):
+# The filing's own row label where the member name loses it (2026-11-27 memo audits).
+# Each was checked against the filing's revenue table. Inline facts carry no labels,
+# so names not listed here are split from the member name.
+FILING_LABELS = {
+    'aapl:WearablesHomeandAccessoriesMember': 'Wearables, Home and Accessories',
+    'goog:GoogleSearchOtherMember': 'Google Search & other',
+    'goog:YouTubeAdvertisingRevenueMember': 'YouTube ads',
+    'goog:GoogleNetworkMember': 'Google Network',
+    'goog:GoogleAdvertisingRevenueMember': 'Google advertising',
+    'goog:SubscriptionsPlatformsAndDevicesRevenueMember': 'Google subscriptions, platforms, and devices',
+    'msft:XBOXMember': 'Gaming',
+    'msft:SearchAdvertisingMember': 'Search and news advertising',
+    'ko:A.PacificMember': 'Asia Pacific',
+    'ko:EuropeMiddleEastAfricaMember': 'Europe, Middle East and Africa',
+}
+# Brand names that the camel-case split breaks apart.
+BRANDS = {'You Tube': 'YouTube', 'Linked In': 'LinkedIn', 'Git Hub': 'GitHub', 'Pay Pal': 'PayPal',
+          'Whats App': 'WhatsApp', 'Air Pods': 'AirPods', 'Apple Care': 'AppleCare', 'Mac Book': 'MacBook',
+          'Play Station': 'PlayStation', 'Three Six Five': '365'}
+CONNECTORS = ('And', 'Or', 'Of', 'The', 'In', 'For', 'Excluding', 'Including', 'Other')
+# A glued lowercase "and" ("Homeand") is split off unless the word is one that ends in -and.
+_GLUED_AND = re.compile(r'(?<=[a-z]{3})(?<![lmprtwh])and(?=[A-Z])')
+
+
+def _member_label(member, issuer_prefixes=()):
+    """A reader's label for a breakdown member: the filing's own label where known, else the split member name."""
     if ' within ' in member:
         # A product or region reported within one segment (research.inline_breakdown_facts).
         inner, segment = member.split(' within ', 1)
-        return f'{_member_label(inner)} in {_member_label(segment)}'
-    local = member.split(':', 1)[-1]
-    local = re.sub(r'Member$', '', local)
-    return re.sub(r'(?<=[a-z])(?=[A-Z])', ' ', local)
+        return f'{_member_label(inner, issuer_prefixes)} in {_member_label(segment, issuer_prefixes)}'
+    if member in FILING_LABELS:
+        return FILING_LABELS[member]
+    if member.startswith('country:'):
+        for prefix in issuer_prefixes:
+            label = (country_risk.ISSUER_PREFIX_LABELS.get(prefix) or {}).get(member)
+            if label:
+                return label
+        return country_risk.ISO_COUNTRIES.get(member.split(':', 1)[1].upper(), member.split(':', 1)[1])
+    local = re.sub(r'Member$', '', member.split(':', 1)[-1])
+    if local in ('NonUs', 'NonUS'):
+        return 'Non-US'
+    local = _GLUED_AND.sub('And', local)
+    text = re.sub(r'(?<=[a-z0-9])(?=[A-Z])', ' ', local)
+    for broken, brand in BRANDS.items():
+        text = re.sub(r'\b' + broken + r'\b', brand, text)
+    return ' '.join(word if index == 0 or word not in CONNECTORS or word == 'Other' else word.lower()
+                    for index, word in enumerate(text.split()))
+
+
+def _issuer_prefixes(members):
+    """Issuer-extension prefixes among a table's members ('aapl' for aapl:OtherCountriesMember)."""
+    standard = {'us-gaap', 'srt', 'country', 'dei', 'ifrs-full'}
+    return tuple(sorted({member.split(':', 1)[0] for item in members for member in item.split(' within ')
+                         if ':' in member and member.split(':', 1)[0] not in standard}))
 
 
 def breakdown_tables(facts, years=3):
@@ -1128,6 +1176,7 @@ def breakdown_tables(facts, years=3):
         if not ends:
             continue
         members = []
+        prefixes = _issuer_prefixes({fact['member'] for fact in rows})
         for member in dict.fromkeys(fact['member'] for fact in rows):
             def value(concepts, end):
                 # The first concept with one consistent value decides; a filer that
@@ -1145,7 +1194,7 @@ def breakdown_tables(facts, years=3):
                 continue
             costs = [value(('CostOfGoodsAndServicesSold', 'CostOfRevenue'), end) for end in ends]
             operating = [value(('OperatingIncomeLoss',), end) for end in ends]
-            entry = {'member': member, 'label': _member_label(member), 'revenue': sales,
+            entry = {'member': member, 'label': _member_label(member, prefixes), 'revenue': sales,
                      'revenue_growth': [float(sales[i] / sales[i + 1] - 1) if i + 1 < len(sales) and sales[i] is not None
                                         and sales[i + 1] else None for i in range(len(sales))]}
             if any(item is not None for item in costs):
@@ -1214,6 +1263,19 @@ def _basis_notes(rows, source_id, filing_id):
     text = by_concept('average_repurchase_price_concept', lambda row, concept: 'stated' in concept or 'annual filing' in concept)
     if text:
         notes.append('Average buyback price: ' + text)
+    label, differing = repurchase_price_basis(rows)
+    if differing:
+        notes.append(f'Average buyback price is the {label}, not cash buybacks divided by shares: ' +
+                     '; '.join(f'{end} {price:,.2f} against {cash:,.2f}' for end, price, cash in differing))
+    outside = {}
+    for row in rows:
+        for field in row.get('outside_filings_scanned') or []:
+            outside.setdefault(field, []).append(row['fiscal_year_end'])
+    for field, _, name in SUPPLEMENT_FIELDS:
+        if field in outside:
+            notes.append(f'{name} for the fiscal years ending {", ".join(outside[field])} is shown as outside filings '
+                         f'scanned: the figure comes from the annual filing{f" [{filing_id}]" if filing_id else ""}, whose '
+                         'periods do not include those years; older filings report it')
     rounded = [f'{row["fiscal_year_end"]} ±{row["average_repurchase_price_tolerance"] * 100:.1f}%' for row in rows
                if row.get('average_repurchase_price') is not None and (row.get('average_repurchase_price_tolerance') or 0) > .005]
     if rounded:
@@ -1231,6 +1293,69 @@ def _basis_notes(rows, source_id, filing_id):
                      f'reported lease liabilities ({latest["lease_commitments_not_commenced_concept"]})'
                      f'{f" [{filing_id}]" if filing_id else ""}')
     return notes
+
+
+# Inputs the annual filing supplies when company facts lack them. A year outside
+# that filing's periods shows n/a for them although older filings report the figure.
+SUPPLEMENT_FIELDS = (('acquisitions', 'acquisitions_concept', 'Acquisitions'),
+                     ('average_repurchase_price', 'average_repurchase_price_concept', 'Average buyback price'),
+                     ('depreciation_amortization', 'depreciation_amortization_concept', 'D&A'))
+OUTSIDE_SCANNED = 'outside filings scanned'
+
+
+def _mark_outside_supplement(table, supplement):
+    """Record, per row, the supplement-filled fields that are blank only because the year is outside the filing."""
+    if not supplement:
+        return
+    covered = {(fact['start'], fact['end']) for fact in supplement.get('facts') or [] if fact.get('start')}
+    for field, concept, _ in SUPPLEMENT_FIELDS:
+        if not any(row.get(concept) and 'annual filing' in row[concept] for row in table):
+            continue
+        for row in table:
+            if row.get(field) is None and (row.get('fiscal_year_start'), row['fiscal_year_end']) not in covered:
+                row.setdefault('outside_filings_scanned', []).append(field)
+
+
+def depreciation_phrase(rows):
+    """How the depreciation input of net reinvestment reads for these rows: the words to use in a note.
+
+    Alphabet reports depreciation only (us-gaap:Depreciation), so its net
+    reinvestment is capital expenditure less depreciation; Microsoft uses
+    depreciation alone for two years and a depreciation-and-amortization total after.
+    """
+    used = [row for row in rows or [] if row.get('depreciation_amortization') is not None]
+    only = [row['fiscal_year_end'] for row in used if row.get('depreciation_only')]
+    if used and len(only) == len(used):
+        return 'depreciation (the filings report no depreciation-and-amortization total)'
+    if only:
+        return ('depreciation and amortization (depreciation only for the fiscal years ending ' + ', '.join(only) + ')')
+    return 'depreciation and amortization'
+
+
+def repurchase_price_basis(rows):
+    """(label, [(fiscal year end, price, cash price)]) for the average buyback price row.
+
+    The label names the price's basis: the share note's repurchase value over its
+    shares, the repurchase program's value over its shares, or the filing's stated
+    price. The list gives each year where cash buybacks divided by the same shares
+    differ from the price by more than 0.5% (Apple fiscal 2026: $85.8 billion over
+    297 million shares in the share note against $86.4 billion of cash buybacks).
+    """
+    concepts = [row.get('average_repurchase_price_concept') or '' for row in rows or [] if row.get('average_repurchase_price')]
+    if not concepts:
+        return None, []
+    kinds = {('stated price' if 'stated' in concept else
+              'program value / program shares' if 'repurchase-program axis' in concept else 'share-note value / shares')
+             for concept in concepts}
+    label = ' and '.join(sorted(kinds))
+    differing = []
+    for row in rows:
+        price, cash, shares = row.get('average_repurchase_price'), row.get('repurchases'), row.get('shares_repurchased')
+        if price and cash and shares:
+            cash_price = cash / shares
+            if abs(price / cash_price - 1) > .005:
+                differing.append((row['fiscal_year_end'], price, cash_price))
+    return label, differing
 
 
 def _rate_instant(gaap, concepts, end, as_of=None):
@@ -1255,6 +1380,14 @@ def _roic_inputs(gaap, period, as_of):
     row['research_and_development'], _, _ = _research_and_development(gaap, start, end, currency, as_of)
     for name, options in roic.DURATIONS.items():
         row[name], _, _ = _duration(gaap, options, start, end, currency, as_of)
+    if row['deferred_tax_expense'] is None:
+        # Apple tags no deferred tax total, only its federal, state and foreign parts.
+        for parts in DEFERRED_TAX_PARTS:
+            values = [_duration(gaap, (concept,), start, end, currency, as_of)[0] for concept in parts]
+            if all(value is not None for value in values):
+                row['deferred_tax_expense'] = sum(values)
+                row['deferred_tax_basis'] = 'sum of ' + ', '.join(parts)
+                break
     if row['pretax_income'] is None and row['net_income'] is not None and row['income_tax_expense'] is not None:
         row['pretax_income'] = row['net_income'] + row['income_tax_expense']
     for name, options in roic.INSTANTS.items():
@@ -1264,6 +1397,10 @@ def _roic_inputs(gaap, period, as_of):
     return row
 
 
+# A deferred tax total from its reported parts, where no total is tagged.
+DEFERRED_TAX_PARTS = (('DeferredFederalIncomeTaxExpenseBenefit', 'DeferredStateAndLocalIncomeTaxExpenseBenefit',
+                       'DeferredForeignIncomeTaxExpenseBenefit'),
+                      ('DeferredFederalStateAndLocalTaxExpenseBenefit', 'DeferredForeignIncomeTaxExpenseBenefit'))
 ROIC_FIELDS = ('nopat', 'nopat_margin', 'ebita', 'ebit_basis', 'operating_lease_interest', 'nopat_tax_rate', 'nopat_tax_basis',
                'invested_capital', 'average_invested_capital', 'capital_turnover', 'return_on_invested_capital',
                'return_on_capital_unbounded', 'invested_capital_excluding_acquired', 'return_excluding_acquired',
@@ -1282,11 +1419,14 @@ def _attach_roic(table, gaap, as_of):
     if not table:
         return
     periods = _fiscal_years(gaap, len(table) + ROIC_EXTRA_YEARS, as_of)
-    measures, status = roic.history([_roic_inputs(gaap, period, as_of) for period in periods])
+    inputs = [_roic_inputs(gaap, period, as_of) for period in periods]
+    measures, status = roic.history(inputs)
     by_end = {item['fiscal_year_end']: item for item in measures}
+    deferred = {item['fiscal_year_end']: item.get('deferred_tax_basis') for item in inputs}
     for row in table:
         item = by_end.get(row['fiscal_year_end']) or {}
         row.update({field: item.get(field) for field in ROIC_FIELDS})
+        row['deferred_tax_basis'] = deferred.get(row['fiscal_year_end'])
         row['return_on_capital_unbounded'] = bool(row['return_on_capital_unbounded'])
         row['intangibles_capitalization'] = status
 
@@ -1301,8 +1441,15 @@ def render_baseline(baseline, source_id=None, include_roic=True, scale=1e9):
     legacy = (baseline.get('concepts') or {}).get('depreciation_amortization') == 'Depreciation'
     only = all(row.get('depreciation_only') for row in reported) if any('depreciation_only' in row for row in reported) else legacy
     depreciation = 'depreciation only/rev' if reported and only else 'D&A/rev'
+    mixed = not only and any(row.get('depreciation_only') for row in reported)
+    def outside(row, field, text):
+        return OUTSIDE_SCANNED if text == 'n/a' and field in (row.get('outside_filings_scanned') or []) else text
+    def depreciation_cell(row):
+        text = _pct(row['depreciation_amortization_to_revenue'])
+        # A depreciation-only year beside depreciation-and-amortization years says so in its cell.
+        return text + (' (depreciation only)' if mixed and row.get('depreciation_only') and text != 'n/a' else '')
     lines = [f'Reported operating history{ref}, {currency} billions; ratios computed by Python from reported values; '
-             'n/a means not reported on a comparable basis.',
+             'n/a means not reported on a comparable basis; "outside filings scanned" marks a figure older filings report.',
              'FY end | revenue | growth | gross margin | operating margin | operating income growth | R&D/rev | SG&A/rev | '
              f'effective tax | capex/rev | {depreciation} | SBC/rev | buybacks (cash) | avg buyback price | dividends | '
              'diluted EPS | EPS growth | shares outstanding at FY end (millions) | change in shares outstanding (millions) | '
@@ -1322,12 +1469,12 @@ def render_baseline(baseline, source_id=None, include_roic=True, scale=1e9):
             _pct(row['operating_margin']), _pct(row.get('operating_income_growth')),
             _pct(row['research_and_development_to_revenue']),
             _pct(row['selling_general_administrative_to_revenue']), _pct(row['effective_tax_rate']),
-            _pct(row['capital_expenditure_to_revenue']), _pct(row['depreciation_amortization_to_revenue']),
+            _pct(row['capital_expenditure_to_revenue']), outside(row, 'depreciation_amortization', depreciation_cell(row)),
             _pct(row['stock_compensation_to_revenue']), _money(row['repurchases'], scale),
-            price_text, _money(row['dividends'], scale),
+            outside(row, 'average_repurchase_price', price_text), _money(row['dividends'], scale),
             'n/a' if eps is None else f'{eps:,.2f}', _pct(row.get('diluted_eps_growth')),
             shares, _shares(row.get('net_share_change'), signed=True),
-            _shares(row.get('shares_repurchased')), _money(row.get('acquisitions'), scale),
+            _shares(row.get('shares_repurchased')), outside(row, 'acquisitions', _money(row.get('acquisitions'), scale)),
             _money(row.get('finance_lease_additions'), scale)]))
     notes = _basis_notes(rows, source_id, baseline.get('supplement_source'))
     if notes:
@@ -1348,22 +1495,29 @@ def render_quarterly(baseline, source_id=None, markdown=False, notes_out=None, s
         if row.get('revenue_growth_basis') == 'unequal_length':
             return f'n/m ({row.get("days")} vs {row.get("prior_days")} days)'
         return _pct(row.get('revenue_growth'))
-    measures = [('revenue', lambda row: _money(row.get('revenue'), scale)),
-                ('growth on the year-earlier quarter', growth),
-                ('operating margin', lambda row: _pct(row.get('operating_margin')))]
+    # Only computed cells are marked; balances reported at the quarter end are not (Apple's fourth
+    # quarter: revenue and operating income are the fiscal year less nine months, inventory is reported).
+    def derived_revenue(row):
+        return row.get('revenue_basis') not in (None, 'reported')
+    def derived_operating(row):
+        return derived_revenue(row) or row.get('operating_income_basis') not in (None, 'reported')
+    def mark(text, flag):
+        return text + (' (derived)' if flag and text != 'n/a' else '')
+    measures = [('revenue', lambda row: mark(_money(row.get('revenue'), scale), derived_revenue(row))),
+                ('growth on the year-earlier quarter', lambda row: mark(growth(row), derived_revenue(row))),
+                ('operating margin', lambda row: mark(_pct(row.get('operating_margin')), derived_operating(row)))]
     if 'inventory' in concepts:
         measures.append(('inventory at quarter end', lambda row: _money(row.get('inventory'), scale)))
     if 'deferred_revenue' in concepts:
         measures.append(('deferred revenue at quarter end', lambda row: _money(row.get('deferred_revenue'), scale)))
     def label(row):
-        derived = row.get('revenue_basis') not in (None, 'reported') or row.get('operating_income_basis') not in (None, 'reported')
-        return f'Q{row["fiscal_quarter"]}' + (' (derived)' if derived else '')
+        return f'Q{row["fiscal_quarter"]}'
     caption = (f'Reported fiscal quarters{ref}, {quarterly.get("currency", "")} billions; ratios computed by Python from '
                'reported values; n/a means not reported.')
     notes = []
-    derived = [row for row in rows if 'derived' in label(row)]
+    derived = [row for row in rows if derived_operating(row)]
     if derived:
-        notes.append('Quarters marked derived are computed from the filings. '
+        notes.append('Cells marked derived are computed from the filings; balances at the quarter end are reported. '
                      + '; '.join(f'{row["period_end"]} is the {row["revenue_basis"] if row["revenue_basis"] != "reported" else row["operating_income_basis"]}'
                                  for row in derived)
                      + '. The company facts do not tag these quarters on their own; an earnings release may still present them')
@@ -1433,6 +1587,37 @@ def _return(row, key):
     return _pct(row.get(key))
 
 
+TAX_BASES = {'cash': 'the cash tax rate (provision less deferred tax expense, over pretax income)',
+             'effective': 'the effective tax rate, because deferred tax expense is not tagged or puts the cash rate outside 0-50%',
+             'statutory': 'a 25% rate, because neither rate is between 0% and 50%'}
+
+
+def _nopat_note(rows):
+    """The NOPAT basis as it ran: which years used which tax rate, and whether lease interest was found."""
+    years = {}
+    for row in rows:
+        if row.get('nopat') is not None and row.get('nopat_tax_basis') in TAX_BASES:
+            years.setdefault(row['nopat_tax_basis'], []).append(row['fiscal_year_end'])
+    if len(years) == 1:
+        tax = f'NOPAT is EBITA after {TAX_BASES[next(iter(years))]} in every year shown.'
+    else:
+        tax = 'NOPAT is EBITA after ' + '; '.join(f'{TAX_BASES[basis]} for the fiscal years ending {", ".join(ends)}'
+                                                for basis, ends in years.items()) + '.'
+    if any(row.get('deferred_tax_basis') for row in rows):
+        tax += ' Deferred tax expense is the sum of its federal, state and foreign parts where no total is tagged.'
+    interest = [row for row in rows if row.get('nopat') is not None]
+    if interest and all(not row.get('operating_lease_interest') for row in interest):
+        lease = (' EBITA is operating income plus amortization of acquired intangibles. The interest in operating lease '
+                 'cost is not added: no weighted-average operating lease discount rate is tagged, so it is taken as zero.')
+    else:
+        missing = [row['fiscal_year_end'] for row in interest if not row.get('operating_lease_interest')]
+        lease = (' EBITA is operating income plus amortization of acquired intangibles plus the interest in operating '
+                 'lease cost, the average operating lease liability times its weighted-average discount rate' +
+                 (f'; no rate is tagged for the fiscal years ending {", ".join(missing)}, where it is taken as zero'
+                  if missing else '') + '.')
+    return tax + lease
+
+
 def _roic_lines(rows, ref, scale=1e9):
     """Return on invested capital table, Mauboussin and Callahan method."""
     if not any(row.get('nopat') is not None or row.get('invested_capital') is not None for row in rows):
@@ -1499,11 +1684,7 @@ def _roic_lines(rows, ref, scale=1e9):
     lines += ['ROIC basis:',
               *(['- * No operating income is reported: EBIT is pretax income plus net interest expense, so other '
                  'non-operating items stay in it.'] if marked else []),
-              '- NOPAT is EBITA times one minus the cash tax rate. EBITA is operating income plus amortization of acquired '
-              'intangibles plus the interest in operating lease cost, which is the average operating lease liability times '
-              'its weighted-average discount rate. The cash tax rate is the tax provision less deferred tax expense, over '
-              'pretax income. The effective rate applies where deferred taxes are unreported, and 25% where neither rate '
-              'is between 0% and 50%.',
+              '- ' + _nopat_note(rows),
               '- Invested capital is total assets less current liabilities other than debt, less cash and current '
               'securities above an operating balance of 2% of revenue, less noncurrent securities and equity investments. '
               'ROIC divides NOPAT by the average of opening and closing invested capital.',
@@ -1557,8 +1738,44 @@ def _reader_label(label):
     return re.sub(r'^I(?=[A-Z][a-z])', 'i', label)
 
 
-def breakdown_markdown(tables, source_id=None, currency='USD'):
-    """The memo's breakdown tables, one revenue table per axis and a margin table where margins exist: (lines, notes)."""
+SEGMENT_SUM_GAP = .01
+
+
+def segment_operating_note(table, consolidated=None, currency='USD'):
+    """A note when segment operating income does not add up to consolidated operating income, or None.
+
+    Apple's segments earned $212.5 billion in fiscal 2026 against $158.1 billion
+    consolidated: its segment measure leaves out R&D and corporate costs. Without
+    the consolidated figure the note gives the segment sum alone.
+    ``consolidated`` maps fiscal year ends to consolidated operating income.
+    """
+    ends = (table or {}).get('fiscal_year_ends') or []
+    members = [entry for entry in (table or {}).get('members') or [] if ' within ' not in (entry.get('member') or '')]
+    if not ends or not members:
+        return None
+    values = [(entry.get('operating_income') or [None])[0] for entry in members]
+    if any(value is None for value in values):
+        return None
+    total = sum(values)
+    style = memo_style.Style(currency)
+    whole = (consolidated or {}).get(ends[0])
+    if isinstance(whole, (int, float)) and whole:
+        if abs(total - whole) <= SEGMENT_SUM_GAP * abs(whole):
+            return None
+        return (f'Segment operating income sums to {style.amount(total)} for the fiscal year ending {ends[0]}, against '
+                f'consolidated operating income of {style.amount(whole)}: the segment measure leaves out costs the '
+                'company does not allocate to segments, so segment margins are not comparable with the consolidated margin.')
+    return (f'Segment operating income sums to {style.amount(total)} for the fiscal year ending {ends[0]}. The segment '
+            'measure can leave out costs the company does not allocate to segments; compare it with consolidated '
+            'operating income in the annual results.')
+
+
+def breakdown_markdown(tables, source_id=None, currency='USD', consolidated_operating_income=None):
+    """The memo's breakdown tables, one revenue table per axis and a margin table where margins exist: (lines, notes).
+
+    ``consolidated_operating_income`` (fiscal year end -> amount) lets the segment note
+    set the segment sum beside the consolidated figure.
+    """
     if not tables:
         return [], []
     ref = f' [{source_id}]' if source_id else ''
@@ -1570,6 +1787,10 @@ def breakdown_markdown(tables, source_id=None, currency='USD'):
         years = [end[:4] for end in ends]
         currency = table.get('currency') or currency or 'USD'
         members = table['members']
+        prefixes = _issuer_prefixes({entry.get('member') for entry in members if isinstance(entry.get('member'), str)})
+        # Labels are recomputed from the member, so a saved table gets the current names.
+        name = lambda entry: (_member_label(entry['member'], prefixes) if isinstance(entry.get('member'), str)
+                              else entry['label'])
         letter, scale = scale_of(value for entry in members for value in entry['revenue'] + (entry.get('operating_income') or []))
         unit = memo_style.Style(currency).unit(letter)
         lines += ['', f'### {titles.get(axis, axis)}', '', f'Fiscal years ending {", ".join(ends)}{ref}.', '']
@@ -1579,7 +1800,7 @@ def breakdown_markdown(tables, source_id=None, currency='USD'):
         for entry in members:
             growth = (entry['revenue_growth'][:-1] or [None]) if len(years) > 1 else []
             growth = (growth + [None] * (len(years) - 1))[:len(years) - 1]
-            lines.append(f'| {_reader_label(entry["label"])} | ' + ' | '.join(_money(v, scale) for v in entry['revenue']) + ' | ' +
+            lines.append(f'| {_reader_label(name(entry))} | ' + ' | '.join(_money(v, scale) for v in entry['revenue']) + ' | ' +
                          ' | '.join(_pct(v) for v in growth) + ' |')
         margins = [entry for entry in members if 'gross_margin' in entry or 'operating_margin' in entry]
         if margins:
@@ -1591,12 +1812,16 @@ def breakdown_markdown(tables, source_id=None, currency='USD'):
             for entry in margins:
                 cells = ([_pct(v) for v in entry.get('gross_margin') or [None] * len(years)] if gross else []) + \
                         ([_pct(v) for v in entry.get('operating_margin') or [None] * len(years)] if operating else [])
-                lines.append(f'| {_reader_label(entry["label"])} | ' + ' | '.join(cells) + ' |')
+                lines.append(f'| {_reader_label(name(entry))} | ' + ' | '.join(cells) + ' |')
             if operating:
                 lines += ['', '| Member | ' + ' | '.join(f'Operating income {year} ({unit})' for year in years) + ' |',
                           '|---|' + '---:|' * len(years)]
                 for entry in margins:
                     if 'operating_income' in entry:
-                        lines.append(f'| {_reader_label(entry["label"])} | ' +
+                        lines.append(f'| {_reader_label(name(entry))} | ' +
                                      ' | '.join(_money(v, scale) for v in entry['operating_income']) + ' |')
+        if axis == 'segment':
+            note = segment_operating_note(table, consolidated_operating_income, currency)
+            if note:
+                notes.append(note)
     return lines, notes

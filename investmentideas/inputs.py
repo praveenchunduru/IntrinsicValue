@@ -311,7 +311,8 @@ BENEFIT_GROUPS = (
         ('other_postretirement_plans', 'OtherPostretirementDefinedBenefitPlanLiabilitiesCurrentAndNoncurrent',
          'OtherPostretirementDefinedBenefitPlanLiabilitiesCurrent', 'OtherPostretirementDefinedBenefitPlanLiabilitiesNoncurrent'))),
     ('combined_pension_and_postretirement', (
-        ('combined_plans', None, 'PensionAndOtherPostretirementDefinedBenefitPlansCurrentLiabilities',
+        ('combined_plans', 'PensionAndOtherPostretirementDefinedBenefitPlansLiabilitiesCurrentAndNoncurrent',
+         'PensionAndOtherPostretirementDefinedBenefitPlansCurrentLiabilities',
          'PensionAndOtherPostretirementDefinedBenefitPlansLiabilitiesNoncurrent'),)),
     ('combined_including_postemployment', (
         ('combined_plans', None, 'PensionAndOtherPostretirementAndPostemploymentBenefitPlansLiabilitiesCurrent',
@@ -321,6 +322,19 @@ BENEFIT_GROUPS = (
          'PostemploymentBenefitsLiabilityNoncurrent'),)),
 )
 BENEFIT_ASSETS = roic.INSTANTS['pension_assets']
+# Balances tagged by plan type (us-gaap:RetirementPlanTypeAxis). Coca-Cola tags its
+# pension and retiree-health liabilities only this way ($751 million and $112
+# million at 2025-12-31). Each member is one plan type, so members are disjoint;
+# within a member the defined-benefit groups above apply in order.
+PLAN_TYPE_AXIS = 'us-gaap:RetirementPlanTypeAxis'
+PLAN_TYPE_MEMBERS = {'pension_plans': 'us-gaap:PensionPlansDefinedBenefitMember',
+                     'other_postretirement_plans': 'us-gaap:OtherPostretirementBenefitPlansDefinedBenefitMember'}
+FUNDED_STATUS = 'DefinedBenefitPlanFundedStatusOfPlan'
+PLAN_TYPE_PARTS = tuple(part[1:] for _, parts in BENEFIT_GROUPS[:2] for part in parts)
+PLAN_TYPE_CONCEPTS = frozenset({concept for part in PLAN_TYPE_PARTS for concept in part if concept} |
+                               set(BENEFIT_ASSETS) | {FUNDED_STATUS})
+PLAN_LEVEL_NOT_READ = ('assumption: zero by assumption; no pension or postretirement liability is tagged for the whole '
+                       'company on the date, and the filing\'s plan-level values were not read')
 CLAIMS_COMPONENT_POLICY = (
     'Explicit house policy: noncontrolling interests (us-gaap:MinorityInterest or NonredeemableNoncontrollingInterest, '
     'otherwise total equity less parent equity), redeemable noncontrolling interests and preferred stock are deducted at '
@@ -335,8 +349,9 @@ PENSION_POLICY = (
     'conservative rule for excess plan assets assumes the cost of reclaiming them is prohibitive ("Dealing with Cash, '
     'Cross Holdings and Other Non-Operating Assets", 2005). The tax deduction on future '
     'contributions is not credited; at a marginal tax rate t it would raise equity value by t times the deduction. '
-    'Where no defined-benefit concept is tagged, a reported postemployment benefit obligation is deducted as the '
-    'retirement obligation; AT&T reports its pension and postretirement obligation that way.')
+    'Liabilities tagged by plan type (pension, other postretirement) are read where no whole-company concept is '
+    'tagged, and replace a whole-company reading that does not match them when they reconcile to the reported funded '
+    'status. Failing both, a reported postemployment benefit obligation is deducted as the retirement obligation.')
 # Weighted-average shares for the anchor fiscal year (financial-context concepts)
 # and the conversion shares that can be inside the diluted count.
 DILUTION = {
@@ -366,7 +381,7 @@ FINANCING_ABSENCE_SCAN = frozenset(
 EQUITY_BRIDGE_CONCEPTS = frozenset(
     'us-gaap:' + concept for concept in (
         CASH_INCLUDING_RESTRICTED, *RESTRICTED_CASH, OTHER_SHORT_TERM_INVESTMENTS, EQUITY_METHOD_QUOTED_VALUE, *NONCONTROLLING,
-        *REDEEMABLE_NONCONTROLLING, *TOTAL_EQUITY, *PREFERRED, *BENEFIT_ASSETS,
+        *REDEEMABLE_NONCONTROLLING, *TOTAL_EQUITY, *PREFERRED, *BENEFIT_ASSETS, FUNDED_STATUS,
         *(concept for field in NONOPERATING_FIELDS for concept in roic.INSTANTS[field]),
         *(concept for _, parts in BENEFIT_GROUPS for part in parts for concept in part[1:] if concept),
         DILUTION['preferred_conversion_shares'], DILUTION['debt_conversion_shares']))
@@ -387,6 +402,16 @@ SHARE_DATE_WINDOW_DAYS = 60
 CLASS_OF_STOCK_AXIS = 'us-gaap:StatementClassOfStockAxis'
 CLASS_SHARES_BASIS = ('sum of cover-page outstanding shares by share class (dei:EntityCommonStockSharesOutstanding on '
                       'us-gaap:StatementClassOfStockAxis) on one date; no entity-wide total is reported')
+
+
+def _plan_type(raw, origin):
+    """The plan-type member of an inline pension or retiree-health balance, else None."""
+    dimensions = raw.get('dimensions')
+    if (origin != 'inline_xbrl' or raw.get('dimension_filter') != 'defined_benefit_plan_type' or
+            raw.get('concept', '').split(':', 1)[-1] not in PLAN_TYPE_CONCEPTS or not isinstance(dimensions, dict) or
+            list(dimensions) != [PLAN_TYPE_AXIS] or dimensions[PLAN_TYPE_AXIS] not in PLAN_TYPE_MEMBERS.values()):
+        return None
+    return dimensions[PLAN_TYPE_AXIS]
 
 
 def _share_class(raw, origin):
@@ -683,6 +708,50 @@ def _classified_debt(sources, items, anchor, classification):
                                                'basis': 'Exact primary-disclosure scope classification; not inferred from absent tags'}
         return selected
     return None
+
+
+# Cash-category scope atoms as in _cash_selection: cash=1, current marketables=2,
+# other current investments=4, noncurrent marketables=8.
+CASH_SCOPES = {'cash_and_cash_equivalents': 1, 'cash_and_short_term_investments': 7, 'short_term_investments': 6,
+               'marketable_securities': 10, 'current_marketable_securities': 2, 'noncurrent_marketable_securities': 8,
+               'cash_including_restricted_cash': 1}
+CASH_LABELS = {'cash_and_cash_equivalents': 'cash and cash equivalents',
+               'cash_and_short_term_investments': 'cash, cash equivalents and short-term investments',
+               'short_term_investments': 'short-term investments', 'marketable_securities': 'marketable securities',
+               'current_marketable_securities': 'current marketable securities',
+               'noncurrent_marketable_securities': 'noncurrent marketable securities',
+               'available_for_sale_debt_securities': 'available-for-sale debt securities'}
+
+
+def _excluded_cash_categories(items, cash):
+    """Reported cash and investment categories outside the selected cash, each with its amount and reason.
+
+    A category whose scope lies inside a selected total is not excluded (Microsoft's
+    cash within its cash and short-term investments). Coca-Cola's marketable
+    securities ($1,934 million) and available-for-sale debt securities ($1,774
+    million) lie partly or wholly outside its selected total and are excluded by
+    house policy: they can overlap each other and the investments added separately,
+    and adding either could count an asset twice.
+    """
+    selected = 0
+    for name in cash:
+        selected |= CASH_SCOPES.get(name, 0)
+    output = []
+    for name, item in items.items():
+        if not item or name in cash or name == 'cash_including_restricted_cash':
+            continue
+        scope = CASH_SCOPES.get(name)
+        if scope is not None and scope & selected == scope:
+            continue
+        reason = ('the available-for-sale total is used only when no other investment category is reported; it can '
+                  'overlap the selected categories and the investments added separately'
+                  if name == 'available_for_sale_debt_securities' else
+                  'it lies partly or wholly outside the selected ' + ', '.join(CASH_LABELS[key] for key in cash if key in CASH_LABELS) +
+                  ' and can overlap it or the investments added separately')
+        output.append({'category': name, 'label': CASH_LABELS.get(name, name.replace('_', ' ')),
+                       'concept': 'us-gaap:' + CASH[name], 'value': _json_number(item['value']),
+                       'source_refs': item['source_refs'], 'treatment': 'excluded by house policy', 'reason': reason})
+    return output
 
 
 def _cash_selection(items, conflicts):
@@ -1197,48 +1266,118 @@ def _nonoperating_assets(pick, cash):
     return record
 
 
-def _benefit_obligations(pick, conflicts):
+def _benefit_part(picker, conflicts, label, total, current, noncurrent):
+    """[(concept, item)] for one plan: its current-and-noncurrent total, else current and noncurrent parts."""
+    whole = picker('us-gaap:' + total, label + ' (us-gaap:' + total + ')') if total else None
+    first = picker('us-gaap:' + current, label + ' (us-gaap:' + current + ')') if current else None
+    second = picker('us-gaap:' + noncurrent, label + ' (us-gaap:' + noncurrent + ')') if noncurrent else None
+    if whole:
+        pieces = [item for item in (first, second) if item]
+        slack = _half_unit(whole) + sum((_half_unit(item) for item in pieces), Decimal(0))
+        parts_sum = sum((item['value'] for item in pieces), Decimal(0))
+        if pieces and (parts_sum > whole['value'] + slack or
+                       (len(pieces) == 2 and abs(parts_sum - whole['value']) > slack)):
+            conflicts.append(f'Reported {label} total conflicts with its current and noncurrent parts')
+            return []
+        return [(total, whole)]
+    return [(concept, item) for concept, item in ((current, first), (noncurrent, second)) if item]
+
+
+def _plan_type_reading(plan_pick):
+    """Liabilities by plan type with their reconciliation to the reported funded status, or None.
+
+    A plan type reconciles when its recognized plan assets less liabilities equal
+    its reported funded status within the stated rounding (Procter & Gamble's
+    pensions: $1,992 million of assets less $2,289 million of liabilities against a
+    funded status of -$296 million).
+    """
+    if plan_pick is None:
+        return None
+    sink, lines, checks = [], [], []
+    for plan, member in PLAN_TYPE_MEMBERS.items():
+        picker = lambda concept, label, plan_sink=None, member=member: plan_pick(concept, member, label, sink)
+        found = next((found for part in PLAN_TYPE_PARTS
+                      if (found := _benefit_part(picker, sink, plan.replace('_', ' ') + ' by plan type', *part))), [])
+        assets = next((item for concept in BENEFIT_ASSETS if (item := picker('us-gaap:' + concept, 'plan assets'))), None)
+        funded = plan_pick('us-gaap:' + FUNDED_STATUS, member, 'funded status', sink, signed=True)
+        if not found:
+            continue
+        lines += [(plan, line) for line in found]
+        liabilities = sum((item['value'] for _, item in found), Decimal(0))
+        surplus = assets['value'] if assets else Decimal(0)
+        slack = (sum((_half_unit(item) for _, item in found), Decimal(0)) + _half_unit(assets) + _half_unit(funded) +
+                 (Decimal(1000000) if not any(_half_unit(item) for item in (*(item for _, item in found), assets, funded) if item)
+                  else Decimal(0)))
+        checks.append({'plan': plan, 'liabilities': _json_number(liabilities), 'plan_assets': _json_number(surplus),
+                       'funded_status': _json_number(funded['value']) if funded else None,
+                       'reconciled': bool(funded) and abs(surplus - liabilities - funded['value']) <= slack,
+                       'assets_item': assets})
+    if sink or not lines:
+        return None
+    return {'lines': lines, 'checks': checks, 'reconciled': all(check['reconciled'] for check in checks),
+            'liabilities': sum((item['value'] for _, (_, item) in lines), Decimal(0))}
+
+
+def _benefit_obligations(pick, conflicts, plan_pick=None):
     """Recognized defined-benefit liabilities of underfunded plans, gross; overfunded plans are not credited.
 
-    Johnson & Johnson reports $4,691 million of pension and retiree-health
-    liabilities and $7,300 million of plan assets in excess of obligations in other
-    plans. One plan's surplus cannot pay another's deficit, and reclaiming it is
-    taxed heavily, so the conservative rule the policy cites applies: the $4,691
-    million is deducted and the surplus is not netted against it.
+    Johnson & Johnson reports $7,300 million of plan assets in excess of obligations
+    in some plans. One plan's surplus cannot pay another's deficit, and reclaiming it
+    is taxed heavily, so the conservative rule the policy cites applies: the
+    deficits are deducted and the surplus is not netted against them.
+
+    Liabilities tagged for the whole company are used unless balances by plan type
+    replace them: always where no whole-company concept is tagged (Coca-Cola) or
+    only a postemployment obligation is (AT&T), and otherwise where the plan-type
+    values reconcile to the reported funded status and the whole-company reading
+    does not match them. Johnson & Johnson's whole-company retiree-health tag
+    ($1,774 million) is not its retiree-health deficit: the plan-type liability and
+    funded status are both $4,039 million.
     """
-    def part(label, total, current, noncurrent):
-        whole = pick('us-gaap:' + total, label + ' (us-gaap:' + total + ')') if total else None
-        first = pick('us-gaap:' + current, label + ' (us-gaap:' + current + ')') if current else None
-        second = pick('us-gaap:' + noncurrent, label + ' (us-gaap:' + noncurrent + ')') if noncurrent else None
-        if whole:
-            pieces = [item for item in (first, second) if item]
-            slack = _half_unit(whole) + sum((_half_unit(item) for item in pieces), Decimal(0))
-            parts_sum = sum((item['value'] for item in pieces), Decimal(0))
-            if pieces and (parts_sum > whole['value'] + slack or
-                           (len(pieces) == 2 and abs(parts_sum - whole['value']) > slack)):
-                conflicts.append(f'Reported {label} total conflicts with its current and noncurrent parts')
-                return []
-            return [(total, whole)]
-        return [(concept, item) for concept, item in ((current, first), (noncurrent, second)) if item]
     group_name, used = None, []
     for name, parts in BENEFIT_GROUPS:
         found = [(part_name, line) for part_name, *concepts in parts
-                 for line in part(name.replace('_', ' ') + ' ' + part_name.replace('_', ' '), *concepts)]
+                 for line in _benefit_part(pick, conflicts, name.replace('_', ' ') + ' ' + part_name.replace('_', ' '), *concepts)]
         if found:
             group_name, used = name, found
             break
+    entity_total = sum((item['value'] for _, (_, item) in used), Decimal(0))
+    plan = _plan_type_reading(plan_pick)
+    replaced = None
+    if plan and (not used or (plan['reconciled'] and (group_name == 'postemployment_benefits' or abs(
+            plan['liabilities'] - entity_total) > sum((_half_unit(item) for _, (_, item) in (*used, *plan['lines'])), Decimal(0))))):
+        if used:
+            replaced = {'group': group_name, 'recognized_liabilities': _json_number(entity_total),
+                        'lines': [{'plan': part_name, **_component(concept, item, 'whole-company liability, not used')}
+                                  for part_name, (concept, item) in used],
+                        'reason': ('the plan-type balances reconcile to the reported funded status and replace the '
+                                   'postemployment obligation, which can include benefits before retirement'
+                                   if group_name == 'postemployment_benefits' else
+                                   'the plan-type balances reconcile to the reported funded status and the whole-company '
+                                   'concepts do not match them')}
+        group_name, used = 'plan_type_axis', plan['lines']
     assets_concept, assets = _first_reported(pick, BENEFIT_ASSETS, 'overfunded plan assets')
+    plan_assets = [check['assets_item'] for check in (plan or {}).get('checks') or [] if check.get('assets_item')]
+    if not assets and group_name == 'plan_type_axis' and plan_assets:
+        assets_concept, assets = BENEFIT_ASSETS[0], {
+            'value': sum((item['value'] for item in plan_assets), Decimal(0)),
+            'source_refs': sorted({ref for item in plan_assets for ref in item['source_refs']}),
+            'facts': [fact for item in plan_assets for fact in item['facts']]}
     liabilities = sum((item['value'] for _, (_, item) in used), Decimal(0))
     surplus = assets['value'] if assets else Decimal(0)
     record = {'value': liabilities, 'group': group_name,
               'recognized_liabilities': _json_number(liabilities),
-              'liability_lines': [{'plan': part_name, **_component(concept, item, 'recognized liability, before tax')}
+              'liability_lines': [{'plan': part_name, **_component(concept, item, 'recognized liability, before tax' +
+                                                                   (', by plan type' if group_name == 'plan_type_axis' else ''))}
                                   for part_name, (concept, item) in used],
               'overfunded_plan_assets': _json_number(surplus),
               **({'overfunded_plan_assets_line': _component(assets_concept, assets, 'recognized plan assets in excess of '
                                                             'obligations; not credited against other plans')}
                  if assets else {}),
               'overfunded_plan_assets_credited': 0,
+              **({'plan_type_reconciliation': [{key: value for key, value in check.items() if key != 'assets_item'}
+                                               for check in plan['checks']]} if plan else {}),
+              **({'whole_company_reading_not_used': replaced} if replaced else {}),
               'tax_treatment': 'before tax', 'basis': PENSION_POLICY,
               'assumed_absent': not used and not assets,
               'source_refs': sorted({ref for _, (_, item) in used for ref in item['source_refs']} |
@@ -1246,7 +1385,7 @@ def _benefit_obligations(pick, conflicts):
     return record
 
 
-def _claim_components(pick, preferred_in_shares, conflicts):
+def _claim_components(pick, preferred_in_shares, conflicts, plan_pick=None):
     """Noncontrolling interests, preferred stock and benefit obligations at carrying value on the date."""
     components, looked_for = {}, []
     concept, item = _first_reported(pick, NONCONTROLLING, 'noncontrolling interests')
@@ -1272,7 +1411,7 @@ def _claim_components(pick, preferred_in_shares, conflicts):
                                              value=0, carrying_value_not_deducted=_json_number(item['value']))
     elif item:
         components['preferred_stock'] = _component(concept, item, 'reported carrying value')
-    benefits = _benefit_obligations(pick, conflicts)
+    benefits = _benefit_obligations(pick, conflicts, plan_pick)
     if not benefits['assumed_absent']:
         components['defined_benefit_obligations'] = {key: (_json_number(value) if key == 'value' else value)
                                                      for key, value in benefits.items() if key != 'assumed_absent'}
@@ -1283,7 +1422,8 @@ def _claim_components(pick, preferred_in_shares, conflicts):
                                                                  for concept in part[1:] if concept) + BENEFIT_ASSETS)):
         if name not in components:
             looked_for.append({'line': name, 'value': 0, 'concepts_looked_for': ['us-gaap:' + concept for concept in concepts],
-                               'basis': 'assumption: no concept reported on the date; zero by assumption'})
+                               'basis': (PLAN_LEVEL_NOT_READ if name == 'defined_benefit_obligations' else
+                                         'assumption: no concept reported on the date; zero by assumption')})
     return components, looked_for
 
 
@@ -1399,7 +1539,8 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
             if not isinstance(raw, dict) or raw.get('is_nil'):
                 continue
             share_class = _share_class(raw, origin)
-            if raw.get('dimensions') != {} and not share_class:
+            plan_type = None if share_class else _plan_type(raw, origin)
+            if raw.get('dimensions') != {} and not share_class and not plan_type:
                 continue
             annual_forms_seen = annual_forms_seen or (origin == 'sec_companyfacts' and raw.get('form') in ANNUAL_REPORT_FORMS)
             filed = source_filed
@@ -1445,18 +1586,22 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                         parsed_start=start, parsed_end=end)
             if share_class:
                 item['share_class'] = share_class
+            if plan_type:
+                item['plan_type'] = plan_type
             facts.append(item)
             source_ids.add(sid)
     entities = {item['entity_identifier'] for item in facts}
     # Class-level cover counts serve only the share total below.
     class_shares = [item for item in facts if item.get('share_class')]
-    facts = [item for item in facts if not item.get('share_class')]
+    # Pension balances by plan type serve only the benefit-obligation line.
+    plan_facts = [item for item in facts if item.get('plan_type')]
+    facts = [item for item in facts if not item.get('share_class') and not item.get('plan_type')]
     actuals, refs, dates, bridge, claims_bridge = {}, {}, {}, {}, {}
     operating_reference = None
     fields = {key: 'unavailable' for key in REPORTED_FIELDS}
     if len(entities) > 1:
         conflicts.append('Primary reported facts identify multiple issuers; no reported actuals were pinned')
-        facts, class_shares = [], []
+        facts, class_shares, plan_facts = [], [], []
     anchor_period = None
     annual = [item for item in facts if item['concept'] in REVENUE and
               (item.get('fact_origin') != 'sec_companyfacts' or item.get('form') not in {'10-Q', '10-Q/A'}) and item['parsed_start'] and item['parsed_end'] and
@@ -1593,6 +1738,7 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                       'cash_coverage': {'basis': 'selected directly reported assets; omitted investments are left out',
                                         'excluded_unclassified_investments': 'LongTermInvestments and other investments without a selected marketable classification; see nonoperating_assets_bridge',
                                         'unselected_reported_categories': [name for name in CASH if cash_items[name] and name not in cash],
+                                        'excluded_reported_categories': _excluded_cash_categories(cash_items, cash),
                                         'missing_investment_categories': [name for name in CASH if not cash_items[name]]},
                       'explanation': 'Exact sum of disjoint reported debt components minus selected cash and investments. Totals replace their components; no rounding residual or second cash add-back is permitted.',
                       'lease_policy': LEASE_POLICY}
@@ -1777,8 +1923,12 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                                    'nonoperating_assets': actuals['nonoperating_assets'],
                                    'measurement': 'carrying value; quoted market values are not used'}
         if 'other_equity_claims' in actuals:
+            def plan_pick(concept, member, name, sink, signed=False):
+                return _unique([item for item in plan_facts if item['concept'] == concept and item['plan_type'] == member and
+                                item['parsed_instant'] == anchor and item['unit'] == 'iso4217:' + currency and
+                                (signed or item['value'] >= 0)], name, sink)
             components, absent = _claim_components(
-                pick, bool(dilution and dilution.get('preferred_in_diluted_shares')), conflicts)
+                pick, bool(dilution and dilution.get('preferred_in_diluted_shares')), conflicts, plan_pick)
             lease_claim = Decimal(str(actuals['other_equity_claims']))
             total = lease_claim + sum((Decimal(str(item['value'])) for item in components.values()), Decimal(0))
             actuals['other_equity_claims'] = _json_number(total)
