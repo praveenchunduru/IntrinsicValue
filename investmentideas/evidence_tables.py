@@ -1203,10 +1203,10 @@ def _basis_notes(rows, source_id, filing_id):
                       'total is' if any(row.get('depreciation_only') for row in rows) else ''))
     text = by_concept('selling_general_administrative_concept', lambda row, concept: concept.startswith('derived'))
     if text:
-        notes.append('SG&A column: ' + text + ', summed by Python')
+        notes.append('SG&A column: ' + text + ', summed')
     text = by_concept('acquisitions_concept', lambda row, concept: '+' in concept)
     if text:
-        notes.append('Acquisitions column: ' + text + ', two cash-flow lines summed by Python')
+        notes.append('Acquisitions column: ' + text + ', two cash-flow lines summed')
     text = by_concept('acquisitions_concept', lambda row, concept: 'extension' in concept)
     if text:
         notes.append('Acquisitions column: ' + text + '. An issuer-extension line can include purchases of '
@@ -1381,8 +1381,10 @@ def render_quarterly(baseline, source_id=None, markdown=False, notes_out=None, s
     if ttm:
         days = ttm.get('days')
         span = f' ({days} days, a 53-week year)' if isinstance(days, int) and days > 367 else ''
-        notes.append(f'Trailing twelve months to {ttm["period"]["end_date"]}{span}: revenue {_money(ttm["revenue"])}, operating '
-                     f'income {_money(ttm["operating_income"])}, operating margin {_pct(ttm["operating_margin"])}')
+        amount = (_money if notes_out is None else
+                  (lambda value: memo_style.Style(quarterly.get('currency', '')).amount(value) if value is not None else 'n/a'))
+        notes.append(f'Trailing twelve months to {ttm["period"]["end_date"]}{span}: revenue {amount(ttm["revenue"])}, operating '
+                     f'income {amount(ttm["operating_income"])}, operating margin {_pct(ttm["operating_margin"])}')
     if notes_out is not None:
         # The memo's layout: units in the row labels, notes collected for the method notes.
         unit = memo_style.Style(quarterly.get('currency', '')).unit(letter)

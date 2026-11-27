@@ -564,7 +564,8 @@ class ReaderTests(unittest.TestCase):
         style = pipeline.memo_style.Style('USD')
         notes = consensus.method_notes(self.record(dropped=[{'sample': 4, 'reason': 'x'}], requested_samples=4), style)
         self.assertEqual(len(notes), 1)
-        self.assertIn('combines three forecasts', notes[0])
+        # Changed 2026-11-27 (memo audit): the note counts the forecasts combined against those written.
+        self.assertIn('combines three of the four forecasts', notes[0])
         self.assertIn('industry weights behind the beta take the median', notes[0])
         self.assertIn('One of the four forecasts requested failed validation', notes[0])
         self.assertIn('$354 to $398 a share', notes[0])

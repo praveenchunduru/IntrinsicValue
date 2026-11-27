@@ -495,3 +495,88 @@ class EdgeDisplayTests(unittest.TestCase):
         value['net_debt_bridge'].update(debt=80e6, selected_cash_and_nonoperating_investments=50e6, net_debt=30e6)
         lines, _ = pipeline._equity_bridge_parts(value, evaluate(value), memo_style.Style('USD'))
         self.assertIn('| Less net debt | $30.0M |', '\n'.join(lines))
+
+
+# Computed metrics a note or label must not call "reported" (live Microsoft review, 2026-11-27:
+# 0.41 sales-to-capital and a 35.8% incremental ROIC computed from filings were called reported).
+COMPUTED_METRIC = re.compile(r'sales-to-capital|incremental|\bROIC\b|net reinvestment|\bmedian\b|percentile', re.I)
+# "computed from reported ..." and "reported lines" name the inputs, not the metric.
+INPUT_PHRASE = re.compile(r'(?:computed|calculated|derived) from (?:the )?reported|reported lines', re.I)
+# True sentences that name a computed metric and a reported input, each justified:
+ALLOWED_REPORTED = (
+    # The definition counts acquisitions and finance-lease additions only where the filing reports them.
+    'Net reinvestment is capital expenditure less depreciation and amortization, plus cash acquisitions and '
+    'finance-lease additions where reported.',
+    # The capitalized ROIC is withheld because the filing reports no R&D line: "reported" refers to the line.
+    'ROIC with intangibles capitalized is not shown: no R&D line is reported',
+    # A history measure that no filing reports in any year shown is listed by name.
+    'Not reported in any year shown:',
+)
+
+
+def reported_metric_sentences(memo):
+    """Sentences outside the prose that put "reported" beside a computed metric, less the allow-list."""
+    found = []
+    for sentence in re.split(r'(?<=[.!?])\s+|\n', outside_prose(memo)):
+        if any(allowed in sentence for allowed in ALLOWED_REPORTED):
+            continue
+        if COMPUTED_METRIC.search(sentence) and re.search(r'\breported\b', INPUT_PHRASE.sub('', sentence), re.I):
+            found.append(sentence[:240])
+    return found
+
+
+class ReportedMetricGuardTests(unittest.TestCase):
+    def test_python_text_never_calls_a_computed_metric_reported(self):
+        memos = [rendered()[0]]
+        value = headline_plan()
+        state = {'ticker': 'SMLL', 'quality_status': 'reviewed_draft', 'complete': True, 'review_history': []}
+        memos.append(pipeline._render(PROSE, [history_source('USD', 1e9)], [], value, evaluate(value), state))
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('rerender', Path(__file__).resolve().parents[2] / 'tools' / 'rerender.py')
+        tool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tool)
+        memos += [tool.rerender(folder) for folder in saved_runs()]
+        for memo in memos:
+            with self.subTest(title=memo.split('\n', 1)[0]):
+                self.assertEqual(reported_metric_sentences(memo), [])
+
+    def test_the_guard_catches_the_live_wording(self):
+        memo, _, _ = rendered()
+        bad = memo.replace('## Method notes', '## Method notes\n\n- The reported incremental sales-to-capital is 0.41.')
+        self.assertEqual(len(reported_metric_sentences(bad)), 1)
+
+
+class RateTestWordingTests(unittest.TestCase):
+    """Every rate test moves the terminal return with its terminal rate; the notes say so (2026-11-27)."""
+
+    def test_rate_rows_follow_the_tested_terminal_rate(self):
+        from investmentideas import valuation
+        value = headline_plan()
+        for scenario in value['scenarios'].values():
+            scenario['terminal_roic_basis'] = 'terminal_rate'
+        calls = []
+        original = valuation._project
+
+        def spy(actuals, scenario, *, flat=None, shift=0.0, terminal=None):
+            if flat is not None or shift or terminal is not None:
+                calls.append(bool(scenario.get('terminal_roic_follows_rate')))
+            return original(actuals, scenario, flat=flat, shift=shift, terminal=terminal)
+        valuation._project = spy
+        try:
+            result = evaluate(value)
+        finally:
+            valuation._project = original
+        base = result['scenarios']['base']
+        self.assertAlmostEqual(base['terminal_roic_applied'], base['terminal_rate'])
+        self.assertTrue(calls)
+        self.assertTrue(all(calls))
+        self.assertIn('Every rate test moves the terminal return on new capital', pipeline.RATE_TEST_RULE)
+        rewritten = pipeline._assumption_notes('After it new investment earns its cost. The rate alternatives keep this rule.')
+        self.assertIn(pipeline.RATE_TEST_RULE, rewritten)
+
+    def test_notes_name_what_each_row_changes(self):
+        self.assertIn('keeps R&D expensed in the continuing value',
+                      pipeline.PANEL_NOTES['terminal_reinvestment_continues_forecast'])
+        follows = {'scenarios': {'base': {'search_floor': .005}}}
+        self.assertTrue(pipeline._implied_follows(follows))
+        self.assertFalse(pipeline._implied_follows({'scenarios': {'base': {'search_floor': .0495}}}))

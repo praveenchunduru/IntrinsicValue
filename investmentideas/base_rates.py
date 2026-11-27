@@ -499,8 +499,9 @@ def memo_exhibit(comparison, style=None):
     refs = comparison['references']
     keys = sorted(refs, key=int)
     lines = heading + [
-        f'Compound annual revenue growth from the last reported {amount(comparison["starting_revenue"])} '
-        f'(fiscal {comparison["fiscal_year"]}), with its percentile among companies of the same starting size.', '',
+        f'Compound annual revenue growth from fiscal {comparison["fiscal_year"]} revenue of '
+        f'{amount(comparison["starting_revenue"])}. Each cell gives the growth and its percentile among companies of '
+        'the same starting size.', '',
         '| Case | ' + ' | '.join(f'{key} years' for key in keys) + ' |', '|---|' + '---:|' * len(keys)]
     def row(label, positions):
         return f'| {label} | ' + ' | '.join(_short(positions[key]) if key in positions else 'n/a' for key in keys) + ' |'
