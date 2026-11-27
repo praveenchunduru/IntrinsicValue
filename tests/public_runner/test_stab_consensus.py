@@ -9,6 +9,7 @@ import copy
 import json
 import math
 from pathlib import Path
+import shutil
 import statistics
 import tempfile
 import unittest
@@ -76,7 +77,11 @@ class ConsensusInputTests(unittest.TestCase):
         self.assertNotIn('varied_most', report)
         # Text comes from one sample, the representative, and the inputs are unchanged.
         rep = plans[report['representative_sample'] - 1]
-        self.assertEqual(plan['scenario_rationales'], rep['scenario_rationales'])
+        # Labelled as written with that forecast; the medians are the valued inputs.
+        self.assertEqual(plan['scenario_rationales'],
+                         {name: text + f'. Written with forecast {report["representative_sample"]} of 3; the valued '
+                                       'inputs are the medians in the tables.'
+                          for name, text in rep['scenario_rationales'].items()})
         self.assertEqual(plan['counterfactuals'], rep['counterfactuals'])
 
     def test_the_default_averages_the_paths_and_takes_the_median_industry_weight(self):
@@ -126,7 +131,7 @@ class ConsensusInputTests(unittest.TestCase):
         plans = [proposal(growth=.05, label='low'), proposal(growth=.10, label='middle'), proposal(growth=.30, label='high')]
         plan, report = consensus.consensus_plan(plans)
         self.assertEqual(report['representative_sample'], 2)
-        self.assertEqual(plan['scenario_rationales']['base'], 'middle base [S1]')
+        self.assertTrue(plan['scenario_rationales']['base'].startswith('middle base [S1]. Written with forecast 2 of 3'))
         self.assertIn('middle_case', plan['counterfactuals'])
 
     def test_input_order_and_numbering_do_not_change_the_numbers(self):
@@ -198,7 +203,8 @@ class LockTests(unittest.TestCase):
         plan, report = consensus.consensus_plan(copy.deepcopy(plans), valuations=[self.result(p) for p in plans])
         self.assertNotIn('margin_continuity_basis', plan)
         used, _ = consensus.lock_consensus(plan, report, lock, plans)
-        self.assertEqual(used['margin_continuity_basis'], plans[2]['margin_continuity_basis'])
+        self.assertEqual(used['margin_continuity_basis']['base'], plans[2]['margin_continuity_basis']['base'] +
+                         ' Written with forecast 3 of 3; the valued inputs are the averages in the tables.')
         self.assertEqual(report['bases_from_other_samples'], [{'field': 'margin_continuity_basis', 'scenario': 'base', 'sample': 3}])
         self.assertEqual(report['plan_used'], 'consensus')
 
@@ -224,6 +230,95 @@ class LockTests(unittest.TestCase):
                          'The forecast averages three forecasts written independently from the same evidence, input by '
                          'input, with the median of their industry weights for the beta; their base values ranged from '
                          '70.00 to 80.00 USD a share.')
+
+
+class TextFigureTests(unittest.TestCase):
+    """M3: a rationale from one sample states that sample's inputs; the combined figures replace them where unambiguous."""
+
+    def plans(self):
+        plans = [proposal(tax=.19, ratio={'year1': .45, 'target': 1.2, 'target_year': 5}, growth=.10, label='a'),
+                 proposal(tax=.20, ratio={'year1': .50, 'target': 1.3, 'target_year': 5}, growth=.12, label='b'),
+                 proposal(tax=.24, ratio={'year1': .58, 'target': 1.1, 'target_year': 5}, growth=.11, label='c')]
+        for plan in plans:
+            tax = plan['scenarios']['base']['tax_rate']
+            first = plan['scenarios']['base']['sales_to_capital']['year1']
+            plan['scenario_rationales']['base'] = (
+                f'Products grow {plan["operating_model"]["scenarios"]["base"]["components"]["products"]["growth_rates"][0]:.0%} '
+                f'a year as demand broadens. The {tax:.0%} tax rate sits between cash taxes paid of 20% [S4] and the '
+                f'statutory rate. Sales-to-capital rises from {first:.2f} as the build-out ends.')
+        return plans
+
+    def test_unambiguous_figures_take_the_combined_input_and_cited_figures_stay(self):
+        plans = self.plans()
+        plan, report = consensus.consensus_plan(copy.deepcopy(plans), method='median')
+        self.assertEqual(report['representative_sample'], 3)
+        text = plan['scenario_rationales']['base']
+        # Sample 3 wrote 11%, 24% and 0.58; the medians are 11%, 20% and 0.50. The cited 20% stays.
+        self.assertIn('Products grow 11% a year', text)
+        self.assertIn('The 20% tax rate sits between cash taxes paid of 20% [S4]', text)
+        self.assertIn('Sales-to-capital rises from 0.50 as', text)
+        self.assertTrue(text.endswith('Written with forecast 3 of 3; the valued inputs are the medians in the tables.'))
+        changed = {(row['from'], row['to']) for row in report['text_figures']['changed']}
+        self.assertEqual(changed, {('24%', '20%'), ('0.58', '0.50')})
+
+    def test_an_ambiguous_figure_is_left_and_recorded(self):
+        own = proposal(tax=.20, growth=.20)
+        combined = proposal(tax=.22, growth=.25)
+        text, changes, left = consensus.align_figures('Both stay near 20% for the decade.', own, combined, 'base')
+        self.assertEqual(text, 'Both stay near 20% for the decade.')
+        self.assertEqual(changes, [])
+        self.assertEqual(left[0]['reason'], 'ambiguous')
+
+    def test_amounts_years_and_integers_are_not_inputs(self):
+        own, combined = proposal(ratio=2.0), proposal(ratio=3.0)
+        text = 'Capex of $2.0bn over 2 years, or 2.0 billion, is not the 2.0 ratio.'
+        new, changes, _ = consensus.align_figures(text, own, combined, 'base')
+        self.assertEqual(new, 'Capex of $2.0bn over 2 years, or 2.0 billion, is not the 3.0 ratio.')
+        self.assertEqual(len(changes), 1)
+
+    def test_the_plan_prompt_asks_for_evidence_and_direction_without_input_figures(self):
+        self.assertIn('Do not restate forecast input figures', pipeline.FORECAST_SCHEMA)
+        self.assertEqual(pipeline.UNDERWRITING_GUIDANCE.count("without restating the plan's input figures") +
+                         pipeline.UNDERWRITING_GUIDANCE.count("without the plan's input figures"), 2)
+        self.assertIn('does not restate forecast input figures', pipeline.UNDERWRITING_GUIDANCE)
+
+
+class FallbackTests(unittest.TestCase):
+    """m1, m4, m7: an uncombinable set falls back to the closest sample; the value-impact step cannot stop a run."""
+
+    def test_no_positive_median_industry_weight_uses_the_mean_weights(self):
+        plans = [proposal(sectors=((sector, 1.0),)) for sector in
+                 ('Software (System & Application)', 'Computer Services', 'Semiconductor')]
+        plan, report = consensus.consensus_plan(plans)
+        weights = {item['sector']: item['weight'] for item in plan['discount_rate']['unlevered_beta']['sectors']}
+        self.assertEqual(len(weights), 3)
+        self.assertTrue(all(math.isclose(weight, 1 / 3) for weight in weights.values()))
+        self.assertTrue(any('mean industry weights' in note for note in report['notes']))
+        self.assertIn('mean across 3 forecast samples', plan['discount_rate']['unlevered_beta']['label'])
+
+    def test_samples_that_cannot_be_combined_give_the_closest_sample_and_a_true_note(self):
+        plans = [proposal(growth=.05), proposal(growth=.10), proposal(growth=.30)]
+        with patch.object(consensus, '_merge', side_effect=ValueError('synthetic: cannot combine')):
+            plan, report = consensus.consensus_plan(copy.deepcopy(plans))
+        self.assertEqual(report['method'], 'uncombinable_closest_sample')
+        self.assertEqual(plan, plans[1])
+        report.update(requested_samples=3, dropped=[], plan_used='uncombinable_closest_sample')
+        for row, value in zip(report['samples'], (90, 100, 140)):
+            row['values'] = {'base': value}
+        note = consensus.method_notes(report, pipeline.memo_style.Style('USD'))[0]
+        self.assertIn('their inputs could not be combined', note)
+        self.assertIn('per-year median revenue and EBIT paths', note)
+        self.assertIn('$90.0 to $140', note)
+        self.assertNotIn('one passed validation', note)
+        self.assertIn('their inputs could not be combined', consensus.method_note(report))
+        self.assertIsNone(consensus.first_page_sentence(report, pipeline.memo_style.Style('USD')))
+
+    def test_the_method_note_names_the_median_paths_the_code_uses(self):
+        record = ReaderTests.record(None)
+        note = consensus.method_notes(record, pipeline.memo_style.Style('USD'))[0]
+        self.assertIn('closest to the per-year median revenue and EBIT paths', note)
+        self.assertNotIn('average path', note)
+        self.assertIn('per-year median', consensus._closest.__doc__)
 
 
 class StopAfterPlan(Exception):
@@ -256,7 +351,9 @@ class PipelineSamplingTests(unittest.TestCase):
         full_pipeline.FullPipelineTests.tearDown(self)
         self.directory.cleanup()
 
-    def run_plan(self, transport, samples, *, budget=20):
+    def run_plan(self, transport, samples, *, budget=20, fresh=False):
+        if fresh:
+            shutil.rmtree(Path(self.directory.name) / 'AAPL', ignore_errors=True)
         with patch.object(core, 'request_json', transport):
             with self.assertRaises(StopAfterPlan):
                 pipeline.run('AAPL', 'synthetic', directory=self.directory.name, budget=budget, plan_samples=samples,
@@ -380,6 +477,28 @@ class PipelineSamplingTests(unittest.TestCase):
         self.assertIn('Synthetic edge', report['fallback']['reason'])
         self.assertEqual(report['representative_sample'], 2)
         self.assertAlmostEqual(state['plan']['scenarios']['base']['tax_rate'], .22)
+
+    def test_an_uncombinable_set_values_the_closest_valid_sample(self):
+        transport = Transport([taxed(.20, .03), taxed(.22, .04), taxed(.30, .05)])
+        with patch.object(consensus, 'consensus_plan', side_effect=ValueError('synthetic: cannot combine')):
+            folder, state = self.run_plan(transport, 3)
+        report = state['plan_consensus']
+        self.assertEqual((report['method'], report['plan_used']), ('uncombinable_closest_sample',) * 2)
+        self.assertEqual(report['representative_sample'], 2)
+        self.assertAlmostEqual(state['plan']['scenarios']['base']['tax_rate'], .22)
+        self.assertIn('could not be combined', report['method_note'])
+
+    def test_a_failing_value_impact_step_is_recorded_and_the_run_continues(self):
+        transport = Transport([taxed(.20), taxed(.22), taxed(.30)])
+        with patch.object(pipeline.consensus.drivers, 'decompose', side_effect=RuntimeError('synthetic swap failure')):
+            folder, state = self.run_plan(transport, 3)
+        impact = state['plan_consensus']['value_impact']
+        self.assertIn('synthetic swap failure', impact['error'])
+        self.assertEqual(impact['groups'], [])
+        self.assertAlmostEqual(state['plan']['scenarios']['base']['tax_rate'], .24)
+        with patch.object(pipeline.consensus, 'value_impact', side_effect=MemoryError('synthetic')):
+            folder, state = self.run_plan(Transport([taxed(.20), taxed(.22), taxed(.30)]), 3, fresh=True)
+        self.assertIn('MemoryError', state['plan_consensus']['value_impact']['error'])
 
     def test_one_sample_is_todays_single_plan_stage(self):
         transport = Transport([taxed(.20)])

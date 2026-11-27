@@ -26,6 +26,7 @@ import copy
 import hashlib
 import json
 import math
+import re
 import statistics
 
 from . import drivers
@@ -351,7 +352,7 @@ def _merge_rate(merge, out):
         if key == 'unlevered_beta' and isinstance(record.get('sectors'), list):
             record['sectors'] = _merge_sectors(merge, record['sectors'], rows)
             record['label'] = (str(record.get('label') or '').rstrip() + ' Weights are the ' +
-                               merge.sector_method + f' across {len(rows)} forecast '
+                               getattr(merge, 'sector_used', merge.sector_method) + f' across {len(rows)} forecast '
                                'samples, with an industry a sample did not use counted as zero, then rescaled to one.').strip()
 
 
@@ -375,11 +376,19 @@ def _merge_sectors(merge, sectors, rows):
         kept = [name for name in entries if name in kept]
         merge.notes.append(f'More than {MAX_SECTORS} industries kept a weight; the {MAX_SECTORS} largest are used')
     dropped = [name for name in entries if name not in kept]
-    if dropped:
-        merge.notes.append('Industries with a median weight of zero were dropped from the beta: ' + ', '.join(dropped))
+    if dropped and any(weights[name] > 0 for name in kept):
+        merge.notes.append(f'Industries with a {merge.sector_method} weight of zero were dropped from the beta: ' +
+                           ', '.join(dropped))
     total = math.fsum(weights[name] for name in kept)
+    if total <= 0 and merge.sector_method == 'median':
+        # Every sample mapped the business to different industries: the mean keeps each mapping at its share.
+        merge.notes.append('No industry kept a positive median weight, so the beta uses the mean industry weights.')
+        merge.notes[:] = [note for note in merge.notes if not note.startswith('Industries with a median weight of zero')]
+        mean = _Merge(merge.group, merge.method, merge.held, merge.notes, 'mean')
+        merge.sector_used = 'mean'
+        return _merge_sectors(mean, sectors, rows)
     if total <= 0:
-        raise ConsensusError('No industry kept a positive median weight')
+        raise ConsensusError('No industry kept a positive weight')
     merged = []
     for name in kept:
         item = {key: value for key, value in copy.deepcopy(entries[name]).items()
@@ -494,8 +503,24 @@ def consensus_plan(plans, *, valuations=None, held_shares=None, method=DEFAULT_M
         # The median of two is their mean; the industry weights then average too.
         report['notes'].append('Only two samples share a structure, so the consensus is their mean.')
     members = [plans[index] for index in group]
-    plan = _merge(members, plans[representative], method, held_shares, report['notes'], sector_method)
+    try:
+        plan = _merge(members, plans[representative], method, held_shares, report['notes'], sector_method)
+    except LOCK_ERRORS as exc:
+        # Valid samples whose inputs cannot be combined: the closest one, whole, with the reason.
+        report.update(method='uncombinable_closest_sample', representative_sample=numbers[representative],
+                      combine_error=str(exc)[:300])
+        report['structure_decision'] = {**report['structure_decision'], 'combined_group': report['structure_decision']['group'],
+                                        'group': [numbers[representative]]}
+        for index in range(count):
+            report['samples'][index]['in_consensus'] = index == representative
+        report['notes'].append(f'The samples could not be combined ({str(exc)[:200]}), so the plan is sample '
+                               f'{numbers[representative]}, the one closest to their per-year median revenue and EBIT paths.')
+        return copy.deepcopy(plans[representative]), report
     order = sorted(group, key=lambda index: ((distances.get(index) if distances.get(index) is not None else math.inf), index))
+    positions = {str(numbers[index]): position + 1 for position, index in enumerate(group)}
+    report.update(forecast_positions=positions, text_label_count=len(group), held_shares=held_shares)
+    report['text_figures'] = _align_plan_text(plan, plans[representative], held_shares, positions[str(numbers[representative])],
+                                              len(group), method)
     report.update(representative_sample=numbers[representative],
                   representative_basis='closest consolidated base-case revenue and EBIT paths to the per-year median of '
                                        'the samples in the consensus (mean absolute relative gap)',
@@ -504,9 +529,161 @@ def consensus_plan(plans, *, valuations=None, held_shares=None, method=DEFAULT_M
     return plan, report
 
 
+# ------------------------------------------------------- text of one sample
+#
+# The rationales and cited bases come from one sample, so a figure they restate is
+# that sample's input. Where such a figure matches exactly one of the sample's own
+# inputs at the precision written, it is rewritten to the combined input at that
+# precision; any other figure is left, and the text is labelled as written for one
+# of the forecasts. A figure followed by a citation before the next figure is a
+# sourced fact and is never touched.
+
+FIGURE = re.compile(r'(?<![\w$.\-])(-?\d+(?:\.\d+)?)(\s?%|\s?percent\b)?')
+UNITS_AFTER = re.compile(r'\s?(?:bn|billion|million|m\b|x\b|years?\b|bps\b)', re.IGNORECASE)
+CITATION = re.compile(r'\[S\d+\]')
+
+
+def _ends(path):
+    return [path[0], path[-1]] if _numbers(path) else []
+
+
+def _figure_inputs(plan, name, held_shares):
+    """(kind, label, value) of one scenario's inputs a rationale may restate: first and last forecast years."""
+    rows = []
+    scenario = (plan.get('scenarios') or {}).get(name) or {}
+    for field in ('tax_rate', 'terminal_tax_rate'):
+        if _number(scenario.get(field)):
+            rows.append(('pct', f'{name}.{field}', scenario[field]))
+    for field in ('growth_rates', 'ebit_margins'):
+        for value in _ends(scenario.get(field)):
+            rows.append(('pct', f'{name}.{field}', value))
+    horizon = _horizon(plan, name)
+    ratios = _sales_to_capital(scenario.get('sales_to_capital'), horizon, name) if horizon else None
+    for label, value in zip(('year 1', 'target'), _ends(ratios or [])):
+        rows.append(('ratio', f'{name}.sales_to_capital {label}', value))
+    model = _operating(plan)
+    operating = ((model or {}).get('scenarios') or {}).get(name) or {}
+    for component, item in (operating.get('components') or {}).items():
+        for field in ('growth_rates', 'gross_margins'):
+            for value in _ends((item or {}).get(field)):
+                rows.append(('pct', f'{name}.{component}.{field}', value))
+    if model and model.get('earnings_mode') == 'gross_profit_less_expenses' and horizon:
+        try:
+            shares = _expense_paths(operating, _bases(model), horizon, name, held_shares)
+        except LOCK_ERRORS:
+            shares = {}
+        for line, path in shares.items():
+            for value in _ends(path):
+                rows.append(('pct', f'{name}.expense_shares.{line}', value))
+    return rows
+
+
+def _pairs(own, combined):
+    """(kind, label, own value, combined value) for inputs present in both, in order."""
+    mine = {}
+    for kind, label, value in own:
+        mine.setdefault((kind, label), []).append(value)
+    theirs = {}
+    for kind, label, value in combined:
+        theirs.setdefault((kind, label), []).append(value)
+    return [(kind, label, a, b) for (kind, label), values in mine.items()
+            for a, b in zip(values, theirs.get((kind, label), []))]
+
+
+def _written(value, kind, decimals):
+    number = value * 100 if kind == 'pct' else value
+    return round(number, decimals)
+
+
+def _format(number, decimals):
+    text = f'{number:.{decimals}f}'
+    return '0' + text[2:] if text.startswith('-0') and float(text) == 0 else text
+
+
+def align_figures(text, own_plan, combined_plan, name, held_shares=None):
+    """Rewrite figures in ``text`` that restate one of ``own_plan``'s inputs to ``combined_plan``'s, where unambiguous.
+
+    Returns (text, changes, left): ``changes`` lists each rewrite, ``left`` each
+    figure that matched an input but could not be rewritten unambiguously.
+    """
+    if not isinstance(text, str) or not text:
+        return text, [], []
+    pairs = _pairs(_figure_inputs(own_plan, name, held_shares), _figure_inputs(combined_plan, name, held_shares))
+    tokens = list(FIGURE.finditer(text))
+    out, cursor, changes, left = [], 0, [], []
+    for index, token in enumerate(tokens):
+        number, unit = token.group(1), token.group(2)
+        following = text[token.end():tokens[index + 1].start() if index + 1 < len(tokens) else len(text)]
+        sentence_end = re.search(r'[.;](?:\s|$)', following)
+        clause = following[:sentence_end.start()] if sentence_end else following
+        if CITATION.search(clause) or (not unit and (UNITS_AFTER.match(following) or '.' not in number)):
+            continue
+        kind = 'pct' if unit else 'ratio'
+        decimals = len(number.split('.')[1]) if '.' in number else 0
+        shown = float(number)
+        matches = [(label, b) for k, label, a, b in pairs if k == kind and _written(a, kind, decimals) == shown]
+        if not matches:
+            continue
+        targets = sorted({_format(_written(b, kind, decimals), decimals) for _, b in matches})
+        if len(targets) != 1:
+            left.append({'figure': token.group(0), 'inputs': [label for label, _ in matches], 'reason': 'ambiguous'})
+            continue
+        if targets[0] != number:
+            out += [text[cursor:token.start(1)], targets[0]]
+            cursor = token.end(1)
+            changes.append({'from': token.group(0).strip(), 'to': targets[0] + (unit or ''),
+                            'inputs': [label for label, _ in matches]})
+    out.append(text[cursor:])
+    return ''.join(out), changes, left
+
+
+def label_text(text, position, count, method):
+    """The label of text written with one of several forecasts."""
+    kind = 'averages' if method == 'mean' or count == 2 else 'medians'
+    suffix = f'Written with forecast {position} of {count}; the valued inputs are the {kind} in the tables.'
+    if not isinstance(text, str) or suffix in text:
+        return text
+    return text.rstrip() + ('' if text.rstrip().endswith(('.', '!', '?')) else '.') + ' ' + suffix
+
+
+def _align_plan_text(plan, own_plan, held_shares, position, count, method):
+    """Align and label the representative's rationales and bases in the combined plan; return the record."""
+    record = {'changed': [], 'left': []}
+    for field in ('scenario_rationales', *BASIS_FIELDS):
+        texts = plan.get(field)
+        if not isinstance(texts, dict):
+            continue
+        for name, text in list(texts.items()):
+            if not isinstance(text, str):
+                continue
+            new, changes, left = align_figures(text, own_plan, plan, name, held_shares)
+            record['changed'] += [{'field': f'{field}.{name}', **item} for item in changes]
+            record['left'] += [{'field': f'{field}.{name}', **item} for item in left]
+            texts[name] = label_text(new, position, count, method)
+    return record
+
+
+def closest_sample(plans, valuations, numbers, reason):
+    """The valid sample closest to the per-year median revenue and EBIT paths, whole, when the samples cannot be combined."""
+    paths = [_valued_paths(result) for result in valuations]
+    chosen, distances = _closest(list(range(len(plans))), paths)
+    report = {'method': 'uncombinable_closest_sample', 'sector_weight_method': None, 'sample_count': len(plans),
+              'representative_sample': numbers[chosen], 'combine_error': str(reason)[:300],
+              'structure_decision': {'decision': 'samples_could_not_be_combined', 'group': [numbers[chosen]],
+                                     'excluded': [numbers[index] for index in range(len(plans)) if index != chosen]},
+              'samples': [{'sample': numbers[index], 'structure': structure(plans[index]), 'values': _values(valuations[index]),
+                           'in_consensus': index == chosen, 'distance_to_median_paths': distances[index]}
+                          for index in range(len(plans))],
+              'notes': [f'The samples could not be combined ({str(reason)[:200]}), so the plan is sample {numbers[chosen]}, '
+                        'the one closest to their per-year median revenue and EBIT paths.']}
+    return copy.deepcopy(plans[chosen]), report
+
+
 # ------------------------------------------------------------- lock and check
 
 LOCK_ERRORS = (ValueError, KeyError, TypeError, AttributeError, ZeroDivisionError, OverflowError)
+# Methods whose plan is one sample, whole: nothing is combined and its text matches its own inputs.
+SINGLE_METHODS = ('single_sample', 'closest_single_sample', 'uncombinable_closest_sample')
 
 
 def lock_consensus(plan, report, lock, samples):
@@ -521,11 +698,11 @@ def lock_consensus(plan, report, lock, samples):
     """
     try:
         result, payload = lock(plan)
-        finish_report(report, result, 'consensus')
+        finish_report(report, result, report['method'] if report.get('method') in SINGLE_METHODS else 'consensus')
         return plan, payload
     except LOCK_ERRORS as exc:
         first = str(exc)
-    if report.get('method') in ('single_sample', 'closest_single_sample'):
+    if report.get('method') in SINGLE_METHODS:
         raise ValueError(first)
     samples = samples if isinstance(samples, dict) else {index + 1: item for index, item in enumerate(samples)}
     added = []
@@ -535,7 +712,13 @@ def lock_consensus(plan, report, lock, samples):
             own = trial.get(field) if isinstance(trial.get(field), dict) else {}
             if isinstance(own.get(name), str):
                 continue
-            trial[field] = {**own, name: samples[donors[0]][field][name]}
+            text = samples[donors[0]][field][name]
+            donor = samples[donors[0]]
+            if report.get('forecast_positions', {}).get(str(donors[0])):
+                text, _changes, _open = align_figures(text, donor, trial, name, report.get('held_shares'))
+                text = label_text(text, report['forecast_positions'][str(donors[0])], report['text_label_count'],
+                                  report.get('method'))
+            trial[field] = {**own, name: text}
             added.append((field, name, donors[0]))
     passed = False
     if added:
@@ -598,7 +781,9 @@ def method_note(report, currency=''):
     requested = report.get('requested_samples', report['sample_count'])
     if requested == 1:
         return None
-    rows = [row for row in report['samples'] if row.get('in_consensus') and _number((row.get('values') or {}).get('base'))]
+    whole = report.get('method') in SINGLE_METHODS or report.get('plan_used') == 'representative_sample_fallback'
+    rows = [row for row in report['samples'] if (whole or row.get('in_consensus')) and
+            _number((row.get('values') or {}).get('base'))]
     unit = f' {currency}' if currency else ''
     spread = (f'; their base values ranged from {min(row["values"]["base"] for row in rows):,.2f} to '
               f'{max(row["values"]["base"] for row in rows):,.2f}{unit} a share' if len(rows) > 1 else '')
@@ -611,11 +796,12 @@ def method_note(report, currency=''):
         return (f'{WORDS.get(requested, requested).capitalize()} forecasts were requested from the same evidence; only '
                 'one passed validation, and it is the forecast valued.' + tail)
     total = WORDS.get(count, str(count))
-    if report.get('plan_used') == 'representative_sample_fallback' or report.get('method') == 'closest_single_sample':
+    if whole:
         why = ('the combined plan failed a forecast check the individual forecasts passed' if report.get('fallback')
+               else 'their inputs could not be combined' if report.get('method') == 'uncombinable_closest_sample'
                else 'no two forecasts shared a structure')
         return (f'{total.capitalize()} forecasts were written independently from the same evidence{spread}. The forecast '
-                f'valued is the one closest to their median path, because {why}.' + tail)
+                f'valued is the one closest to their per-year median revenue and EBIT paths, because {why}.' + tail)
     used = len(report['structure_decision']['group'])
     which = (f'{total} forecasts written independently from the same evidence' if used == count else
              f'the {WORDS.get(used, used)} of {total} independently written forecasts that share one structure')
@@ -639,7 +825,11 @@ def value_impact(plan, result, donors):
     ``tools/replay.py --plan-samples`` does around its median sample. Groups are
     ranked by the range of base values they produce.
     """
-    report = drivers.decompose((0, plan, result), donors)
+    try:
+        report = drivers.decompose((0, plan, result), donors)
+    except Exception as exc:  # noqa: BLE001 -- a diagnostic never stops the plan stage
+        return {'basis': 'The value-impact step failed; nothing was ranked.',
+                'error': f'{type(exc).__name__}: {str(exc)[:300]}', 'groups': []}
     rows = []
     for group, item in report['groups'].items():
         swaps = [row for row in item['swaps'] if 'base_value' in row]
@@ -678,8 +868,9 @@ def combined(record):
 
 
 def _range(record):
+    whole = record.get('method') in SINGLE_METHODS or record.get('plan_used') == 'representative_sample_fallback'
     values = [row['values']['base'] for row in record.get('samples') or []
-              if row.get('in_consensus') and _number((row.get('values') or {}).get('base'))]
+              if (whole or row.get('in_consensus')) and _number((row.get('values') or {}).get('base'))]
     return (min(values), max(values)) if len(values) > 1 else None
 
 
@@ -725,12 +916,16 @@ def method_notes(record, style):
         else:
             how = 'Each forecast input is the median of the forecasts, year by year.'
         note = (f'The forecast combines {WORDS.get(count, count)} forecasts written independently from the same evidence '
-                f'and request. {how} The rationales and named cases come from the forecast closest to the average '
-                f'path.{values}{left}{other}')
+                f'and request. {how} The rationales and named cases come from the forecast closest to the per-year '
+                f'median revenue and EBIT paths.{values}{left}{other}')
     elif record.get('plan_used') == 'representative_sample_fallback':
         note = (f'{WORDS.get(count, count).capitalize()} forecasts were written independently from the same evidence. '
                 'Their combination failed a forecast check the individual forecasts passed, so the forecast valued is '
-                f'the one closest to their average path.{values}{left}')
+                f'the one closest to their per-year median revenue and EBIT paths.{values}{left}')
+    elif record.get('method') == 'uncombinable_closest_sample':
+        note = (f'{WORDS.get(requested, requested).capitalize()} forecasts were written independently from the same '
+                'evidence, but their inputs could not be combined, so the forecast valued is the one closest to their '
+                f'per-year median revenue and EBIT paths.{values}{left}')
     elif record.get('method') == 'closest_single_sample':
         note = (f'{WORDS.get(requested, requested).capitalize()} forecasts were written independently from the same '
                 'evidence, but no two used the same segments and horizon, so the forecast valued is the one closest to '
