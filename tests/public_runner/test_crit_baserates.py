@@ -243,7 +243,7 @@ class Rendering(unittest.TestCase):
         self.assertIn('### Revenue growth against base rates', section)
         exhibit = section[section.index('### Revenue growth against base rates'):]
         # Changed 2026-11-27 (memo redesign): cells are growth and percentile; real growth is in the notes.
-        self.assertRegex(exhibit, r'\| Base \| 6\.0% \(\d+(st|nd|rd|th)\) \|')
+        self.assertRegex(exhibit, r'\| Base \| 6\.0% nominal, 3\.9% real \(\d+(st|nd|rd|th)\) \|')
         self.assertIn('| Growth the price needs (+', exhibit)
         self.assertIn('restated after inflation at 2.0% a year', exhibit)
         self.assertIn('"The Base Rate Book: Integrating the Past to Better Anticipate the Future"', exhibit)
@@ -265,7 +265,7 @@ class Rendering(unittest.TestCase):
         self.assertIn('normal approximation', lines)
         self.assertIn('"Bayes and Base Rates 2.0: How History Can Guide Our Assessment of the Future"', lines)
         self.assertIn('Exhibit 1, p3.', lines)
-        self.assertIn('| 6.9%, 11.1% |', lines)
+        self.assertIn('| 6.9%, 11.1% nominal |', lines)
         self.assertIn('19,264 at 5 years', lines)
         # Nominal growth is compared as it stands: 6% against a 6.9% mean.
         five = comparison['scenarios']['base']['5']

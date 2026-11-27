@@ -482,9 +482,11 @@ def _class_words(label):
     return re.sub(r'(?:USD )?(\d[\d.]*) (million|billion)', lambda match: f'${match[1]}{scale[match[2]]}', label)
 
 
-def _short(position):
-    """'7.1% (68th)': compound growth and its percentile, for a table cell."""
+def _short(position, real=False):
+    """'7.1% nominal, 5.0% real (68th)': the plan's growth, and the percentile of the figure the class is measured in."""
     words = position['description'].replace(' percentile', '').replace('the ', '')
+    if real:
+        return f'{position["compound_growth"]:.1%} nominal, {position["compared_growth"]:.1%} real ({words})'
     return f'{position["compound_growth"]:.1%} ({words})'
 
 
@@ -498,23 +500,31 @@ def memo_exhibit(comparison, style=None):
     amount = style.amount if style is not None else (lambda value: f'{value / 1e9:,.1f}B')
     refs = comparison['references']
     keys = sorted(refs, key=int)
+    classes = []
+    for key in keys:
+        text = f'{_class_words(refs[key]["class_label"])} ({refs[key]["price_year"]} dollars)'
+        if text not in classes:
+            classes.append(text)
+    real_keys = {key for key in keys if refs[key]['growth_basis'] == 'real'}
     lines = heading + [
         f'Compound annual revenue growth from fiscal {comparison["fiscal_year"]} revenue of '
-        f'{amount(comparison["starting_revenue"])}. Each cell gives the growth and its percentile among companies of '
-        'the same starting size.', '',
+        f'{amount(comparison["starting_revenue"])}. Percentiles place the growth among companies with starting sales '
+        + ' and '.join(classes) + ('; they rank real growth, after inflation.' if real_keys else '.'), '',
         '| Case | ' + ' | '.join(f'{key} years' for key in keys) + ' |', '|---|' + '---:|' * len(keys)]
     def row(label, positions):
-        return f'| {label} | ' + ' | '.join(_short(positions[key]) if key in positions else 'n/a' for key in keys) + ' |'
+        return f'| {label} | ' + ' | '.join(_short(positions[key], key in real_keys) if key in positions else 'n/a'
+                                           for key in keys) + ' |'
     for name in ('bear', 'base', 'bull'):
         lines.append(row(name.title(), comparison['scenarios'].get(name) or {}))
     requirement = comparison.get('price_requirement')
     if requirement:
-        shift = f'{requirement["growth_shift"] * 100:+.1f} points a year'
+        shift = f'{requirement["growth_shift"] * 100:+.1f} points in every forecast year'
         label = (f'Growth the price needs ({shift})' if requirement['status'] == 'solved' else
                  f'Closest to the price ({shift}; it cannot reach the price)')
         lines.append(row(label, requirement['horizons']))
     lines.append('| Reference class mean, standard deviation | ' + ' | '.join(
-        f'{refs[key]["mean"]:.1%}, {refs[key]["standard_deviation"]:.1%}' for key in keys) + ' |')
+        f'{refs[key]["mean"]:.1%}, {refs[key]["standard_deviation"]:.1%}' + (' real' if key in real_keys else ' nominal')
+        for key in keys) + ' |')
     notes = ['The base-rate table describes the plan against history. No forecast input is set from it.']
     groups = {}
     for key in keys:

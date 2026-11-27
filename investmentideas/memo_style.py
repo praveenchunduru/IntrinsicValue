@@ -175,14 +175,25 @@ def _usd_amounts(text):
 
 def usd_amount_count(text):
     """How many "USD" amounts the text writes; the currency-code check counts these only."""
-    return len(_usd_amounts(text or ''))
+    text = text or ''
+    return len(_usd_amounts(text)) + len(_TRAILING_USD.findall(text))
+
+
+# "2.0bn USD": the code after a scaled amount.
+_TRAILING_USD = re.compile(r'(?<![\w.$])(-)?(\d[\d,]*(?:\.\d+)?)\s?(billion|bn|million|mn|mm)\s+USD\b', re.I)
 
 
 def dollar_amounts(text):
-    """'USD 36.3 billion' as '$36.3B', 'USD -2.4 billion' as '-$2.4B', 'USD 12.40' as '$12.40'; figures unchanged."""
+    """'USD 36.3 billion' as '$36.3B', '2.0bn USD' as '$2.0B', 'USD -2.4 billion' as '-$2.4B'; figures unchanged."""
     for start, end, replacement in reversed(_usd_amounts(text)):
         text = text[:start] + replacement + text[end:]
-    return text
+    quoted = [match.span() for match in _QUOTED.finditer(text)]
+    def trailing(match):
+        if any(start <= match.start() < end for start, end in quoted):
+            return match.group(0)
+        unit = 'B' if match.group(3).lower() in ('billion', 'bn') else 'M'
+        return f'{match.group(1) or ""}${match.group(2)}{unit}'
+    return _TRAILING_USD.sub(trailing, text)
 
 
 def compact(text, style=None):

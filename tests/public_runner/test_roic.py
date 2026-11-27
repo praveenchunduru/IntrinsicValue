@@ -193,7 +193,8 @@ class ExhibitTests(unittest.TestCase):
         self.assertIn('| ROIC | 26.7% |', section)
         self.assertIn('| NOPAT ($B) | 20.0* |', section)
         self.assertIn('| 3-year incremental ROIC | n/m |', section)
-        self.assertIn('Incremental ROIC is n/m where capital fell or was unchanged.', section)
+        # The ROIC basis note gives the one definition of n/m (computed-text audit, 2026-11-27).
+        self.assertIn('It is n/m when capital fell or rose by less than a tenth', section)
         self.assertIn('EBIT is pretax income plus net interest expense', section)
         self.assertNotIn('ROIC with intangibles capitalized |', section)
         self.assertIn('which the filings do not report apart', section)

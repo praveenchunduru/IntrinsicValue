@@ -562,7 +562,7 @@ class PipelineReviewFixTests(unittest.TestCase):
         detail = pipeline.valuation_section(value, result)
         horizons = detail[detail.index('### Other horizons'):detail.index('### Rate regimes')]
         self.assertIn('Competitive advantage period of 20 years', horizons)
-        self.assertIn('Highest month', detail[detail.index('### Rate regimes'):])
+        self.assertIn('Month giving the highest value', detail[detail.index('### Rate regimes'):])
 
     def test_minor_wording_fixes(self):
         self.assertIn('base-rate tables may be cited', pipeline.FORECAST_SCHEMA)

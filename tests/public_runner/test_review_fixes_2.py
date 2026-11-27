@@ -462,7 +462,7 @@ class OpusReviewFixTests(unittest.TestCase):
         summary = pipeline.computed_summary(value, result)
         self.assertIn('| Revenue growth, 10-year compound |', summary)
         self.assertIn('| EBIT margin, 10-year average |', summary)
-        self.assertIn('points a year, ', pipeline.valuation_section(value, result))
+        self.assertIn('points in every forecast year, ', pipeline.valuation_section(value, result))
 
     def test_a_contract_refresh_does_not_spend_the_revision_allowance(self):
         from investmentideas import pipeline
