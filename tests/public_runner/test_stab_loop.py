@@ -9,7 +9,9 @@ import json
 import math
 from pathlib import Path
 import tempfile
+import time
 import unittest
+import unittest.mock
 
 from investmentideas import __main__ as cli, core, pipeline
 from investmentideas.prompt_context import rounded, valuation_context
@@ -71,7 +73,19 @@ class LoopTransport(FullContractTransport):
         response = super().transport(url, key=key, payload=payload, timeout=timeout)
         if prompt.startswith('Review this equity memo'):
             findings = self.scripted[self.review_count - 1] if self.review_count <= len(self.scripted) else []
-            findings = [major(self.excerpt) if item == 'prose' else item for item in findings]
+            draft = prompt.split('<<<DRAFT\n', 1)[-1]
+            table = next(line for line in draft.split('\n') if line.startswith('| ') and line not in self.memo)
+            def scripted(item):
+                if item == 'prose':
+                    return major(self.excerpt)
+                if item == 'computed':  # quotes a computed table row and names no forecast input
+                    return dict(major(table, rule='M4'), issue='The row contradicts the convention panel',
+                                fix='Reconcile the row with the panel')
+                if item == 'computed_input':  # quotes a computed row and asks for a forecast change
+                    return dict(major(table, rule='M5', identifier='F2'), issue='The row rests on a weak forecast',
+                                fix='Lower the base growth rate')
+                return item
+            findings = [scripted(item) for item in findings]
             response['choices'][0]['message']['content'] = json.dumps(
                 {'verdict': 'revise' if findings else 'pass', 'findings': findings})
         if prompt.startswith('Investigate '):
@@ -160,17 +174,45 @@ class ForecastCriterionTests(unittest.TestCase):
         self.assertEqual(pipeline._forecast_findings(findings, self.MEMO), [])
         self.assertEqual(pipeline._edit_required(findings, self.MEMO), ['F1'])
 
-    def test_rule_less_rendered_and_unanchored_quotes_reopen_the_forecast(self):
+    def test_rule_less_prose_and_forecast_inputs_reopen_the_forecast(self):
         findings = [major('The house base case grows 5% a year [S1].', rule=None),
                     major('Bull case: growth stays above the base rates', identifier='F2'),
                     major('', identifier='F3', severity='blocker', rule='B1'),
-                    major('The house base case grows 5% a year [S1].', identifier='F4', severity='minor', rule=None)]
+                    major('The house base case grows 5% a year [S1].', identifier='F4', severity='minor', rule=None),
+                    dict(major('Bull case: growth stays above the base rates', identifier='F5'),
+                         issue='The bull case growth rate is not supported by the filings'),
+                    dict(major('The house base case grows 5% a year [S1].', identifier='F6'), fix='Raise base growth')]
         reasons = dict(pipeline._forecast_findings(findings, self.MEMO))
-        self.assertEqual(set(reasons), {'F1', 'F2', 'F3'})
+        self.assertEqual(set(reasons), {'F1', 'F5', 'F6'})
         self.assertIn('no quality-standard rule', reasons['F1'])
-        self.assertIn('outside', reasons['F2'])
+        self.assertIn('forecast input', reasons['F5'])
+        self.assertIn('forecast input', reasons['F6'])  # an M5 prose finding asking for higher growth
+        # Computed text that names no forecast input changes with no stage.
+        self.assertEqual(pipeline._computed_text_findings(findings, self.MEMO), ['F2', 'F3'])
         # Text outside the prose cannot take an edit, so it never forces the rewrite.
-        self.assertEqual(pipeline._edit_required(findings, self.MEMO), ['F1'])
+        self.assertEqual(pipeline._edit_required(findings, self.MEMO), ['F1', 'F6'])
+
+    def test_a_finding_answered_unchanged_does_not_reopen_the_forecast(self):
+        finding = dict(major('Bull case: growth stays above the base rates'), issue='The bull case growth rate is weak')
+        answered = {pipeline._finding_key(finding)}
+        self.assertEqual(pipeline._forecast_findings([finding], self.MEMO, (), answered), [])
+        self.assertEqual(pipeline._computed_text_findings([finding], self.MEMO, (), answered), ['F1'])
+        state = {'revision_base': 0, 'revision_rounds': [
+            {'round': 1, 'cycle': 0, 'forecast_response': 'unchanged', 'valuation_sha256': 'v1',
+             'answered': [list(pipeline._finding_key(finding))]},
+            {'round': 2, 'cycle': 0, 'forecast_response': 'corrected', 'valuation_sha256': 'v1', 'answered': [['M1', 'x']]}]}
+        self.assertEqual(pipeline._answered_forecast(state, 'v1'), answered)
+        self.assertEqual(pipeline._answered_forecast(state, 'v2'), set())  # a new valuation reopens it
+
+    def test_forecast_input_wording(self):
+        named = ['Raise base growth', 'The base case margins are too high', 'Lower the bull tax rate',
+                 'Revise the sales-to-capital path', 'The forecast inputs ignore the guidance']
+        plain = ['Label the figure as computed', 'State the house assumption plainly',
+                 'The terminal return row contradicts the panel', 'Cite the primary source for growth']
+        for text in named:
+            self.assertTrue(pipeline._names_forecast_input({'issue': '', 'fix': text}), text)
+        for text in plain:
+            self.assertFalse(pipeline._names_forecast_input({'issue': text, 'fix': text}), text)
 
     def test_python_checks_reopen_the_forecast_only_without_a_model(self):
         findings = [{'id': 'citation-unresolved', 'severity': 'major', 'issue': 'x', 'fix': 'y', 'source_refs': []},
@@ -212,6 +254,30 @@ class EditApplicationTests(unittest.TestCase):
         self.assertIn('1,234', reasons[3])
         self.assertIn('trading-layer', reasons[4])
         self.assertEqual(reasons[5], 'malformed edit')
+
+    def test_an_edit_may_not_reach_past_its_finding(self):
+        memo = ('## 1. Valuation conclusion\n\nThe base value is $360.15 a share [S2]. Revenue was $1,000M [S1].\n'
+                '## 2. Variant view\n\nThe price needs faster growth.\n')
+        pools = trace_pools([{'id': 'S1', 'data': {'revenue': 1000000000}}], ({'base': 360.15, 'bull': 472.96},))
+        values = {'base': 360.15, 'bull': 472.96}
+        findings = {'F1': major('x', rule='N2'), 'F2': major('x', rule='B3', identifier='F2'),
+                    'F3': dict(major('x', rule='M1', identifier='F3'), source_refs=['S1'])}
+        def apply(finding, quote, replacement):
+            return pipeline._apply_finding_edits(memo, [{'finding': finding, 'quote': quote, 'replacement': replacement}],
+                                                 findings, pools, True, values)[1][0]
+        heading = apply('F1', '## 2. Variant view\n\n', '')
+        self.assertIn('removes the heading', heading['reason'])
+        cited = apply('F1', 'The base value is $360.15 a share [S2].', 'The base value is $360.15 a share.')
+        self.assertIn('drops citations the finding does not name: S2', cited['reason'])
+        self.assertTrue(apply('F3', 'Revenue was $1,000M [S1].', 'Revenue was $1,000M.')['applied'])
+        wording = apply('F1', 'The base value is $360.15 a share [S2].', 'The base value is $472.96 a share [S2].')
+        self.assertIn('not about figures', wording['reason'])
+        valued = apply('F2', 'The base value is $360.15 a share [S2].', 'The base value is $472.96 a share [S2].')
+        self.assertIn('computed base value is 360.15', valued['reason'])
+        right = apply('F2', 'The base value is $360.15 a share [S2].', 'The bull value is $472.96 a share [S2].')
+        self.assertTrue(right['applied'])
+        restyled = apply('F1', 'Revenue was $1,000M [S1].', 'Revenue was USD 1,000 million in the year [S1].')
+        self.assertTrue(restyled['applied'])  # the same figure, restyled, is no change
 
     def test_the_response_parser_keeps_the_last_answer_and_its_forecast_flags(self):
         text = ('{"edits":[{"finding":"F1","quote":"a","replacement":"b"}]} Wait, again: '
@@ -283,6 +349,41 @@ class LoopFlowTests(unittest.TestCase):
         self.assertIn('model_response_1', sequence)
         self.assertNotIn('prose_edits_1', sequence)  # the fixture's proposal recomputes the plan: a rewrite
         self.assertEqual(state['revision_rounds'][-1]['rewrite_reason'], 'the plan changed')
+
+    def test_a_computed_text_major_stops_the_loop_without_paid_rounds(self):
+        fixture = LoopTransport(reviews=[['computed'], ['computed'], ['computed']])
+        with tempfile.TemporaryDirectory() as directory:
+            folder, state = run_loop(directory, fixture)
+            memo = (folder / 'memo.md').read_text()
+        sequence = stages(state)
+        self.assertEqual(sequence[-2:], ['review_0', 'finding_check_0'])
+        self.assertEqual(state['quality_status'], 'unresolved_findings')
+        self.assertFalse(state['complete'])
+        self.assertEqual(state['computed_text_findings']['ids'], ['F1'])
+        self.assertIn('quote computed text that no revision stage can change', memo)
+        self.assertIn('The row contradicts the convention panel', memo)  # the finding stays visible
+
+    def test_a_forecast_kept_for_a_finding_is_not_reopened_when_it_returns(self):
+        fixture = LoopTransport(reviews=[['prose', 'computed_input'], ['computed_input'], ['computed_input']],
+                                unchanged=True)
+        with tempfile.TemporaryDirectory() as directory:
+            _, state = run_loop(directory, fixture)
+        sequence = stages(state)
+        self.assertEqual(sequence[sequence.index('targeted_research_1'):],
+                         ['targeted_research_1', 'model_response_1', 'prose_edits_1', 'review_1', 'finding_check_1'])
+        self.assertEqual(state['revision_rounds'][0]['answered'][0][0], 'M5')
+        self.assertEqual(state['computed_text_findings']['ids'], ['F2'])
+        self.assertEqual(state['quality_status'], 'unresolved_findings')
+
+    def test_no_edit_call_when_the_forecast_stands_and_nothing_quotes_the_prose(self):
+        fixture = LoopTransport(reviews=[['computed_input']], unchanged=True)
+        with tempfile.TemporaryDirectory() as directory:
+            _, state = run_loop(directory, fixture)
+        sequence = stages(state)
+        self.assertEqual(sequence[sequence.index('targeted_research_1'):], ['targeted_research_1', 'model_response_1'])
+        self.assertNotIn('prose_edits_1', sequence)
+        self.assertEqual(state['revision_rounds'][-1]['revision'], 'none')
+        self.assertEqual(state['quality_status'], 'unresolved_findings')
 
     def test_the_loop_stops_after_two_rounds_with_findings_open(self):
         fixture = LoopTransport(reviews=[['prose'], ['prose'], ['prose']])
@@ -356,6 +457,76 @@ class StoredRunTests(unittest.TestCase):
             (folder / 'state.json').write_text(json.dumps(saved))
             _, state = run_loop(directory, fixture)
         self.assertEqual(stages(state)[len(saved['ledger']):], ['revise_1', 'review_1'])
+
+
+class CacheMissTests(unittest.TestCase):
+    MODEL = 'anthropic/claude-opus-5.5'
+
+    def router(self, cost):
+        catalog = {'data': [{'id': self.MODEL, 'pricing': {'prompt': '0.000004', 'completion': '0.00002',
+                                                           'input_cache_write': '0.000008', 'input_cache_read': '0.0000004'},
+                             'supported_parameters': ['max_tokens']}]}
+        answer = {'choices': [{'finish_reason': 'stop', 'message': {'content': '{"a":1}'}}], 'model': self.MODEL,
+                  'usage': {'prompt_tokens': 10, 'completion_tokens': 10, 'cost': cost,
+                            'prompt_tokens_details': {'cached_tokens': 0, 'cache_write_tokens': 30000}}}
+        transport = lambda url, **kwargs: catalog if url.endswith('/models') else answer
+        with unittest.mock.patch.object(core, 'request_json', side_effect=transport):
+            router = core.Router('synthetic-key', 2.8, [])
+        router.session = 's'
+        return router, transport
+
+    def test_a_cache_read_reservation_that_misses_records_the_overshoot(self):
+        router, transport = self.router(cost=1.25)
+        prefix = 'evidence ' * 20000
+        router.ledger.append({'stage': 'valuation_plan', 'model': self.MODEL, 'status': 'complete', 'session': 's',
+                              'cached_prefix_sha256': core.prefix_digest(prefix), 'completed_at': time.time(),
+                              'reserved_usd': 1.5, 'charged_or_reserved_usd': 1.5,
+                              'usage': {'prompt_tokens_details': {'cache_write_tokens': 30000}}})
+        with unittest.mock.patch.object(core, 'request_json', side_effect=transport):
+            router.complete('valuation_plan_s2', self.MODEL, 'Plan.', max_tokens=100, prefix=prefix, reserve_cached=True)
+        row = router.ledger[-1]
+        self.assertTrue(row['reserved_at_cache_read'])
+        self.assertTrue(row['cache_read_reservation_missed'])
+        self.assertAlmostEqual(row['reservation_overshoot_usd'], 1.25 - row['reserved_usd'])
+        self.assertEqual(row['charged_or_reserved_usd'], 1.25)
+        # The next check counts the actual charges: 1.5 + 1.25 leaves less than the next reservation.
+        with unittest.mock.patch.object(core, 'request_json', side_effect=transport), \
+                self.assertRaises(core.BudgetExceeded):
+            router.complete('valuation_plan_s3', self.MODEL, 'Plan.', max_tokens=100, prefix=prefix, reserve_cached=True)
+
+    def test_the_preflight_says_a_miss_costs_the_write_price(self):
+        self.assertIn('billed at the cache-write price', inspect.getsource(pipeline._initial_budget_preflight))
+
+
+class ResumedPlanTests(unittest.TestCase):
+    def test_the_stale_facts_note_is_in_the_first_plan_prompt_so_a_resume_reuses_it(self):
+        fixture = FullContractTransport(timeout_once=False)
+        # A companyfacts record collected under an earlier concept list adds the stale-facts gap note.
+        fixture.sources.append({'id': f'S{len(fixture.sources) + 1}', 'title': 'Earlier SEC facts record', 'kind': 'issuer_release',
+                                'url': 'https://example.invalid/old-facts', 'source_tier': 'regulatory_primary',
+                                'data': {'fact_origin': 'sec_companyfacts', 'selection': {'concepts_sha256': 'old'},
+                                         'excerpt': 'Synthetic older facts record.'}})
+        plans = []
+        original = fixture.transport
+        state = {'failed': False}
+        def transport(url, **kwargs):
+            payload = kwargs.get('payload')
+            if url.endswith('/chat/completions') and instructions(payload).startswith('Build an investment valuation plan'):
+                plans.append(full_text(payload))
+                if len(plans) == 2 and not state['failed']:
+                    state['failed'] = True
+                    raise RuntimeError('Synthetic interruption between plan samples')
+            return original(url, **kwargs)
+        fixture.transport = transport
+        with tempfile.TemporaryDirectory() as directory, \
+                unittest.mock.patch.object(pipeline, 'CONCEPT_SELECTION_SHA256', 'a-newer-concept-list'):
+            with fixture.installed():
+                with self.assertRaisesRegex(RuntimeError, 'between plan samples'):
+                    pipeline.run('AAPL', 'synthetic-key', directory=directory)
+                pipeline.run('AAPL', 'synthetic-key', directory=directory)
+        self.assertGreaterEqual(len(plans), 3)
+        self.assertIn('earlier concept list', plans[0])
+        self.assertEqual(len(set(plans)), 1)  # the resumed sample sent the first attempt's exact prompt
 
 
 class BudgetTests(unittest.TestCase):
