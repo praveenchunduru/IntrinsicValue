@@ -23,10 +23,12 @@ the same input lock and source-reference checks.
 The net-debt bridge deducts selected directly reported cash, marketable securities
 and short-term investments exactly once. Inclusive subtotals replace their parts.
 Absent optional investment categories are excluded under the disclosed selected-asset
-policy, rather than asserted to be zero. Unclassified long-term investments stay
-out of cash; the equity bridge below adds them separately. Classifying selected
-assets as nonoperating is a house policy, not a reported assertion that all cash is
-surplus.
+policy, rather than asserted to be zero. Reported cash categories left outside the
+selected cash are listed with their amounts as excluded by house policy (Coca-Cola's
+$1.9 billion of marketable securities and $1.8 billion of available-for-sale debt
+securities). Unclassified long-term investments stay out of cash; the equity bridge
+below adds them separately. Classifying selected assets as nonoperating is a house
+policy, not a reported assertion that all cash is surplus.
 
 Debt can use a complete financial-debt total or reconciled, disjoint short- and
 long-term components. A narrow long-term tag is not promoted to whole-company debt just
@@ -136,13 +138,16 @@ interests, preferred stock and unfunded defined-benefit pension and postretireme
 obligations, each at carrying value, with the parts in
 `other_claims_bridge.components`. Pension obligations are the recognized liabilities
 of underfunded plans, gross and before tax. Recognized assets of overfunded plans are
-credited neither as an asset nor against other plans' deficits (Johnson & Johnson:
-$4.7 billion deducted, with its $7.3 billion of surplus in other plans not netted).
-Damodaran deducts underfunded obligations between firm and equity value, and his
-conservative rule for excess plan assets assumes that reclaiming them costs too much
-("Dealing with Cash, Cross Holdings and Other Non-Operating Assets", 2005). Where no
-defined-benefit concept is tagged, a reported postemployment obligation stands in
-(AT&T). Preferred stock whose
+credited neither as an asset nor against other plans' deficits. Damodaran deducts
+underfunded obligations between firm and equity value, and his conservative rule for
+excess plan assets assumes that reclaiming them costs too much ("Dealing with Cash,
+Cross Holdings and Other Non-Operating Assets", 2005). Liabilities tagged by plan type
+(pension, other postretirement) are read where no whole-company concept is tagged, and
+replace a whole-company reading that does not match them when they reconcile to the
+reported funded status (Coca-Cola $0.9 billion, Johnson & Johnson $7.0 billion, Procter
+& Gamble $3.1 billion, AT&T $7.7 billion). Failing both, a reported postemployment
+obligation stands in. An obligation the bridge cannot read is zero by assumption, and
+the note says the plan-level values were not read. Preferred stock whose
 conversion the filing counts in diluted shares is deducted through the share count
 instead (Procter & Gamble). The discount-rate weights are unchanged: market equity is
 the price times outstanding shares, and noncontrolling interests and preferred stock
@@ -317,9 +322,11 @@ companies of the same starting size, and prints the result in the memo and in
 `valuation.json` (`base_rates`). For 3, 5 and 10 years it computes compound annual
 growth from the last reported revenue along the computed path, and its percentile in
 the matching size class. The growth the price requires (the base path with the
-required shift in every explicit year) gets the same treatment. The summary's
-revenue-growth requirement row gives the 10-year percentile of both the house path and
-the required one.
+required shift in every explicit year) gets the same treatment. Each cell of the
+memo's table gives nominal and real growth and the percentile of the figure the table
+compares, names the size class applied, and adds a labelled real row. The first page's
+revenue-growth row gives the 10-year percentile of both the house path and the
+required one, of real growth where the table is real.
 
 The newest table covering the size and horizon is used. For 5 years that is "Bayes and
 Base Rates 2.0" (May 2026, Exhibit 1) for USD 2-5 billion of starting sales and "Bayes
@@ -534,7 +541,8 @@ discounts from the valuation date. The anchor is the fiscal year-end of the repo
 inputs. Year-1 cash flow counts only the part of the first forecast year still ahead,
 measured with the calendar year after the anchor, and each flow is discounted from the
 valuation date. An anchor a calendar year or more before the valuation date is
-rejected.
+rejected. The method notes state the free cash flow of the elapsed part of year 1, in
+total and a share, because it is in neither the cash flows nor the bridge.
 
 `unlevered_beta` can also be built bottom-up from industry betas. The forecast author
 writes the mapping, and the research pipeline completes it:
@@ -630,7 +638,10 @@ Every plan with a market price reports:
   capital, sales-to-capital (one ratio in every explicit year, in place of any house
   path), or terminal growth. Only inputs the engine accepts are searched; a row that
   cannot reach the price reports the closest value and on which side of the price it
-  stays. Rows are alternatives, never combined.
+  stays. Rows are alternatives, never combined. The first page's table "What the price
+  needs" lists these five inputs and a sixth, one flat discount rate, taken from
+  `implied_return_at_price` (the bound where no rate solves), and states how many it
+  lists; the writer's instructions and rule M4 treat it as the full account.
 - `value_to_price` for each scenario and `weighted_value_to_price`. Percentage upside
   is no longer reported.
 
@@ -653,10 +664,11 @@ year and in the terminal value, as premium times revenue exposure with no beta s
 rises by the equity weight times the premium. A malformed reference writes a note in
 place of the row and never stops a run. The S&P 500 implied premium already
 reflects US companies' foreign revenue, so the row overstates the adjustment against
-that benchmark; it is not ranked and the house value is unchanged. Labels are matched by
-name, so a company's own region definitions are not read (Apple's Europe segment
-includes India, the Middle East and Africa), and GDP weights the countries inside a
-region.
+that benchmark; it is not ranked and the house value is unchanged. Labels are mapped by
+their plain meaning unless a recorded issuer definition replaces it: Apple's Europe
+includes India, the Middle East and Africa, its Greater China includes Hong Kong and
+Taiwan, and India leaves its Rest of Asia Pacific. Europe and EMEA include Eastern
+Europe and Russia. GDP weights the countries inside a region.
 
 Plans valued under the glide or a valuation-date stub also report `discounting` (the
 base rate path, terminal rate and their inputs), and their model ID ends in `-v2`.
@@ -828,7 +840,15 @@ against a 14-week one had shown −3.8% where sales per day rose 3.6%. The four 
 quarters give the twelve-month margin the ceilings use. The annual tables showed
 Nvidia's 0.2% growth and 16% margin for the year to January 2023 while its quarterly
 margins ran at 7%, 10% and then 30%. The 10-K and 10-Q excerpts include gross-margin,
-inventory, purchase commitment and share-repurchase disclosures. The tables are
+inventory, purchase commitment and share-repurchase disclosures. The latest earnings
+release (8-K Item 2.02) is found from the filing index table, then the index-headers
+page, then the 8-K's own exhibit index, and its excerpt keeps the income statement,
+balance sheet and cash flow statement whole within the 16,000-character bound. Where
+the release has neither an income statement nor a balance sheet, another exhibit 99 of
+the same 8-K that has one is read as a second issuer source (Johnson & Johnson and AT&T
+file theirs as EX-99.2). Walmart's release of November 19, 2026 had been missed because
+SEC served its filing index with no document table, and most of the 16 sample companies
+had lost their statements from the excerpt. The tables are
 derived from the archived documents on every run, so a folder collected earlier gets
 new columns.
 
@@ -935,10 +955,16 @@ sample's own inputs is rewritten to the combined input. The combined plan goes t
 the lock, the continuity checks and the engine as a single plan does.
 `plan-consensus.json` and `forecast_consensus` in `valuation.json` record each sample,
 its value and its value impact (its driver groups swapped into the plan valued). The
-first page states the range of the samples' base values, and the method notes give the
-count and any sample left out. Inputs reach the prompt in a fixed order, so every
-sample sends the same request; the non-operating investment lines had followed the
-process hash seed.
+first page states how the forecast combines the samples and the range of their base
+values. The method notes describe the plan valued: the inputs its structure combines
+(Coca-Cola's were growth, EBIT margins, sales-to-capital and tax), the sample that
+supplied the text and its own base value, and any sample left out, with what it did
+differently and its value. Replays from the draft or the review, and `--revalue`, keep
+this record; a run that asked for several samples and has none says so. The plan
+prompt asks for the most detailed structure the evidence supports, so repeated plans
+share one structure. Inputs reach the prompt in a fixed order, so every sample sends
+the same request; the non-operating investment lines had followed the process hash
+seed.
 
 Four plan samples on identical evidence and prompt at temperature 0 (2026-11-27)
 valued Apple at $138 to $151 a share and Microsoft at $354 to $398, spreads of 8.7% and
@@ -951,15 +977,25 @@ subsets share samples, so independent runs will differ more.
 The memo reads, in order: a computed title and first page, the eight prose sections,
 Valuation detail, Reported history, Method notes, Sources and Review status. The first
 page names the currency once and holds one sentence on the values, the scenario table
-with the S&P 500 row, a sentence on the range of the forecast samples, "What the price
-needs" (one base-case input at a time, with the base-rate percentile of the required
-growth) and "Conventions that move the value most" (the three largest convention
-rows). The
-valuation detail carries the equity bridge, the forecast, the discount rate and what
-the price implies, the convention, horizon and rate-regime tables, base rates,
-monitoring and multiples, and year-1 margin against the reported results. Python's own
-sentences are short declaratives, and each basis note and caveat is stated once, in the
-method notes; a guard test fails when a rendered note calls a computed figure reported.
+with the S&P 500 row, a sentence on how the forecast samples were combined and their
+range, "What the price needs" (six inputs, each changed alone, with the base-rate
+percentile of the required growth) and "Conventions that move the value most" (the
+three largest convention rows). The valuation detail carries the equity bridge, the
+forecast, the discount rate and what the price implies, the convention, horizon and
+rate-regime tables, base rates, monitoring and multiples, and the forecast against
+the reported results. Python's own sentences are short declaratives, and each basis
+note and caveat is stated once, in the method notes.
+
+Computed text is written to be true for the run it describes. A note prints only when
+its condition holds for the run: the R&D add-back, each scenario's margin-ceiling
+basis, the two reinvestment rates and the limit on stock-funded goodwill, an n/m cell.
+Rows that compare history with the forecast use the same period and basis: net
+reinvestment as a three-year total with its last year named, or the change in invested
+capital where net reinvestment is not positive. Change columns show the true change of
+the unrounded values, with a note that changes are computed before rounding, and a row
+that changes two inputs says so. Guard tests (`test_stab_truth.py`) render synthetic
+shapes and saved runs and fail when a conditional note appears without its condition,
+a comparison row names a mismatched period, or a note calls a computed figure reported.
 Numbers follow one style: per-share values to three significant figures ($139), quoted
 prices as quoted ($355.58), aggregates as $34.3B or $850M, units in table headers, and
 model-written labels inside computed sections restyled the same way.
@@ -982,7 +1018,17 @@ up; prose that assigns the gap to price a cause; table rows in the prose; a rise
 fall word whose own figures move the other way; uncited frequency claims; mentions of
 Python or instructions; prose over 3,600 words; and the style rules: "USD" written for
 a dollar filer, numbers of seven or more digits, em dashes, and more than two ", not"
-contrasts or two sentences that narrate an exhibit. One fix call returns
+contrasts or two sentences that narrate an exhibit. A minor check,
+`unverified-company-fact`, flags a sentence whose citations are all unverified excerpts
+and that presents their content as a company fact, and a sentence that sets the house
+forecast beside consensus, guidance or an outside estimate; the fix call corrects it
+before review. Its rule is in the shared quality standard: such a fact is deleted,
+replaced by the primary-source figure, or stated as the view of an outside party the
+sentence names, with no company conclusion and no comparison with the house forecast.
+An excerpt, or the company's own filing quoted through one, is no outside party. The
+variant-view brief no longer asks the writer to compare the house forecast with
+consensus. Offline, on four first drafts, the check would have caught 7 of the 9
+findings of this kind that the reviews raised. One fix call returns
 quote-and-replacement edits that Python applies when the quote occurs once (deleting a
 duplicated passage removes its second copy); what remains goes to the reviewer as minor
 diagnostics. Python labels every citation of an unverified excerpt inline, as in [S16
@@ -1005,33 +1051,43 @@ historical repurchase case whose amount is within 3% of a reported year's buybac
 that year's program value and average price, so the exhibits and the history table
 quote one price.
 
-Up to two revision rounds follow by default (`--max-revisions`) while material
+Up to three revision rounds follow by default (`--max-revisions`) while material
 findings remain, and each later review checks the earlier findings rather than
-re-auditing from scratch. A round answers the findings with exact quote-and-replace
-edits (`prose_edits_N`) that Python applies and checks. Python rejects an edit whose
-quote is not in the prose, and one that deletes a heading, drops a citation its finding
-does not name, adds an untraced figure or a trading term, breaks a style rule the quote
-did not, or changes a figure when its rule is not about figures. A new per-share figure
-must equal the computed value its sentence names. `reviews/edits-N.json` records which
-finding each edit answers. The forecast response (`model_response_N`) runs only when a
-surviving blocker or major names a forecast input, quotes the prose without naming a
+re-auditing from scratch. The loop stops as soon as no blocker or major survives, or
+when only findings on computed text remain. A round answers the findings with exact
+quote-and-replace edits (`prose_edits_N`) that Python applies and checks. Python
+rejects an edit whose quote is not in the prose, and one that deletes a heading, drops
+a citation its finding does not name, adds an untraced figure or a trading term, breaks
+a style rule the quote did not, or changes a figure when its rule is not about figures
+(B1, B3, M1, M3, M4 and M5 are). A new per-share figure must equal the computed value
+its sentence names. A required finding whose edit did not apply gets one retry call
+(`prose_edits_N_retry`) that is told why; one still unapplied is carried to the next
+review as unresolved prose. `reviews/edits-N.json` records which finding each edit
+answers and why any did not apply. The forecast response (`model_response_N`) runs
+only when a surviving blocker or major names a forecast input, quotes the prose without naming a
 rule of the standard, or comes from a Python check that found no valuation, or when the
 edit call says only a forecast change answers a prose finding. Python owns part of the
 plan (the assumptions label, the pinned rate records, the house probabilities and
 terminal return, the per-year paths); those fields are left out of the proposal the
 response edits and restored if it returns them, and a response whose forecast inputs
 match the plan counts as unchanged. The memo is rewritten in full only when the forecast
-inputs changed or a required blocker or major got no applied edit. A blocker or major
+inputs changed: in the live Alphabet and Coca-Cola runs a rewrite after an unapplied
+edit had drawn new findings. A blocker or major
 that quotes text Python writes and names no forecast input cannot be changed by any
 round: it is listed separately in the review status and written to
 `computed-text-findings.json` for a code fix.
 
 The Reported history section prints the annual results, the latest eight fiscal
 quarters, the return-on-capital table and the segment tables, scaled so a small company
-reads in millions; writers no longer re-type them. The valuation detail also prints the
-equity bridge from enterprise value to value per share (lines with nothing reported are
-named in one note), the forecast ROIC, the base-rate table and a scale check of the
-final forecast year against today.
+reads in millions; writers no longer re-type them. Captions explain cells marked
+depreciation only and years outside the filings scanned, the buyback price row names
+its basis, only derived quarterly cells are marked, and segment members carry the
+filing's own labels. The segment tables set the consolidated operating income beside
+the segment rows, and their note states no sum and no cause for the difference: a live
+Coca-Cola review rejected a note that called it unallocated costs. The valuation detail
+also prints the equity bridge from enterprise value to value per share (lines with
+nothing reported are named in one note), the forecast ROIC, the base-rate table and a
+scale check of the final forecast year against today.
 
 The evidence block is frozen when the plan stage writes it and sent first in every
 Claude stage, marked for one-hour provider caching, so the whole run reads it at the
@@ -1114,9 +1170,10 @@ count stage-cache hits or infer their savings. It is not invoice reconciliation.
 The budget preflight prices the plan samples (the later ones at the cache-read price),
 the first draft, its fix call, review and finding check, and then each revision round:
 its usual stages (targeted research, the edit call, the fix call, the review and its
-check) and the forecast response and rewrite it adds only when a finding concerns the
-forecast or an edit fails. `budget-preflight.json` records a usual-path and a
-worst-case reservation floor. Both are reservations, and neither predicts the bill.
+check) and the stages it adds only when needed: the edit retry when an edit fails, the
+forecast response when a finding concerns the forecast, and a rewrite when the forecast
+inputs change. `budget-preflight.json` records a usual-path and a worst-case
+reservation floor. Both are reservations, and neither predicts the bill.
 
 `state.json.prompt_context_metrics` records `full_json_utf8_bytes` and
 `presentation_utf8_bytes` for the valuation context. The deterministic presentation

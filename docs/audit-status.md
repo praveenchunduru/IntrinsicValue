@@ -784,7 +784,8 @@ The changes, described in the
   run. Findings are answered by exact edits (`prose_edits_N`) that Python applies and
   checks. The forecast is reopened only for a finding that names a forecast input, and
   the memo is rewritten only when the forecast inputs changed or a required edit failed.
-  Up to two rounds by default. Findings on text Python writes are listed separately and
+  Up to two rounds by default; both rules changed later that day (see below). Findings
+  on text Python writes are listed separately and
   saved to `computed-text-findings.json`. Python owns its plan text, and model-facing
   JSON is rounded to six significant figures.
 - **Memo layout and writing standard.** A computed first page, then the eight prose
@@ -815,25 +816,82 @@ Live results:
 - **Microsoft, review-only replay on edde0a4: $1.73, approved** with two minor findings
   after one edit round. The second review read the cache: $0.08, against $0.47 for the
   first.
-- **Coca-Cola and Alphabet:** [PLACEHOLDER, to be filled in: full runs started on
-  2026-11-27 and still running when this section was written.]
+- **Alphabet, fresh run on edde0a4: $4.77, approved** after two rounds with three minor
+  findings. The base value is $221 against a price of $273.10 (0.81). The three forecast
+  samples valued it at $206, $225 and $223.
+- **Coca-Cola, fresh run on edde0a4: $5.47, unresolved.** Four of its six remaining
+  blockers and majors were on computed notes and tables.
 
-Spending on 2026-11-26 and 2026-11-27 so far is $29.53 by the runs' cost summaries:
-$14.75 for the three live runs above, $4.55 for the plan samples, $1.17 for the smoke
-runs, $7.34 for the Microsoft full run and $1.73 for the replay. The suite has 979
-offline tests, passing on Python 3.9, 3.12 and 3.13.
+After these runs four independent auditors each read the computed text of one saved run
+(Coca-Cola, Alphabet, Microsoft, Apple), with no paid run, and found 75 problems, about
+20 of them factual. Two causes accounted for most: fixed notes that printed whether or
+not they applied to the run, and tables that set unlike periods or bases side by side. Notes now print only when they apply, comparison rows match period
+and basis, and guard tests check both (`test_stab_truth.py`). Two re-audits after the
+fixes found 16 of 20 and 14 of 18 items fixed, plus a shorter list of smaller items,
+which were fixed too. The same audits led to data fixes: pension liabilities read by
+plan type, excluded cash categories listed with their amounts, Apple's own region
+definitions, filing labels for segment members and the bases of history-table cells.
+The audit reports are kept outside the repository.
+
+The loop changed as well. Every unapplied required edit in the Alphabet and Coca-Cola
+runs was an M5 correction that the figure guard rejected although the figure traced to
+the filings, and each first round then paid a rewrite that drew new findings. Rules M4
+and M5 now allow figure changes, an edit that does not apply gets one retry told the
+reason, one still unapplied is carried to the next review, and the default is three
+rounds (83f3b08).
+
+- **Coca-Cola, review-only replays.** On 366aa6a: $2.23 for three edit rounds, with the
+  prose clean. One blocker remained, on a new computed note that called the difference
+  between the segment sum and consolidated operating income unallocated costs. With
+  that note changed to state no sum and no cause (d22951b): $0.41, approved in one read
+  with three minor findings.
+- **Walmart, fresh run on d22951b: $4.26 including a fourth round, unresolved.** It had
+  no stop, rewrite, forecast reopening or computed-text major. Blockers and majors went
+  9, 3, 2, 1, then 3 across the five reviews, and 10 of those 18 were rule M1: company
+  facts resting only on unverified excerpts. Walmart's November 19 earnings release had
+  not reached the primary evidence, because SEC served its filing index with no document
+  table. The release is now found through three index routes and keeps its statements,
+  and free collection for the 16 sample companies gets each latest release with them,
+  reported inputs unchanged (9bc302b). A free check, `unverified-company-fact`, now
+  flags such sentences before review, with its rule in the shared standard (8b92aa9,
+  d5dd853). Run offline on four first drafts, it would have caught 7 of the 9 findings
+  of this kind.
+- **Walmart, final fresh run on abd9600:** [PLACEHOLDER, to be filled in: still running
+  when this section was written.]
+
+Approved memos on the rebuilt pipeline so far: Microsoft (review-only replay), Alphabet
+(fresh run) and Coca-Cola (review-only replay).
+
+The reviewer audits computed text as strictly as it audits prose. Free audits of the
+computed text by independent readers, before paying for a review, found far more
+problems per dollar than paid runs did.
+
+Spending on 2026-11-26 and 2026-11-27 before the final Walmart run is $46.67, matching
+the saved runs' cost summaries: $14.75 for the first three runs, $4.55 for the plan
+samples, $1.17 for the smoke runs, $7.34 for the Microsoft full run, $1.73 for the
+Microsoft replay, $5.47 for Coca-Cola, $4.77 for Alphabet, $2.23 and $0.41 for the
+Coca-Cola replays and $4.26 for Walmart. The suite has 1,042 offline tests, passing on
+Python 3.9, 3.12 and 3.13.
 
 ### Still open after 2026-11-14
 
-- Two memos have passed review: Apple's full run after one revision and Microsoft's
-  review-only replay on the stabilized code after one edit round. No first draft has
-  passed without a round.
+- Four memos have passed review: Apple's first full run after one revision, and on the
+  rebuilt pipeline Alphabet's fresh run after two rounds and the review-only replays of
+  Microsoft and Coca-Cola. No first draft has passed without a round.
+- Whether a fresh run on an unseen company passes within three rounds:
+  [PLACEHOLDER, to be filled in from the final Walmart run on abd9600.]
 - The plan-prompt evidence-tier rule and the rubric clarification have not been run live.
 - No paid run has yet shown a first draft with no surviving major finding; replay 2 does
   so only when the later fact-check is applied offline.
 - Single forecasts on the same evidence spread 9-12% in value. Averaging three cut the
   spread across subsets of four saved samples to 1-3%, but the subsets share samples:
-  repeatability across independent runs has not been measured.
+  repeatability across independent runs is measured only that way. One data point:
+  Microsoft's fresh run valued the base case at $364, against $371 from the four saved
+  samples.
+- Saved runs show the data-side note changes (pensions by plan type, excluded cash,
+  region definitions, history bases) only once they are recomputed.
+- Apple tags no operating-lease discount rate, so its return on capital adds no lease
+  interest to EBITA.
 - The terminal return on new capital was the plan author's judgment (25% for both Apple
   and Microsoft) and the largest single sensitivity in both memos; since 2026-11-26 it
   is a house convention.

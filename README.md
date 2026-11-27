@@ -88,10 +88,12 @@ adviser, before you invest.
 
 ## Status
 
-In three live runs on 2026-11-27 (Microsoft, Apple and Coca-Cola), one memo passed the
-model review after one revision and two ended with open findings. The review loop was
-then rebuilt to answer findings with exact edits; on the rebuilt code a review-only
-replay of Microsoft passed after one edit round. An external audit in
+On 2026-11-27 the first three live runs (Microsoft, Apple and Coca-Cola) produced one
+memo that passed the model review, Apple's, after one revision. The pipeline was then
+rebuilt to write three forecasts and answer findings with exact edits. On the rebuilt
+pipeline, fresh runs of Microsoft, Alphabet, Coca-Cola and Walmart produced one passing
+memo, Alphabet's after two rounds, and review-only replays of Microsoft and Coca-Cola
+passed. No first draft has passed without a round. An external audit in
 early November 2026 graded an earlier version's showcase memo B− and its process C; the
 benchmark-parity claim made before it is withdrawn. What has been repaired since, what
 each live run found and what is still open are in [audit status](docs/audit-status.md).
@@ -165,21 +167,25 @@ the plan is written three times from the same evidence, and the plan valued aver
 them input by input. The first draft is built to stand on its own:
 
 - Python extracts the filings' revenue, cost and operating income by product, segment
-  and geography, five years of reported history, the latest eight fiscal quarters, and
-  the 10-K's margin, inventory, commitment and buyback disclosures. The models see them
-  before any web excerpt.
-- Python renders every table and a valuation summary at the top of the memo,
-  including what the price requires of one input at a time and where that growth falls
-  in published base rates. The model writes the interpretation around them and does no
-  arithmetic of its own.
+  and geography, five years of reported history, the latest eight fiscal quarters, the
+  10-K's margin, inventory, commitment and buyback disclosures, and the latest earnings
+  release with its income statement, balance sheet and cash flow statement. The models
+  see them before any web excerpt.
+- Python renders every table and a valuation summary at the top of the memo. The first
+  page lists six inputs, from revenue growth to one flat discount rate, with what each
+  would have to be alone for value to equal the price, and where the required growth
+  falls in published base rates. The model writes the interpretation around them and
+  does no arithmetic of its own.
 - Free checks trace every figure in the prose to the computed output or a primary
   source, then one small call fixes what they find. Citations of unverified web
-  excerpts are labelled in the text.
+  excerpts are labelled in the text, and a company fact that only an unverified excerpt
+  supports is removed, replaced by the filed figure or attributed to the outside party
+  that said it.
 - A different model reviews the memo as the reader sees it, against the same written
-  quality standard the writer was given. Up to two revision rounds follow by default if
-  material findings remain. A round answers the findings with exact edits that code
-  applies and checks, and rewrites the memo only when the forecast changed or an edit
-  failed. Findings still open stay visible.
+  quality standard the writer was given. Up to three revision rounds follow by default
+  if material findings remain. A round answers the findings with exact edits that code
+  applies and checks; an edit that fails gets one retry with the reason, and the memo is
+  rewritten only when the forecast changed. Findings still open stay visible.
 
 The discount rate follows the conventions the equity risk premium was solved under.
 Damodaran's implied premium assumes the market grows at the Treasury rate forever; a
@@ -189,8 +195,9 @@ premium and the industry beta table, the pipeline therefore starts from the curr
 cost of capital, moves to market-average business risk by year 10, and sets terminal
 growth to the risk-free rate unless a scenario gives a company-specific reason for
 less. Present values are dated at the valuation date when the reported balance sheet
-allows it. Year-1 margins must start from the last reported results unless the plan
-cites evidence for a step. Costs are shares of revenue, final-year margins have
+allows it, and the method notes state the free cash flow of the elapsed part of year 1,
+which neither the cash flows nor the bridge include. Year-1 margins must start from the
+last reported results unless the plan cites evidence for a step. Costs are shares of revenue, final-year margins have
 ceilings from the reported history and the latest twelve months, the terminal return on
 new capital equals the terminal cost of capital after the 10-year forecast (Mauboussin's
 steady state, with 10 years as a house horizon), the continuing value adds back net R&D
@@ -265,7 +272,7 @@ Use `--evidence` for focused text, `--sources` for supplemental source records,
 `--counterfactuals` for computed base-case overrides, and `--draft` for an edited
 author body. `--plan-samples N` (1-5) sets how many forecasts are written and averaged:
 three by default in the balanced profile, one in the others. `--max-revisions N` (0-8,
-default 2) limits the revision rounds after the first review. `--easy-model` and
+default 3) limits the revision rounds after the first review. `--easy-model` and
 `--strong-model` select explicit model IDs; unavailable IDs and unsupported pricing
 fail before paid research. `--sec-contact your-real-email@example.com`
 sets SEC requester identity for one run without saving it. `SEC_CONTACT_EMAIL` or a
@@ -346,13 +353,12 @@ As listed on 2026-11-26, Claude Haiku 5.5 cost $0.10/$0.50, Claude Opus 5.5 $4/$
 GPT-6.2 Sol $2/$10 per million input/output tokens ($4/$15 above 272,000 prompt
 tokens); Exa Auto search cost $0.007 per request.
 
-Measured on 2026-11-27, balanced profile: three full runs with one forecast and one
-revision cost $4.50, $4.86 and $5.40; a Microsoft run with three forecasts and two
-rounds cost $7.34 on code whose loop paid a full rewrite in each round, since fixed; a
-review-only replay on the fixed code cost $1.73; extra forecast samples cost about
-$0.30 each because the evidence is cached. Estimated from replays, and not yet seen on
-a bill, a full run on the current code costs $2.60 to $3.40 with one forecast and about
-$0.60 more with three. The default allowance is $20: a ceiling, because each call
+Measured on 2026-11-27, balanced profile: fresh runs on the edit loop, three forecasts
+included, cost $3.94 to $5.47 (Walmart through three rounds $3.94, Alphabet $4.77,
+Coca-Cola $5.47), and a fourth Walmart round cost $0.32. Review-only replays cost $0.41
+to $2.23. Extra forecast samples cost about $0.30 each because the evidence is cached.
+The first three runs that day, with one forecast and a full rewrite in revision, cost
+$4.50 to $5.40. The default allowance is $20: a ceiling, because each call
 reserves its prompt bytes at the model's highest price tier before it is sent, and a
 GPT-6.2 Sol review alone reserves about $2.50.
 Prices change. A four-call AAPL economy overview reported **$0.00757138** but had
@@ -421,8 +427,8 @@ python -m pip install .
 investmentideas --help
 ```
 
-The current source passes **979 tests** locally on Python 3.9, 3.12 and 3.13 (one
-skips unless saved runs are named for it); the
+The current source passes **1,042 tests** locally on Python 3.9, 3.12 and 3.13 (four
+skip unless saved runs are named for them); the
 v0.2.0 release passed 268. The
 [CI matrix](https://github.com/praveenchunduru/IntrinsicValue/actions/runs/42261827883)
 tests Python 3.10, 3.12 and 3.13. CI runs synthetic evidence and mocked transports without model calls or
