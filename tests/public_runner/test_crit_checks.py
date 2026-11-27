@@ -9,7 +9,7 @@ fiscal years.
 import copy
 import unittest
 
-from investmentideas import evidence_tables, pipeline, roic
+from investmentideas import evidence_tables, memo_style, pipeline, roic
 from investmentideas.evidence_tables import historical_baseline, quarterly_table, render_quarterly, render_roic
 from investmentideas.quality import assessment_findings
 from investmentideas.valuation import evaluate
@@ -255,7 +255,7 @@ class QuarterlyTableTests(unittest.TestCase):
         section = '\n'.join(pipeline.reported_tables_section([source]))
         self.assertIn('| Measure | 2022-01-30 Q4 (derived) | 2022-05-01 Q1 |', section)
         self.assertIn('| Growth on the year-earlier quarter |', section)
-        self.assertIn('| Deferred revenue at quarter end |', section)
+        self.assertIn('| Deferred revenue, quarter end ($B) |', section)
 
     def test_the_history_carries_the_quarters(self):
         payload = copy.deepcopy(COSTCO)
@@ -317,7 +317,11 @@ class MarginCeilingTests(unittest.TestCase):
         value['cost_path_reference'] = reference
         result = pipeline._evaluate(value)
         pipeline._check_continuity(value, result, SOURCES)
-        self.assertIn('bear 5.0% (ceiling 10.7%)', '\n'.join(pipeline._continuity_exhibit(result)))
+        # Changed 2026-11-27 (memo redesign): the continuity checks are one table.
+        text = '\n'.join(sum(pipeline._continuity_parts(result, memo_style.Style('USD')), []))
+        self.assertIn('| Final-year EBIT margin | peak ', text)
+        self.assertIn('| 5.0% |', text)
+        self.assertIn('| Final-year margin ceiling |  | 10.7% |', text)
         value['scenarios']['bear']['ebit_margins'] = [.12] * 10
         with self.assertRaisesRegex(ValueError, r'bear 12\.0% against the reported five-year peak \(the five-year average '
                                                 r'is not positive\) of 10\.7%'):
@@ -389,7 +393,8 @@ class ReinvestmentReferenceTests(unittest.TestCase):
             scenario['sales_to_capital'] = 2.5
         result = pipeline._evaluate(value)
         pipeline._check_continuity(value, result, SOURCES)
-        self.assertIn('no floor', pipeline._reinvestment_text(result['reinvestment_continuity']))
+        self.assertIn('no floor', '\n'.join(sum(pipeline._continuity_parts(
+            {'reinvestment_continuity': result['reinvestment_continuity']}, memo_style.Style('USD')), [])))
 
     def test_falling_revenue_or_falling_capital_with_light_capex_is_not_checked(self):
         shrinking = [dict(row, revenue=500e9 - index * 10e9) for index, row in enumerate(APPLE)]
@@ -542,20 +547,22 @@ class PipelineReviewFixTests(unittest.TestCase):
         self.assertTrue(quality._assigns_gap_cause('Under the same conventions the index benchmark is worth 0.78 of its '
                                                    'price, so the difference between value and price is largely explained '
                                                    'by the house conventions.'))
-        self.assertIn('not a cause of the difference between value and price', pipeline.SECTIONS)
-        self.assertIn('A convention step is a row of the convention panel', pipeline.SECTIONS)
+        self.assertIn('it explains no part of the company\'s difference', pipeline.SECTIONS)
+        self.assertIn('A convention step is a row of the convention tables', pipeline.SECTIONS)
 
     def test_the_largest_horizon_and_rate_regime_rows_print_as_exhibits(self):
         from tests.public_runner.test_crit_exhibits import history_plan
         value = history_plan()
         result = evaluate(value)
+        # Changed 2026-11-27 (memo redesign): the first page ranks convention rows only, and the
+        # horizon and rate-regime rows print under their own headings in the valuation detail.
         summary = pipeline.computed_summary(value, result)
-        line = next(item for item in summary.split('\n') if item.startswith('Largest exhibit rows'))
-        self.assertIn('not convention steps', line)
-        self.assertIn('horizon, ', line)
-        self.assertIn('rate regime, ', line)
-        panel = '\n'.join(pipeline._market_consistency_exhibits(result, 'USD'))
-        self.assertIn('Largest exhibit rows', panel)
+        self.assertNotIn('Competitive advantage period', summary)
+        self.assertNotIn('Treasury rate', summary)
+        detail = pipeline.valuation_section(value, result)
+        horizons = detail[detail.index('### Other horizons'):detail.index('### Rate regimes')]
+        self.assertIn('Competitive advantage period of 20 years', horizons)
+        self.assertIn('Highest month', detail[detail.index('### Rate regimes'):])
 
     def test_minor_wording_fixes(self):
         self.assertIn('base-rate tables may be cited', pipeline.FORECAST_SCHEMA)
@@ -576,7 +583,7 @@ class PipelineReviewFixTests(unittest.TestCase):
         value['actuals']['net_debt'] = -50.0
         value['net_debt_bridge'] = dict(value['net_debt_bridge'], debt=0.0, net_debt=-50.0)
         result = evaluate(value)
-        text = '\n'.join(pipeline._equity_bridge_exhibit(value, result, 'USD'))
+        text = '\n'.join(pipeline._equity_bridge_parts(value, result, memo_style.Style('USD'))[0])
         self.assertIn('Plus net cash', text)
         self.assertNotIn('Less net debt', text)
 
@@ -625,7 +632,8 @@ class PipelineReviewFixTests(unittest.TestCase):
         self.assertEqual(missing['net_reinvestment_status'], 'not_reported')
         value = plan()
         value['reinvestment_reference'] = missing
-        text = pipeline._reinvestment_text(pipeline._evaluate(value)['reinvestment_continuity'])
+        text = '\n'.join(sum(pipeline._continuity_parts(
+            {'reinvestment_continuity': pipeline._evaluate(value)['reinvestment_continuity']}, memo_style.Style('USD')), []))
         self.assertIn('not reported for every year', text)
 
     def test_revalue_carries_the_pipeline_diagnostics(self):

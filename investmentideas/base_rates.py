@@ -26,6 +26,8 @@ distribution of company margins, so no margin percentile is computed.
 """
 from __future__ import annotations
 
+import re
+
 import json
 import math
 from statistics import NormalDist
@@ -175,6 +177,8 @@ SALES_GROWTH_2026 = (
 
 MARGIN_NOTE = ('The Base Rate Book reports how persistent operating margins are by sector (Exhibit 5, p62), not a '
                'distribution of company margins, so no margin percentile is shown.')
+MEMO_MARGIN_NOTE = ('The Base Rate Book reports how persistent operating margins are by sector (Exhibit 5, p62). It '
+                    'gives no distribution of company margins, so the memo shows no margin percentile.')
 _NORMAL = NormalDist()
 
 
@@ -457,13 +461,6 @@ def result_context(result):
             json.dumps(_rounded(view)))
 
 
-def _cell(position, reference):
-    text = f'{position["compound_growth"]:.1%}'
-    if reference['growth_basis'] == 'real':
-        text += f' ({position["compared_growth"]:.1%} real)'
-    return text + ', ' + position['description']
-
-
 def summary_note(comparison, which, years):
     """Percentile phrase for a price-requirement cell: ``which`` is 'house' or 'needed'."""
     if not isinstance(comparison, dict) or comparison.get('status') != 'computed':
@@ -477,54 +474,77 @@ def summary_note(comparison, which, years):
     return f' ({rows[str(horizon)]["description"]} of the {horizon}-year base rate)'
 
 
-def memo_lines(comparison, currency='USD'):
-    """The memo exhibit: compound growth and its percentile for each case and horizon."""
+def _class_words(label):
+    """'above USD 50 billion' as the memo writes it: 'above $50B'."""
+    scale = {'million': 'M', 'billion': 'B'}
+    label = re.sub(r'USD (\d[\d.]*)-(\d[\d.]*) (million|billion)',
+                   lambda match: f'${match[1]}-{match[2]}{scale[match[3]]}', label)
+    return re.sub(r'(?:USD )?(\d[\d.]*) (million|billion)', lambda match: f'${match[1]}{scale[match[2]]}', label)
+
+
+def _short(position):
+    """'7.1% (68th)': compound growth and its percentile, for a table cell."""
+    words = position['description'].replace(' percentile', '').replace('the ', '')
+    return f'{position["compound_growth"]:.1%} ({words})'
+
+
+def memo_exhibit(comparison, style=None):
+    """The memo exhibit and its method notes: (lines, notes)."""
     if not isinstance(comparison, dict):
-        return []
+        return [], []
     heading = ['', '### Revenue growth against base rates', '']
     if comparison.get('status') != 'computed':
-        return heading + [f'Not shown. {comparison.get("reason", "")}'.strip()]
+        return heading + [f'Not shown. {comparison.get("reason", "")}'.strip()], []
+    amount = style.amount if style is not None else (lambda value: f'{value / 1e9:,.1f}B')
     refs = comparison['references']
     keys = sorted(refs, key=int)
     lines = heading + [
-        f'Compound annual revenue growth from the last reported {currency} {comparison["starting_revenue"] / 1e9:,.1f} '
-        f'billion (fiscal {comparison["fiscal_year"]}), and where it falls among companies with the same starting '
-        'sales. These describe the plan against history; no forecast input is set from them.', '',
+        f'Compound annual revenue growth from the last reported {amount(comparison["starting_revenue"])} '
+        f'(fiscal {comparison["fiscal_year"]}), with its percentile among companies of the same starting size.', '',
         '| Case | ' + ' | '.join(f'{key} years' for key in keys) + ' |', '|---|' + '---:|' * len(keys)]
     def row(label, positions):
-        return f'| {label} | ' + ' | '.join(_cell(positions[key], refs[key]) if key in positions else 'n/a'
-                                           for key in keys) + ' |'
+        return f'| {label} | ' + ' | '.join(_short(positions[key]) if key in positions else 'n/a' for key in keys) + ' |'
     for name in ('bear', 'base', 'bull'):
         lines.append(row(name.title(), comparison['scenarios'].get(name) or {}))
     requirement = comparison.get('price_requirement')
     if requirement:
-        label = ('Price requirement' if requirement['status'] == 'solved' else 'Closest to the price (not reachable)')
-        lines.append(row(f'{label}: base growth {requirement["growth_shift"] * 100:+.1f} points a year',
-                         requirement['horizons']))
-    lines.append('| Reference class mean and standard deviation | ' + ' | '.join(
-        f'{refs[key]["mean"]:.1%} and {refs[key]["standard_deviation"]:.1%}, '
-        + ('real' if refs[key]['growth_basis'] == 'real' else 'nominal')
-        + f' ({refs[key]["observations"]:,} observations)' for key in keys) + ' |')
-    lines.append('')
+        shift = f'{requirement["growth_shift"] * 100:+.1f} points a year'
+        label = (f'Growth the price needs ({shift})' if requirement['status'] == 'solved' else
+                 f'Closest to the price ({shift}, not reachable)')
+        lines.append(row(label, requirement['horizons']))
+    lines.append('| Reference class mean, standard deviation | ' + ' | '.join(
+        f'{refs[key]["mean"]:.1%}, {refs[key]["standard_deviation"]:.1%}' for key in keys) + ' |')
+    notes = ['The base-rate table describes the plan against history. No forecast input is set from it.']
     groups = {}
     for key in keys:
         groups.setdefault(refs[key]['class_id'], []).append(key)
+    real = any(refs[key]['growth_basis'] == 'real' for key in keys)
     for class_keys in groups.values():
         reference = refs[class_keys[0]]
-        method = ('percentiles interpolate within the published five-point bins' if reference['method'] == 'bins' else
-                  'percentiles use a normal approximation from the published mean and standard deviation, and the '
-                  'paper notes that actual growth rates have fatter tails')
+        method = ('Percentiles interpolate within the published five-point bins.' if reference['method'] == 'bins' else
+                  'Percentiles use a normal approximation from the published mean and standard deviation; the paper '
+                  'notes that actual growth rates have fatter tails.')
         counts = (f', with bin counts from its {reference["counts_exhibit"].lower()}, p{reference["counts_page"]}'
                   if reference.get('counts_page') else '')
         spans = (', '.join(class_keys[:-1]) + ' and ' + class_keys[-1]) if len(class_keys) > 1 else class_keys[0]
         source = comparison.get('sources', {}).get(reference['source']) or SOURCES[reference['source']]
-        lines.append(f'- {spans} years: starting sales {reference["class_label"]} in {reference["price_year"]} dollars '
-                     f'({currency} {reference["starting_revenue_in_price_year"] / 1e9:,.1f} billion here) among '
-                     f'{source["universe"]}; growth '
-                     f'{"after inflation" if reference["growth_basis"] == "real" else "nominal"}; {method}. '
-                     f'{source["citation"]}, {reference["exhibit"]}, p{reference["page"]}{counts}.')
-    if any(refs[key]['growth_basis'] == 'real' for key in keys):
-        lines.append(f'- Plan growth is restated after inflation at {INFLATION_BASIS}; one more point of inflation '
-                     'lowers real growth by about one point. Starting sales are restated with the US CPI-U.')
-    lines.append('- ' + comparison.get('margins', MARGIN_NOTE))
-    return lines
+        observations = ', '.join(f'{refs[key]["observations"]:,} at {key} years' for key in class_keys)
+        notes.append(f'Base rates for {spans} years: starting sales {_class_words(reference["class_label"])} in {reference["price_year"]} '
+                     f'dollars, {amount(reference["starting_revenue_in_price_year"])} here, among {source["universe"]}. '
+                     f'Growth is {"after inflation" if reference["growth_basis"] == "real" else "nominal"}, and the '
+                     f'observations are {observations}. {method} {source["citation"]}, {reference["exhibit"]}, '
+                     f'p{reference["page"]}{counts}.')
+    if real:
+        inflation = comparison.get('inflation_assumption', INFLATION)
+        notes.append(f'Plan growth is restated after inflation at {inflation:.1%} a year, the Federal Reserve\'s longer-run '
+                     'inflation goal (FOMC, Statement on Longer-Run Goals and Monetary Policy Strategy). One more point of '
+                     'inflation lowers real growth by about one point. Starting sales are restated with the US CPI-U. The '
+                     'mean and standard deviation row is real growth.')
+    notes.append(MEMO_MARGIN_NOTE)
+    return lines, notes
+
+
+def memo_lines(comparison, currency='USD'):
+    """The memo exhibit followed by its notes as bullets."""
+    lines, notes = memo_exhibit(comparison)
+    return lines + ([''] + ['- ' + note for note in notes] if notes else [])

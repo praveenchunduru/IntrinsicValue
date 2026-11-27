@@ -1219,7 +1219,7 @@ def _basis_notes(rows, source_id, filing_id):
     latest = rows[-1]
     if latest.get('lease_commitments_not_commenced') is not None:
         notes.append(f'Leases signed but not yet commenced at {latest["fiscal_year_end"]}: '
-                     f'{_money(latest["lease_commitments_not_commenced"])} billion of future lease payments, not in '
+                     f'{_money(latest["lease_commitments_not_commenced"])} billion of future lease payments, outside '
                      f'reported lease liabilities ({latest["lease_commitments_not_commenced_concept"]})'
                      f'{f" [{filing_id}]" if filing_id else ""}')
     return notes
@@ -1328,7 +1328,7 @@ def render_baseline(baseline, source_id=None, include_roic=True):
     return '\n'.join(lines + (_roic_lines(rows, ref) if include_roic else []))
 
 
-def render_quarterly(baseline, source_id=None, markdown=False):
+def render_quarterly(baseline, source_id=None, markdown=False, notes_out=None):
     """The quarterly rate-of-change table: one row per quarter, or with ``markdown`` one column per quarter."""
     quarterly = (baseline or {}).get('quarterly') or {}
     rows = quarterly.get('rows') or []
@@ -1355,10 +1355,10 @@ def render_quarterly(baseline, source_id=None, markdown=False):
     notes = []
     derived = [row for row in rows if 'derived' in label(row)]
     if derived:
-        notes.append('Quarters marked derived are not tagged on their own in the company facts (an earnings release may '
-                     'still present them): '
+        notes.append('Quarters marked derived are computed from the filings. '
                      + '; '.join(f'{row["period_end"]} is the {row["revenue_basis"] if row["revenue_basis"] != "reported" else row["operating_income_basis"]}'
-                                 for row in derived))
+                                 for row in derived)
+                     + '. The company facts do not tag these quarters on their own; an earnings release may still present them')
     if any(row.get('revenue_growth_basis') == 'unequal_length' for row in rows):
         notes.append('Growth marked n/m (a vs b days) compares quarters of different length, this quarter\'s days against '
                      'the year-earlier quarter\'s, as in a 53-week year')
@@ -1375,6 +1375,19 @@ def render_quarterly(baseline, source_id=None, markdown=False):
         span = f' ({days} days, a 53-week year)' if isinstance(days, int) and days > 367 else ''
         notes.append(f'Trailing twelve months to {ttm["period"]["end_date"]}{span}: revenue {_money(ttm["revenue"])}, operating '
                      f'income {_money(ttm["operating_income"])}, operating margin {_pct(ttm["operating_margin"])}')
+    if notes_out is not None:
+        # The memo's layout: units in the row labels, notes collected for the method notes.
+        unit = _unit_symbol(quarterly.get('currency', ''))
+        names = {'revenue': f'Revenue ({unit}B)', 'inventory at quarter end': f'Inventory, quarter end ({unit}B)',
+                 'deferred revenue at quarter end': f'Deferred revenue, quarter end ({unit}B)'}
+        notes_out.extend(note + '.' for note in notes)
+        lines = [f'Fiscal quarters ending on the dates shown{ref}. Ratios are computed from reported values; n/a means '
+                 'not reported.', '', '| Measure | ' + ' | '.join(f'{row["period_end"]} {label(row)}' for row in rows) + ' |',
+                 '|---|' + '---:|' * len(rows)]
+        for name, cell in measures:
+            text = names.get(name, name[0].upper() + name[1:])
+            lines.append(f'| {text} | ' + ' | '.join(cell(row) for row in rows) + ' |')
+        return '\n'.join(lines)
     if markdown:
         lines = ['', caption, '', '| Measure | ' + ' | '.join(f'{row["period_end"]} {label(row)}' for row in rows) + ' |',
                  '|---|' + '---:|' * len(rows)]
@@ -1387,6 +1400,21 @@ def render_quarterly(baseline, source_id=None, markdown=False):
         lines.append('Quarterly notes:')
         lines.extend('- ' + note + '.' for note in notes)
     return '\n'.join(lines)
+
+
+def quarterly_markdown(baseline, source_id=None):
+    """The memo's quarterly table: (lines, notes); notes go to the memo's method notes."""
+    notes = []
+    text = render_quarterly(baseline, source_id, notes_out=notes)
+    return (text.split('\n') if text else []), notes
+
+
+# Currency symbols for table headers; codes without one print as the code.
+_SYMBOLS = {'USD': '$', 'EUR': '€', 'GBP': '£', 'JPY': '¥'}
+
+
+def _unit_symbol(currency):
+    return _SYMBOLS.get(currency, (currency + ' ') if currency else '')
 
 
 def render_roic(baseline, source_id=None):
@@ -1467,17 +1495,18 @@ def _roic_lines(rows, ref):
     lines += ['ROIC basis:',
               *(['- * No operating income is reported: EBIT is pretax income plus net interest expense, so other '
                  'non-operating items stay in it.'] if marked else []),
-              '- NOPAT is EBITA (operating income plus amortization of acquired intangibles plus the interest in operating '
-              'lease cost, estimated as the average operating lease liability times its weighted-average discount rate) '
-              'times one minus the cash tax rate: the tax provision less deferred tax expense, over pretax income; the '
-              'effective rate where deferred taxes are unreported, 25% where neither rate is between 0% and 50%.',
+              '- NOPAT is EBITA times one minus the cash tax rate. EBITA is operating income plus amortization of acquired '
+              'intangibles plus the interest in operating lease cost, which is the average operating lease liability times '
+              'its weighted-average discount rate. The cash tax rate is the tax provision less deferred tax expense, over '
+              'pretax income. The effective rate applies where deferred taxes are unreported, and 25% where neither rate '
+              'is between 0% and 50%.',
               '- Invested capital is total assets less current liabilities other than debt, less cash and current '
               'securities above an operating balance of 2% of revenue, less noncurrent securities and equity investments. '
               'ROIC divides NOPAT by the average of opening and closing invested capital.',
               '- Incremental ROIC is the NOPAT change over three years divided by the change in invested capital over the '
-              'three years ending a year earlier. It is noisy; the method warns against comparing it directly with the cost '
-              'of capital. It is not meaningful (n/m) when capital fell, or rose by less than a tenth of the average of the '
-              'two capital figures.',
+              'three years ending a year earlier. It is noisy, and the method warns against comparing it directly with the '
+              'cost of capital. It is n/m when capital fell or rose by less than a tenth of the average of the two capital '
+              'figures.',
               *tax,
               ('- Intangibles capitalized. ' + ' '.join(capitalization) + ' Amortization is straight line from the year '
                'after the spending; NOPAT adds the year\'s investment less its amortization and invested capital adds the '
@@ -1485,10 +1514,9 @@ def _roic_lines(rows, ref):
                if adjusted and capitalization else
                '- ROIC with intangibles capitalized is not shown: ' + absent.get(status, 'the inputs are incomplete') + '.'),
               '- No adjustment is made for restructuring charges, impairments or one-time tax items, which the paper '
-              'removes; years that contain them are shown as reported (a tax rate outside 0-50% falls back as noted).',
-              '- For reference, Mauboussin and Callahan ("ROIC and Intangible Assets", November 2022) report a median 2021 '
-              'ROIC of 8.8% for Russell 3000 companies outside financials and real estate (9.0% with intangibles '
-              'capitalized).']
+              'removes. Years that contain them are shown as reported, and a tax rate outside 0-50% falls back as noted.',
+              '- Mauboussin and Callahan report a median 2021 ROIC of 8.8% for Russell 3000 companies outside financials '
+              'and real estate, and 9.0% with intangibles capitalized ("ROIC and Intangible Assets", November 2022).']
     return lines
 
 
@@ -1518,3 +1546,52 @@ def render_breakdowns(tables, source_id=None):
                              ', margin ' + ' / '.join(_pct(v) for v in entry['operating_margin']))
             lines.append('- ' + '; '.join(parts))
     return '\n'.join(lines)
+
+
+def _reader_label(label):
+    """'IPhone' is iPhone in the reader's table; other labels are unchanged."""
+    return re.sub(r'^I(?=[A-Z][a-z])', 'i', label)
+
+
+def breakdown_markdown(tables, source_id=None, currency='USD'):
+    """The memo's breakdown tables, one revenue table per axis and a margin table where margins exist: (lines, notes)."""
+    if not tables:
+        return [], []
+    ref = f' [{source_id}]' if source_id else ''
+    titles = {'product_or_service': 'Revenue by product or service', 'segment': 'Revenue by reportable segment',
+              'geography': 'Revenue by geography'}
+    lines, notes = [], ['Breakdown members can overlap and are not summed.']
+    for axis, table in tables.items():
+        ends = table['fiscal_year_ends']
+        years = [end[:4] for end in ends]
+        currency = table.get('currency') or currency or 'USD'
+        unit = _unit_symbol(currency)
+        members = table['members']
+        lines += ['', f'### {titles.get(axis, axis)}', '', f'Fiscal years ending {", ".join(ends)}{ref}.', '']
+        lines += ['| Member | ' + ' | '.join(f'{year} ({unit}B)' for year in years) + ' | ' +
+                  ' | '.join(f'Growth {year}' for year in years[:-1]) + ' |',
+                  '|---|' + '---:|' * (2 * len(years) - 1)]
+        for entry in members:
+            growth = (entry['revenue_growth'][:-1] or [None]) if len(years) > 1 else []
+            growth = (growth + [None] * (len(years) - 1))[:len(years) - 1]
+            lines.append(f'| {_reader_label(entry["label"])} | ' + ' | '.join(_money(v) for v in entry['revenue']) + ' | ' +
+                         ' | '.join(_pct(v) for v in growth) + ' |')
+        margins = [entry for entry in members if 'gross_margin' in entry or 'operating_margin' in entry]
+        if margins:
+            gross = any('gross_margin' in entry for entry in margins)
+            operating = any('operating_margin' in entry for entry in margins)
+            header = (['Member'] + ([f'Gross margin {year}' for year in years] if gross else []) +
+                      ([f'Operating margin {year}' for year in years] if operating else []))
+            lines += ['', '| ' + ' | '.join(header) + ' |', '|---|' + '---:|' * (len(header) - 1)]
+            for entry in margins:
+                cells = ([_pct(v) for v in entry.get('gross_margin') or [None] * len(years)] if gross else []) + \
+                        ([_pct(v) for v in entry.get('operating_margin') or [None] * len(years)] if operating else [])
+                lines.append(f'| {_reader_label(entry["label"])} | ' + ' | '.join(cells) + ' |')
+            if operating:
+                lines += ['', '| Member | ' + ' | '.join(f'Operating income {year} ({unit}B)' for year in years) + ' |',
+                          '|---|' + '---:|' * len(years)]
+                for entry in margins:
+                    if 'operating_income' in entry:
+                        lines.append(f'| {_reader_label(entry["label"])} | ' +
+                                     ' | '.join(_money(v) for v in entry['operating_income']) + ' |')
+    return lines, notes

@@ -83,7 +83,7 @@ class EngineTextTests(unittest.TestCase):
         self.assertIn('per_share_value_at_house_terminal_growth', row)
         self.assertIn('moves with the comparison', row['fixed_assumptions'])
         text = pipeline.valuation_section(value, valuation.evaluate(value))
-        self.assertIn('Value with house terminal growth', text)
+        self.assertIn('Value at house terminal growth ($)', text)
 
     def test_return_diagnostics_describe_stub_timing(self):
         result = valuation.evaluate(plan())
@@ -427,7 +427,12 @@ class OpusReviewFixTests(unittest.TestCase):
         memo = '# T\n\n## Valuation summary (computed by Python)\n\n| fake | 1 |\n\n## 1. Conclusion\ntext'
         out = pipeline._with_summary(memo, value, result)
         self.assertNotIn('| fake | 1 |', out)
-        self.assertEqual(out.count('## Valuation summary (computed by Python)'), 1)
+        # Changed 2026-11-27 (memo redesign): the first page is "## Summary", and an old-format copy is dropped.
+        self.assertEqual(out.count('## Summary'), 1)
+        self.assertNotIn('## Valuation summary (computed by Python)', out)
+        copied = pipeline._with_summary('# T\n\n## Summary\n\n| fake | 2 |\n\n## 1. Conclusion\ntext', value, result)
+        self.assertNotIn('| fake | 2 |', copied)
+        self.assertEqual(copied.count('## Summary'), 1)
 
     def test_price_requirements_stay_inside_valid_inputs(self):
         result = valuation.evaluate(plan())
@@ -455,9 +460,9 @@ class OpusReviewFixTests(unittest.TestCase):
             delta = row['needed'] if row['status'] == 'solved' else row['at']
             self.assertAlmostEqual(path['year1'], row['house'] + delta)
         summary = pipeline.computed_summary(value, result)
-        self.assertIn('a year compounded over', summary)
-        self.assertIn('average over', summary)
-        self.assertIn('points in every explicit year: ', summary)
+        self.assertIn('| Revenue growth, 10-year compound |', summary)
+        self.assertIn('| EBIT margin, 10-year average |', summary)
+        self.assertIn('points a year, ', pipeline.valuation_section(value, result))
 
     def test_a_contract_refresh_does_not_spend_the_revision_allowance(self):
         from investmentideas import pipeline
@@ -504,13 +509,15 @@ class MultiplesFootnoteTimingTests(unittest.TestCase):
                 'discounting': {'timing': {'stub_years': stub}}}
 
     def test_stub_timing_is_described_when_used(self):
-        text = '\n'.join(pipeline._computed_exhibits(self._result(0.1342), 'USD'))
+        from investmentideas import memo_style
+        text = '\n'.join(sum(pipeline._multiples_parts(self._result(0.1342), memo_style.Style('USD')), []))
         self.assertIn('at its discount time from the valuation date', text)
-        self.assertNotIn('integer model years', text)
+        self.assertNotIn('whole model years', text)
 
     def test_integer_years_are_described_without_a_stub(self):
-        text = '\n'.join(pipeline._computed_exhibits(self._result(0.0), 'USD'))
-        self.assertIn('at integer model years', text)
+        from investmentideas import memo_style
+        text = '\n'.join(sum(pipeline._multiples_parts(self._result(0.0), memo_style.Style('USD')), []))
+        self.assertIn('at whole model years', text)
 
 
 class PlanSourceRuleTests(unittest.TestCase):
@@ -603,15 +610,16 @@ class GapAttributionTests(unittest.TestCase):
         summary = pipeline.computed_summary(value, result)
         rows = result['price_requirements']['rows']
         solved = [row for row in rows if row['status'] == 'solved']
-        self.assertIn('Inputs that alone can bring the base value to the price: ', summary)
-        if len(solved) != 1:
-            self.assertIn('These are alternatives; the inputs interact.', summary)
-        for row in [row for row in rows if row['status'] == 'not_reachable']:
-            self.assertIn('Inputs that cannot', summary)
+        # Changed 2026-11-27 (memo redesign): one row per input states whether it reaches the price alone.
+        table = summary[summary.index('**What the price needs.**'):]
+        self.assertEqual(table.count('cannot reach the price alone'),
+                         len([row for row in rows if row['status'] == 'not_reachable']))
+        self.assertIn('Each row is an alternative, and the inputs interact.', pipeline.valuation_section(value, result))
+        self.assertTrue(solved or 'cannot reach the price alone' in table)
 
     def test_sections_and_review_use_the_computed_attribution(self):
-        self.assertIn('which inputs alone can and cannot bring value to the price', pipeline.SECTIONS)
-        self.assertIn('do not assign the\ndifference between value and price to causes', pipeline.SECTIONS)
+        self.assertIn('which inputs\nalone can and cannot reach the price', pipeline.SECTIONS)
+        self.assertIn('Assign the difference between value and price no cause', pipeline.SECTIONS)
         self.assertNotIn('Say plainly whether the', pipeline.SECTIONS)
         self.assertIn('Scenario drivers are house assumptions', pipeline.SECTIONS)
 
@@ -892,7 +900,7 @@ class ProseCheckTests(unittest.TestCase):
              'diluted_eps': 3.0}], 'concepts': {}}}
         text = '\n'.join(pipeline.reported_tables_section([source]))
         self.assertIn('| Measure | 2025-06-30 |', text)
-        self.assertIn('| revenue | 100.0 |', text)
+        self.assertIn('| Revenue ($B) | 100.0 |', text)
 
 
 class MonitoringDirectionTests(unittest.TestCase):

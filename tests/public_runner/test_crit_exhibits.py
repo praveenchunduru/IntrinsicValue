@@ -405,15 +405,16 @@ class PipelineTests(unittest.TestCase):
         result = evaluate(value)
         summary = pipeline.computed_summary(value, result)
         ratio = result['index_benchmark']['value_to_price']
-        self.assertIn(f'| S&P 500 under the same conventions | index benchmark | n/a | {ratio:.2f} |', summary)
-        self.assertIn('Index benchmark: a stylized S&P 500 at the 2026-03-01 Treasury rate of 4.50%', summary)
+        # Changed 2026-11-27 (memo redesign): the index's basis is a method note.
+        self.assertIn(f'| S&P 500, same conventions |  |  | {ratio:.2f} |', summary)
         self.assertLess(summary.index('| Weighted |'), summary.index('| S&P 500'))
-        panel = '\n'.join(pipeline._market_consistency_exhibits(result, 'USD'))
-        for text in ('(horizon) |', '(rate regime) |', 'Horizon rows change only', 'median base value is USD',
-                     'Largest convention step: '):
+        panel = pipeline.valuation_section(value, result)
+        self.assertIn('The S&P 500 row is a stylized index at the 2026-03-01 Treasury rate of 4.50%', panel)
+        for text in ('### Other horizons', '### Rate regimes', 'Horizon rows change only', 'median base value across',
+                     'Convention rows are alternatives'):
             self.assertIn(text, panel)
         self.assertIn('- No industry-fade row', panel)
-        self.assertEqual(pipeline.computed_summary(value, result).count('Largest convention steps'), 1)
+        self.assertEqual(pipeline.computed_summary(value, result).count('**Conventions that move the value most.**'), 1)
 
     def test_models_and_figure_checks_do_not_see_the_monthly_pairs(self):
         value = history_plan([['2021-08-01', .0123, .0431], ['2026-03-01', RF, ERP]])
