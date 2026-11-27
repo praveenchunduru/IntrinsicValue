@@ -323,7 +323,12 @@ def _refuted_findings(raw, material):
 # A response cut off at its limit is rejected, never used. The open-weight
 # research model overran a 3,500-token limit on a live search lane
 # (2026-11-14), so the limit leaves headroom over the requested length.
-WEB_RESEARCH_TOKENS = 6000
+# Claude Haiku 5.5 reasons without being asked and OpenRouter counts that inside
+# the output limit: a live Microsoft lane (2026-11-26) spent 4,118 of 6,000
+# tokens reasoning and was cut off. Easy-model stages therefore allow 12,000
+# (about $0.03 more reservation per call at Haiku prices).
+WEB_RESEARCH_TOKENS = 12000
+EVIDENCE_SYNTHESIS_TOKENS = 12000
 # Plans are validated strictly and each failure names one defect. A single
 # repair could not clear two independent format defects in one live plan
 # (2026-11-14), which ended the run before a draft existed.
@@ -1666,7 +1671,7 @@ def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
     supplied_model = forecast_plan is not None or state.get('plan')
     supplied_memo = draft is not None or state.get('current_memo')
     if not (supplied_model and supplied_memo):
-        add('evidence_synthesis',easy,'Build a dated evidence table.\nEvidence:\n'+context,6500)
+        add('evidence_synthesis',easy,'Build a dated evidence table.\nEvidence:\n'+context,EVIDENCE_SYNTHESIS_TOKENS)
     if not supplied_model:
         add('valuation_plan',strong,'Build an investment valuation plan.\n'+
             FORECAST_SCHEMA+UNDERWRITING_GUIDANCE+PLAN_SOURCE_RULE+'\nEvidence:\n'+context,12000)
@@ -3896,7 +3901,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'a proposed counterfactual for Python to value. Do not invent the value before calculation. '
                 'If operating expectations are near consensus, say so and identify the actual rate, terminal '
                 'or capitalization disagreement instead of manufacturing contrarianism. '
-                'List the five highest-impact uncertainties.\nEvidence:\n'+context,tokens=6500)
+                'List the five highest-impact uncertainties.\nEvidence:\n'+context,tokens=EVIDENCE_SYNTHESIS_TOKENS)
     stale=[source['id'] for source in state['sources'] if isinstance(source,dict) and isinstance(source.get('data'),dict)
            and source['data'].get('fact_origin')=='sec_companyfacts' and
            (source['data'].get('selection') or {}).get('concepts_sha256')!=CONCEPT_SELECTION_SHA256]
