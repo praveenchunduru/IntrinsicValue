@@ -898,11 +898,15 @@ QUARTER_DAYS = (75, 120)
 # Contract liabilities first: the concept that replaced deferred revenue under ASC 606.
 DEFERRED_REVENUE = ('ContractWithCustomerLiabilityCurrent', 'DeferredRevenueCurrent', 'ContractWithCustomerLiability',
                     'DeferredRevenue')
+# Quarters longer or shorter than their year-earlier quarter by more than this many
+# days get no growth figure: Home Depot's 13-week fourth quarter of fiscal 2025 against
+# 14 weeks a year earlier showed -3.8% where sales per day rose 3.6%.
+QUARTER_LENGTH_DAYS = 3
 
 
 def _reported_periods(gaap, concept, currency, as_of=None):
-    """{(start, end): value} of the latest filing in an annual or quarterly report by ``as_of``."""
-    best = {}
+    """{(start, end): [(value, filed), ...]}: every reported value of the period with each filing date, by ``as_of``."""
+    found = {}
     for unit, rows in ((gaap.get(concept) or {}).get('units') or {}).items():
         if unit != currency or not isinstance(rows, list):
             continue
@@ -911,20 +915,71 @@ def _reported_periods(gaap, concept, currency, as_of=None):
                     not isinstance(row.get('val'), (int, float)) or isinstance(row.get('val'), bool) or
                     not _day(row.get('end')) or not _day(row.get('filed')) or (as_of and row['filed'] > as_of)):
                 continue
-            key = (row.get('start'), row['end'])
-            if key not in best or row['filed'] > best[key][1]:
-                best[key] = (row['val'], row['filed'])
-    return {key: value for key, (value, _) in best.items()}
+            found.setdefault((row.get('start'), row['end']), set()).add((row['val'], row['filed']))
+    return {key: sorted(values, key=lambda item: (item[1], item[0])) for key, values in found.items()}
+
+
+def _latest_value(vintages):
+    return max(vintages, key=lambda item: item[1]) if vintages else None
+
+
+# Two cumulative figures of one fiscal year are paired from filings at most this far
+# apart, the later period filed last: a fourth quarter is the 10-K less the third
+# quarter's 10-Q, both before or both after a restatement. Johnson & Johnson's nine
+# months of 2022 were restated in October 2023 without Kenvue; the 10-K less the
+# restated figure gave a fourth quarter of $34.9 billion against about $23.7 billion.
+VINTAGE_PAIR_DAYS = 200
 
 
 def _quarter_value(series, fiscal_start, start, end, previous_end, fiscal_end):
-    """(value, basis) for one fiscal quarter: as reported, or one cumulative period less another."""
-    if (start, end) in series:
-        return series[(start, end)], 'reported'
-    if previous_end and (fiscal_start, end) in series and (fiscal_start, previous_end) in series:
-        basis = ('fiscal year less nine months' if end == fiscal_end else
-                 'year to date less the previous year to date')
-        return series[(fiscal_start, end)] - series[(fiscal_start, previous_end)], basis
+    """(value, basis, filed) for one fiscal quarter: as reported, or one cumulative period less another.
+
+    A derived quarter pairs the latest filing of the later cumulative period with the
+    latest filing of the earlier one made on or before it; a pair more than
+    VINTAGE_PAIR_DAYS apart mixes vintages and is not used.
+    """
+    direct = _latest_value(series.get((start, end)))
+    if direct:
+        return direct[0], 'reported', direct[1]
+    if not previous_end:
+        return None, None, None
+    later, earlier = series.get((fiscal_start, end)) or [], series.get((fiscal_start, previous_end)) or []
+    if not later or not earlier:
+        return None, None, None
+    for value, filed in sorted(later, key=lambda item: item[1], reverse=True):
+        before = _latest_value([item for item in earlier if item[1] <= filed])
+        if before and (_day(filed) - _day(before[1])).days <= VINTAGE_PAIR_DAYS:
+            basis = ('fiscal year less nine months' if end == fiscal_end else
+                     'year to date less the previous year to date')
+            return value - before[0], basis, filed
+    return None, 'no figures of one vintage', None
+
+
+def _comparative_growth(series, row, prior):
+    """(growth, basis) on the year-earlier quarter from comparatives in the same filings, or (None, None).
+
+    A 10-Q reports each quarter beside the year-earlier one, so the latest filing that
+    reports both gives growth on one basis. A derived quarter uses the same two filings
+    for both years: the fourth quarter is the 10-K's year less the third-quarter 10-Q's
+    nine months, and the 10-K and that 10-Q also report the year-earlier figures.
+    """
+    def by_filing(key):
+        return {filed: value for value, filed in series.get(key) or []}
+    now, then = by_filing((row['period_start'], row['period_end'])), by_filing((prior['period_start'], prior['period_end']))
+    for filed in sorted(set(now) & set(then), reverse=True):
+        if then[filed] and then[filed] > 0:
+            return now[filed] / then[filed] - 1, 'same_filing'
+    (start, previous, _), (prior_start, prior_previous, _) = row['_frame'], prior['_frame']
+    if not previous or not prior_previous:
+        return None, None
+    later, earlier = by_filing((start, row['period_end'])), by_filing((start, previous))
+    prior_later, prior_earlier = by_filing((prior_start, prior['period_end'])), by_filing((prior_start, prior_previous))
+    for first in sorted(set(later) & set(prior_later), reverse=True):
+        for second in sorted(set(earlier) & set(prior_earlier), reverse=True):
+            if second <= first and (_day(first) - _day(second)).days <= VINTAGE_PAIR_DAYS:
+                before = prior_later[first] - prior_earlier[second]
+                if before > 0:
+                    return (later[first] - earlier[second]) / before - 1, 'same_filings'
     return None, None
 
 
@@ -935,8 +990,11 @@ def quarterly_table(payload, as_of=None, quarters=QUARTERS_SHOWN):
     cumulative periods of the same fiscal year: the fourth quarter as the fiscal year
     less nine months, a second or third quarter as one year to date less the last.
     Revenue uses the concept the annual history chose for that fiscal year. Growth
-    compares a quarter with the one ending 350-380 days earlier. Inventory and
-    deferred revenue are balance-sheet values at each quarter end where tagged.
+    compares a quarter with the one ending 350-380 days earlier, from comparatives in
+    the same filings (_comparative_growth), so a restatement between the years is not
+    read as growth; with no such filings it is n/a. Quarters whose lengths differ by more than QUARTER_LENGTH_DAYS (a 14-week
+    quarter against a 13-week one) get no growth figure. Inventory and deferred
+    revenue are balance-sheet values at each quarter end where tagged.
     """
     gaap = ((payload or {}).get('facts') or {}).get('us-gaap') or {}
     years = _fiscal_years(gaap, 4, as_of)
@@ -961,14 +1019,16 @@ def quarterly_table(payload, as_of=None, quarters=QUARTERS_SHOWN):
             start = fiscal_start if previous is None else (_day(previous) + timedelta(days=1)).isoformat()
             if number > 4 or not QUARTER_DAYS[0] <= (_day(end) - _day(start)).days <= QUARTER_DAYS[1]:
                 break
-            sales, sales_basis = _quarter_value(revenue, fiscal_start, start, end, previous, fiscal_end)
+            sales, sales_basis, _ = _quarter_value(revenue, fiscal_start, start, end, previous, fiscal_end)
             if sales is None:
                 break
-            operating, operating_basis = _quarter_value(income, fiscal_start, start, end, previous, fiscal_end)
-            found.append({'period_start': start, 'period_end': end, 'fiscal_quarter': number, 'revenue': sales,
+            operating, operating_basis, _ = _quarter_value(income, fiscal_start, start, end, previous, fiscal_end)
+            found.append({'period_start': start, 'period_end': end, 'days': (_day(end) - _day(start)).days + 1,
+                          'fiscal_quarter': number, 'revenue': sales,
                           'revenue_basis': sales_basis, 'revenue_concept': concept, 'operating_income': operating,
                           'operating_income_basis': operating_basis,
-                          'operating_margin': operating / sales if operating is not None and sales > 0 else None})
+                          'operating_margin': operating / sales if operating is not None and sales > 0 else None,
+                          '_frame': (fiscal_start, previous, fiscal_end)})
             previous = end
         return found
 
@@ -989,17 +1049,31 @@ def quarterly_table(payload, as_of=None, quarters=QUARTERS_SHOWN):
     rows = run
     for row in rows:
         end = _day(row['period_end'])
-        prior = [other for other in rows if 350 <= (end - _day(other['period_end'])).days <= 380]
-        row['revenue_growth'] = (row['revenue'] / prior[0]['revenue'] - 1
-                                 if prior and prior[0]['revenue'] and prior[0]['revenue'] > 0 else None)
+        row['revenue_growth'] = row['revenue_growth_basis'] = None
+        prior = next((other for other in rows if 350 <= (end - _day(other['period_end'])).days <= 380), None)
+        if prior is None:
+            continue
+        if abs(row['days'] - prior['days']) > QUARTER_LENGTH_DAYS:
+            row['revenue_growth_basis'] = 'unequal_length'
+            row['prior_days'] = prior['days']
+            continue
+        for concept in dict.fromkeys((row['revenue_concept'], prior['revenue_concept'])):
+            growth, basis = _comparative_growth(series[concept], row, prior)
+            if basis:
+                row['revenue_growth'], row['revenue_growth_basis'] = growth, basis
+                break
+        else:
+            row['revenue_growth_basis'] = 'no_comparative'
+    for row in rows:
+        row.pop('_frame', None)
     rows = rows[-quarters:]
     if len(rows) < 4:
         return None
     instants = {}
     for name, options in (('inventory', ('InventoryNet',)), ('deferred_revenue', DEFERRED_REVENUE)):
         for option in options:
-            values = {end: value for (start, end), value in _reported_periods(gaap, option, currency, as_of).items()
-                      if start is None}
+            values = {end: _latest_value(vintages)[0]
+                      for (start, end), vintages in _reported_periods(gaap, option, currency, as_of).items() if start is None}
             if any(row['period_end'] in values for row in rows):
                 instants[name] = option
                 for row in rows:
@@ -1016,6 +1090,7 @@ def quarterly_table(payload, as_of=None, quarters=QUARTERS_SHOWN):
         if sales > 0:
             output['trailing_twelve_months'] = {
                 'period': {'start_date': last[0]['period_start'], 'end_date': last[-1]['period_end']},
+                'days': (_day(last[-1]['period_end']) - _day(last[0]['period_start'])).days + 1,
                 'revenue': sales, 'operating_income': operating, 'operating_margin': operating / sales,
                 'quarters': len(last), 'quarters_after_fiscal_year': sum(row['period_end'] > years[-1]['end'] for row in last),
                 'basis': 'The four latest fiscal quarters summed.'}
@@ -1259,8 +1334,12 @@ def render_quarterly(baseline, source_id=None, markdown=False):
         return ''
     ref = f' [{source_id}]' if source_id else ''
     concepts = quarterly.get('concepts') or {}
+    def growth(row):
+        if row.get('revenue_growth_basis') == 'unequal_length':
+            return f'n/m ({row.get("days")} vs {row.get("prior_days")} days)'
+        return _pct(row.get('revenue_growth'))
     measures = [('revenue', lambda row: _money(row.get('revenue'))),
-                ('growth on the year-earlier quarter', lambda row: _pct(row.get('revenue_growth'))),
+                ('growth on the year-earlier quarter', growth),
                 ('operating margin', lambda row: _pct(row.get('operating_margin')))]
     if 'inventory' in concepts:
         measures.append(('inventory at quarter end', lambda row: _money(row.get('inventory'))))
@@ -1277,12 +1356,21 @@ def render_quarterly(baseline, source_id=None, markdown=False):
         notes.append('Quarters marked derived are not reported on their own: '
                      + '; '.join(f'{row["period_end"]} is the {row["revenue_basis"] if row["revenue_basis"] != "reported" else row["operating_income_basis"]}'
                                  for row in derived))
+    if any(row.get('revenue_growth_basis') == 'unequal_length' for row in rows):
+        notes.append('Growth marked n/m (a vs b days) compares quarters of different length, this quarter\'s days against '
+                     'the year-earlier quarter\'s, as in a 53-week year')
+    notes.append('Growth compares figures from the same filing, or for a derived quarter the same two filings, so a '
+                 'restatement between the years is not read as growth' +
+                 ('; n/a where no filing reports both years' if any(row.get('revenue_growth_basis') == 'no_comparative'
+                                                                     for row in rows) else ''))
     if concepts:
         notes.append('Balance-sheet concepts: ' + ', '.join(f'{name.replace("_", " ")} us-gaap:{concept}'
                                                              for name, concept in concepts.items()))
     ttm = quarterly.get('trailing_twelve_months')
     if ttm:
-        notes.append(f'Trailing twelve months to {ttm["period"]["end_date"]}: revenue {_money(ttm["revenue"])}, operating '
+        days = ttm.get('days')
+        span = f' ({days} days, a 53-week year)' if isinstance(days, int) and days > 367 else ''
+        notes.append(f'Trailing twelve months to {ttm["period"]["end_date"]}{span}: revenue {_money(ttm["revenue"])}, operating '
                      f'income {_money(ttm["operating_income"])}, operating margin {_pct(ttm["operating_margin"])}')
     if markdown:
         lines = ['', caption, '', '| Measure | ' + ' | '.join(f'{row["period_end"]} {label(row)}' for row in rows) + ' |',

@@ -405,7 +405,7 @@ class PipelineTests(unittest.TestCase):
         result = evaluate(value)
         summary = pipeline.computed_summary(value, result)
         ratio = result['index_benchmark']['value_to_price']
-        self.assertIn(f'| S&P 500 under the same conventions | index benchmark | — | {ratio:.2f} |', summary)
+        self.assertIn(f'| S&P 500 under the same conventions | index benchmark | n/a | {ratio:.2f} |', summary)
         self.assertIn('Index benchmark: a stylized S&P 500 at the 2026-03-01 Treasury rate of 4.50%', summary)
         self.assertLess(summary.index('| Weighted |'), summary.index('| S&P 500'))
         panel = '\n'.join(pipeline._market_consistency_exhibits(result, 'USD'))

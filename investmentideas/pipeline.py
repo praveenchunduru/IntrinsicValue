@@ -53,6 +53,12 @@ price implies, which inputs alone can and cannot bring value to the price, and t
 the value is most sensitive to; do not restate or reinterpret those figures, and do not assign the
 difference between value and price to causes beyond that computed account. Say in plain words what
 the house concludes and which evidence the conclusion rests on most, citing summary rows by name.
+A convention step is a row of the convention panel marked calculated, with no kind in brackets: the
+base value with one house convention changed. Horizon, rate-regime and country-risk rows are
+exhibits and sensitivity rows show scale; neither is a convention step, so name them as such.
+The index benchmark (the S&P 500 under the same conventions) is context for reading value / price
+under the house conventions. It is not a cause of the difference between value and price or an
+account of it: report it, if at all, as the index's own ratio.
 (2) Variant view (about 400 words): on the inputs that can close the difference, why the house
 forecast differs from what the price requires, with primary evidence. Answer the strongest sourced
 opposing case with operating evidence (demand, pricing, margins, capital needs). If the operating
@@ -78,7 +84,8 @@ FORECAST_SCHEMA = """Return ONLY compact JSON for house forecasts:
  "scenarios":{"bear":{"probability":<decimal>,"tax_rate":<decimal>,"sales_to_capital":<number>},
  "base":{<same fields>},"bull":{<same fields>}}} (Python sets terminal_roic)
 sales_to_capital is one ratio for every forecast year, or {"year1":x,"target":y,"target_year":n}
-(a straight line to the target, then held) when capital intensity changes, as in a capex cycle.
+(a straight line to the target, then held) when capital intensity changes, as in a capex cycle, or
+a list of one ratio per forecast year.
 plus EITHER an operating_model (preferred when the evidence reports revenue by product, service or
 segment; see below), in which case Python derives each scenario's growth and margins from its drivers
 and any stated growth_rates or ebit_margins are dropped, OR, without one, "growth_rates":[<10 annual
@@ -91,7 +98,8 @@ growth, margin, inventory and deferred revenue, the run-rate the first forecast 
 Use 10 forecast years, the same horizon in all scenarios. The base case is the headline value and
 must be written as the expected path; bear and bull are stress cases without probabilities (give
 probability 0, 1 and 0; Python sets them). Never cite frequencies, base rates or historical patterns
-the evidence does not contain. All rates are decimals.
+the evidence does not contain; the supplied sales-growth base-rate tables may be cited by name. All
+rates are decimals.
 The RATE CONVENTION FOR THIS RUN, stated after these instructions, says whether to give
 scenario wacc and terminal_growth.
 Keep each rationale under 100 words. Do not reproduce historical actuals, cash/debt
@@ -140,9 +148,11 @@ scenario's step with evidence [S#] from the sources. Reinvestment starts from th
 too: a scenario whose net reinvestment over years 1-3 (revenue change / sales_to_capital) is below
 two thirds of three years at the last reported net reinvestment, or whose sales-to-capital over those
 years is above 1.5 times the reported incremental rate, is rejected unless capital_efficiency_basis
-(keyed by bear, base, bull) explains it with evidence [S#]. Final-year EBIT margins have hard ceilings with no exception: bear at most the
-reported five-year average operating margin, base and bull at most the reported five-year peak plus
-5 points (less for low-margin businesses, as in the year-1 check).
+(keyed by bear, base, bull) explains it with evidence [S#]; the reported rate counts cash acquisitions as
+investment. Final-year EBIT margins have hard ceilings with no exception: bear at most the reported
+five-year average operating margin (the five-year peak where that average is not positive), base and
+bull at most the higher of the reported five-year peak and the latest twelve-month operating margin,
+plus 5 points (less for low-margin businesses, as in the year-1 check).
 Use aggregate_ebit_margins mode without gross margins/expenses if only category revenues are supported.
 Omit main scenario growth_rates and, in gross mode, ebit_margins: Python derives them.
 When the evidence includes the matched risk-free rate and implied equity risk premium, a dated
@@ -449,7 +459,25 @@ def _amount(value):
     return value if isinstance(value,(int,float)) and not isinstance(value,bool) else None
 
 
-def reinvestment_reference(sources):
+def _anchored_history(sources, anchor_revenue):
+    """(source id, rows) of the reported history, oldest first, whose last year is the revenue anchor year.
+
+    Without ``anchor_revenue`` every history qualifies. With it, a history whose last
+    year's revenue is not the pinned revenue (a valuation date before the latest annual
+    report, or an anchor from another source) describes a different year and is skipped,
+    as reported_rnd_history does.
+    """
+    for sid,rows in _grouped_history(sources).items():
+        if not rows:
+            continue
+        if isinstance(anchor_revenue,(int,float)) and not isinstance(anchor_revenue,bool) and anchor_revenue>0:
+            last=_amount(rows[-1].get('revenue'))
+            if last is None or abs(last-anchor_revenue)>1e-6*anchor_revenue:
+                continue
+        yield sid,rows
+
+
+def reinvestment_reference(sources, anchor_revenue=None):
     """Last reported net reinvestment and the incremental sales-to-capital the plan is held to, or None.
 
     The rate is computed two ways over the same years, the revenue increase over the
@@ -457,15 +485,26 @@ def reinvestment_reference(sources):
     amortization plus acquisitions and finance-lease additions, and (ii) the change in
     invested capital by Mauboussin and Callahan's method ("investment in future growth
     is therefore equivalent to the change in invested capital", ROIC, October 2022,
-    p8), which also counts working capital, operating leases and purchased
-    intangibles. The lower rate, which asks more capital of each unit of growth, is
-    the reference (2026-11-26 critique: Nvidia 9.6 on capital expenditure against 2.2
-    on invested capital). A business whose capital expenditure is below depreciation
-    is still checked when invested capital rose (Apple, Uber). The floor stays on (i),
-    the owner's net reinvestment, and applies only when its last year is positive.
-    A business whose revenue fell has no meaningful rate and is not checked.
+    p8), which also counts working capital and operating leases. The lower rate, which
+    asks more capital of each unit of growth, is the reference (2026-11-26 critique:
+    Nvidia 9.6 on capital expenditure against 2.2 on invested capital). A business
+    whose capital expenditure is below depreciation is still checked when invested
+    capital rose (Apple, Uber). The floor stays on (i), the owner's net reinvestment,
+    and applies only when its last year is positive. A business whose revenue fell
+    has no meaningful rate and is not checked.
+
+    Deals count alike on both measures (review of the merged code, 2026-11-27). Net
+    reinvestment counts a deal at the cash paid. In the invested-capital change, growth
+    in goodwill and acquired intangibles counts only up to the cash paid for
+    acquisitions in those years, so a stock-funded deal adds no investment (Salesforce
+    fiscal 2022, Slack: 0.30 with all the goodwill against 0.70; Uber fiscal 2022: 0.36
+    against 0.55). Leaving acquired intangibles out entirely and adding all cash paid
+    back, as first specified, also dropped their amortization and impairments and
+    tightened references with no deal in them (Coca-Cola 0.83 to 0.41, Salesforce
+    fiscal 2026 1.93 to 1.23). Where no year tags an acquisitions line the payment is
+    unknown, and the capital change stays as reported.
     """
-    for sid,rows in _grouped_history(sources).items():
+    for sid,rows in _anchored_history(sources,anchor_revenue):
         usable=[row for row in rows if _amount(row.get('revenue')) is not None]
         if len(usable)<2:
             continue
@@ -481,9 +520,22 @@ def reinvestment_reference(sources):
             # billion, 21% of capex), counted as reinvestment by owner choice (2026-11-15).
             nets=[row['capital_expenditure']-row['depreciation_amortization']+(row.get('acquisitions') or 0)+
                   (row.get('finance_lease_additions') or 0) for row in recent[1:]]
-        opening,closing=_amount(recent[0].get('invested_capital')),_amount(recent[-1].get('invested_capital'))
+        acquired=sum(_amount(row.get('acquisitions')) or 0 for row in recent[1:])
+        tagged=any(_amount(row.get('acquisitions')) is not None for row in recent[1:])
         consecutive=all(roic_consecutive(a,b) for a,b in zip(recent,recent[1:]))
-        change=closing-opening if opening is not None and closing is not None and consecutive else None
+        opening,closing=_amount(recent[0].get('invested_capital')),_amount(recent[-1].get('invested_capital'))
+        bare=(_amount(recent[0].get('invested_capital_excluding_acquired')),
+              _amount(recent[-1].get('invested_capital_excluding_acquired')))
+        change,capital_measure,uncounted=None,'as_reported',None
+        if opening is not None and closing is not None and consecutive:
+            change=closing-opening
+            if None not in bare and tagged:
+                grown=(closing-bare[1])-(opening-bare[0])
+                if grown>acquired:
+                    # Goodwill and acquired intangibles grew by more than the cash paid: the rest came with stock.
+                    uncounted=grown-acquired
+                    change-=uncounted
+                    capital_measure='stock_deals_excluded'
         rates={}
         if nets and sum(nets)>0:
             rates['capital_expenditure']=growth/sum(nets)
@@ -494,20 +546,27 @@ def reinvestment_reference(sources):
         chosen=min(rates,key=rates.get)
         floor=nets[-1] if nets and nets[-1]>0 else None
         return {'fiscal_year_end':last.get('fiscal_year_end'),'net_reinvestment':floor,
+                'net_reinvestment_status':('reported' if floor is not None else 'not_positive' if nets else 'not_reported'),
                 'capital_expenditure':last.get('capital_expenditure'),
                 'depreciation_amortization':last.get('depreciation_amortization'),
                 'acquisitions':last.get('acquisitions'),'finance_lease_additions':last.get('finance_lease_additions'),
+                'acquisitions_over_years':acquired,
                 'incremental_sales_to_capital':rates[chosen],'sales_to_capital_basis':chosen,
                 'capital_expenditure_sales_to_capital':rates.get('capital_expenditure'),
                 'invested_capital_sales_to_capital':rates.get('invested_capital'),
                 'net_reinvestment_over_years':sum(nets) if nets else None,'invested_capital_change':change,
+                'invested_capital_measure':capital_measure,'acquired_intangibles_not_paid_in_cash':uncounted,
                 'revenue_increase':growth,'years':len(recent)-1,'source_refs':[sid],
                 'basis':'Incremental sales-to-capital is the revenue increase over the last '
                         f'{len(recent)-1} fiscal years divided by each of two measures of the investment in those years: '
-                        'net reinvestment (capital expenditure less depreciation and amortization plus acquisitions and '
+                        'net reinvestment (capital expenditure less depreciation and amortization plus cash acquisitions and '
                         'finance-lease additions where reported) and the change in invested capital (Mauboussin and '
-                        'Callahan method, which includes working capital and operating leases). The lower rate is the '
-                        'reference. The reinvestment floor uses the last year of net reinvestment, where it is positive.'}
+                        'Callahan method, which includes working capital and operating leases), in which growth in '
+                        'goodwill and acquired intangibles counts only up to the cash paid for acquisitions, so a '
+                        'stock-funded deal adds no investment on either measure'+
+                        (f' ({uncounted/1e9:,.1f} billion of it is left out here)' if uncounted else '')+
+                        '. The lower rate is the reference. The reinvestment floor uses the last year of net '
+                        'reinvestment, where it is positive.'}
     return None
 
 
@@ -552,8 +611,13 @@ def reinvestment_continuity(plan, result):
 # 2023 was 42.3% while its last four quarters ran at 45.9%), or failing that a year
 # to date of at least two quarters (one quarter is seasonal). And a ceiling only
 # applies when it is positive, because the engine requires a positive final margin:
-# with a five-year average of -1.5% (Uber at the end of 2023) no bear case could pass.
+# with a five-year average of -1.5% (Uber at the end of 2025) no bear case could pass.
+# There the bear ceiling is the reported five-year peak, so a bear case still ends at
+# or below the best reported year (review of the merged code, 2026-11-27).
 YTD_CEILING_MIN_DAYS = 160
+# A twelve-month span this long holds a 53-week year (Coca-Cola's four quarters to
+# October 2026 span 371 days); the label says so.
+TTM_NORMAL_DAYS = 367
 
 
 def _latest_run_rate(sid, sources, rows, operating_reference):
@@ -567,8 +631,11 @@ def _latest_run_rate(sid, sources, rows, operating_reference):
         ttm=(baseline.get('quarterly') or {}).get('trailing_twelve_months')
         if (isinstance(ttm,dict) and isinstance(ttm.get('operating_margin'),(int,float)) and ttm.get('quarters')==4 and
                 isinstance(last,str) and str((ttm.get('period') or {}).get('end_date'))>last):
+            days=ttm.get('days')
+            span=f' ({days} days)' if isinstance(days,int) and days>TTM_NORMAL_DAYS else ''
             return {'basis':'trailing_twelve_months','period':ttm['period'],'operating_margin':ttm['operating_margin'],
-                    'source_refs':[sid],'label':f'the operating margin for the twelve months to {ttm["period"]["end_date"]}'}
+                    'days':days,'source_refs':[sid],
+                    'label':f'the operating margin for the twelve months to {ttm["period"]["end_date"]}{span}'}
     ytd=(operating_reference or {}).get('year_to_date') if isinstance(operating_reference,dict) else None
     period=(ytd or {}).get('period') or {}
     try:
@@ -582,13 +649,14 @@ def _latest_run_rate(sid, sources, rows, operating_reference):
     return None
 
 
-def cost_path_reference(sources, operating_reference=None):
+def cost_path_reference(sources, operating_reference=None, anchor_revenue=None):
     """Reported five-year peak and average operating margin and the final-year ceilings they set, or None.
 
     ``operating_reference`` (reported_inputs.operating_reference) supplies the year
-    to date where the reported quarters give no twelve-month margin.
+    to date where the reported quarters give no twelve-month margin. With
+    ``anchor_revenue`` the history must end at the revenue anchor year.
     """
-    for sid,rows in _grouped_history(sources).items():
+    for sid,rows in _anchored_history(sources,anchor_revenue):
         margins=[row['operating_margin'] for row in rows[-5:] if isinstance(row.get('operating_margin'),(int,float))]
         if len(margins)<3:
             continue
@@ -597,7 +665,8 @@ def cost_path_reference(sources, operating_reference=None):
                    'source_refs':[sid],
                    'basis':'Reported operating margins over the last five fiscal years in the reported history; the base '
                            'and bull peak also includes the latest twelve-month operating margin, or a year to date of at '
-                           'least two quarters, where it is higher.'}
+                           'least two quarters, where it is higher. Where the five-year average is not positive, the bear '
+                           'ceiling is the five-year peak.'}
         latest=_latest_run_rate(sid,sources,rows,operating_reference)
         if latest:
             reference['latest_run_rate']=latest
@@ -611,14 +680,14 @@ def cost_path_reference(sources, operating_reference=None):
 
 def _margin_ceiling(name, reference):
     """(ceiling, label), or (None, reason) where no positive ceiling exists for the scenario."""
-    if name=='bear':
-        average=reference['average_operating_margin']
-        if average<=0:
-            return None,'no bear ceiling: the reported five-year average is not positive'
-        return average,'the reported five-year average'
     # A business that has not been profitable has no margin history to bound it.
     if reference['max_operating_margin']<=0:
         return None,'no ceiling: no reported year in the history is profitable'
+    if name=='bear':
+        average=reference['average_operating_margin']
+        if average<=0:
+            return reference['max_operating_margin'],'the reported five-year peak (the five-year average is not positive)'
+        return average,'the reported five-year average'
     peak,label=reference['max_operating_margin'],'the reported five-year peak'
     latest=reference.get('latest_run_rate') if isinstance(reference.get('latest_run_rate'),dict) else None
     if latest and isinstance(latest.get('operating_margin'),(int,float)) and latest['operating_margin']>peak:
@@ -648,7 +717,11 @@ def cost_path_continuity(plan, result):
 
 def _evaluate(plan):
     """Value a locked plan and attach the forecast-continuity diagnostics."""
-    result=evaluate(plan)
+    return attach_diagnostics(plan,evaluate(plan))
+
+
+def attach_diagnostics(plan, result):
+    """The continuity checks and base rates a pipeline run adds to a valuation; also used by --revalue."""
     continuity=forecast_continuity(plan,result)
     if continuity:
         result['forecast_continuity']=continuity
@@ -734,18 +807,28 @@ def _reinvestment_breaks(locked, result, known, prior):
                 f'{check["depreciation_amortization"]/1e9:,.1f} billion plus acquisitions'+
                 (' and finance-lease additions' if check.get('finance_lease_additions') else '')+'), and '
                 if isinstance(base,(int,float)) and base>0 else '')
+    acquired=check.get('acquisitions_over_years')
+    both=all(isinstance(check.get(key),(int,float)) for key in ('capital_expenditure_sales_to_capital',
+                                                                 'invested_capital_sales_to_capital'))
+    counts=' Both rates count' if both else ' The rate counts'
+    deals=(f'{counts} the {acquired/1e9:,.1f} billion paid in cash for acquisitions over those years as investment.'
+           if isinstance(acquired,(int,float)) and acquired>0 else
+           f'{counts} cash paid for acquisitions as investment, and none was reported in those years.')
     return [f'Reinvestment over forecast years 1-{REINVESTMENT_WINDOW} departs from the reported run-rate: '+floor_text+
             f'sales-to-capital may be at most {REINVESTMENT_RATIO:g} times the reported {check["years"]}-year incremental rate of '
-            f'{check["incremental_sales_to_capital"]:.2f}'+_rate_basis_text(check)+f' [{", ".join(check["source_refs"])}]. '
-            'Outside the band: '+', '.join(breaks)+
-            '. Set sales_to_capital from the reported rate, or, if falling reinvestment is the forecast, state its evidence '
-            'in capital_efficiency_basis.<scenario> with [S#] citations to sources in the evidence']
+            f'{check["incremental_sales_to_capital"]:.2f}'+_rate_basis_text(check)+f' [{", ".join(check["source_refs"])}].'+deals+
+            ' Outside the band: '+', '.join(breaks)+
+            '. Either bring sales_to_capital and reinvestment within the band, or keep the forecast and state its evidence in '
+            'capital_efficiency_basis.<scenario> with [S#] citations to sources in the evidence: for example that past growth '
+            'came with acquisitions the forecast does not repeat, or that capital needs are changing']
 
 
 def _rate_basis_text(reference):
     """Which measure of investment set the reference rate, and the other rate where there is one."""
+    capital=('the change in invested capital, without goodwill and acquired intangibles not paid in cash'
+             if reference.get('invested_capital_measure')=='stock_deals_excluded' else 'the change in invested capital')
     rates={'capital_expenditure':(reference.get('capital_expenditure_sales_to_capital'),'net reinvestment'),
-           'invested_capital':(reference.get('invested_capital_sales_to_capital'),'the change in invested capital')}
+           'invested_capital':(reference.get('invested_capital_sales_to_capital'),capital)}
     chosen=reference.get('sales_to_capital_basis')
     if chosen not in rates:
         return ''
@@ -837,7 +920,7 @@ CONTINUITY_RULE = ('\nYear-1 continuity: start year-1 gross margins and expenses
                    'margin_continuity_basis.<bear|base|bull> with [S#] citations to sources in the evidence. Start '
                    'reinvestment from the reported net reinvestment and incremental sales-to-capital; a large fall needs '
                    'capital_efficiency_basis.<bear|base|bull> with [S#] citations. Final-year EBIT margins may not exceed the '
-                   'reported five-year average (bear, where that average is positive) or the higher of the reported '
+                   'reported five-year average (bear; the five-year peak where that average is not positive) or the higher of the reported '
                    'five-year peak and the latest twelve-month operating margin, plus 5 points, less for low-margin '
                    'businesses (base and bull).')
 LEGACY_PLAN_NOTE = ('This forecast plan was saved before the market-consistent rate and terminal-growth conventions and is '
@@ -1420,7 +1503,8 @@ def _workflow_contract():
             'review':_digest(REVIEW_SCHEMA), 'sections':_digest(SECTIONS),
             'implementation':_digest({name:hashlib.sha256((root/name).read_bytes()).hexdigest()
                 for name in ('pipeline.py','prompt_context.py','quality.py','valuation.py','inputs.py','operating.py','rates.py','primary_debt.py','companyfacts.py',
-                             'evidence_tables.py','research.py','base_rates.py','country_risk.py')
+                             'evidence_tables.py','research.py','base_rates.py','country_risk.py','cap_fade.py','roic.py',
+                             'macro.py')
                 if (root/name).is_file()})}
 
 
@@ -1474,7 +1558,7 @@ def _refresh_workflow_contract(folder,state):
         report=_render(state['current_memo'],state['sources'],state['gaps'],
             state.get('plan',{}),state.get('valuation'),state)
     else:
-        report='# '+state['ticker']+' — workflow update in progress\n\nChanged research contracts require a fresh draft and review. Prior artifacts remain under revisions/.\n'
+        report='# '+state['ticker']+': workflow update in progress\n\nChanged research contracts require a fresh draft and review. Prior artifacts remain under revisions/.\n'
     (folder/'memo.md').write_text(report,encoding='utf-8')
 
 
@@ -1504,7 +1588,7 @@ def _recover_supplied_evidence(folder,state,evidence):
         state.pop(name,None)
     for name in ('assumptions.json','valuation.json','cashflows.csv','sensitivity.csv'):
         (folder/name).unlink(missing_ok=True)
-    (folder/'memo.md').write_text('# '+state['ticker']+' — supplied evidence recovered\n\nThe saved run omitted accepted evidence. '
+    (folder/'memo.md').write_text('# '+state['ticker']+': supplied evidence recovered\n\nThe saved run omitted accepted evidence. '
         'Its model and memo require a fresh review against the recovered source; prior artifacts remain under revisions/.\n',encoding='utf-8')
 
 
@@ -1875,8 +1959,10 @@ def _proposal_view(proposal):
     view=copy.deepcopy(proposal)
     for scenario in (view.get('scenarios') or {}).values():
         if isinstance(scenario,dict):
-            # Python rebuilds the per-year ratios from sales_to_capital on every lock.
-            scenario.pop('sales_to_capital_path',None)
+            # Python rebuilds the per-year ratios from sales_to_capital, and the R&D share
+            # path and its basis from the expense lines, on every lock.
+            for key in ('sales_to_capital_path','rnd_share_path','rnd_basis'):
+                scenario.pop(key,None)
     model=view.get('operating_model')
     if not isinstance(model,dict) or model.get('earnings_mode')!='gross_profit_less_expenses':
         return view
@@ -2134,13 +2220,14 @@ def _consecutive_years(earlier, later):
     return 350<=days<=380
 
 
-def forecast_capital_reference(sources):
+def forecast_capital_reference(sources, anchor_revenue=None):
     """Operating invested capital (Mauboussin and Callahan method) at the last reported year end, or None.
 
     Only the last reported year counts: an earlier year's capital would start the
-    roll-forward from the wrong balance sheet.
+    roll-forward from the wrong balance sheet. With ``anchor_revenue`` that year must
+    be the revenue anchor year.
     """
-    for sid,rows in _grouped_history(sources).items():
+    for sid,rows in _anchored_history(sources,anchor_revenue):
         capital=rows[-1].get('invested_capital') if rows else None
         if isinstance(capital,(int,float)) and not isinstance(capital,bool) and math.isfinite(capital):
             return {'invested_capital':capital,'fiscal_year_end':rows[-1].get('fiscal_year_end'),'source_refs':[sid],
@@ -2267,12 +2354,13 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
         convention_notes=[*convention_notes,derived_note]
     convention_notes=[*convention_notes,*_pin_repurchase_history(locked,sources,changes)]
     pin_terminal=apply_conventions
-    reference=reinvestment_reference(sources)
+    anchor=(locked.get('actuals') or {}).get('revenue')
+    reference=reinvestment_reference(sources,anchor)
     if reference:
         locked['reinvestment_reference']=reference
     else:
         locked.pop('reinvestment_reference',None)
-    costs=cost_path_reference(sources,reported.get('operating_reference'))
+    costs=cost_path_reference(sources,reported.get('operating_reference'),anchor)
     if costs:
         locked['cost_path_reference']=costs
     else:
@@ -2283,7 +2371,7 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
         locked['country_risk_reference']=country
     else:
         locked.pop('country_risk_reference',None)
-    capital=forecast_capital_reference(sources)
+    capital=forecast_capital_reference(sources,anchor)
     if capital:
         locked['invested_capital_reference']=capital
     else:
@@ -2638,7 +2726,9 @@ def _equity_bridge_exhibit(plan, result, currency):
     shares=(plan or {}).get('share_count_bridge') or {}
     day=((dates.get('net_debt') or {}).get('instant')) or 'the balance-sheet date'
     rows=[('Enterprise value (present value of base-case free cash flow to the firm)',money(base['enterprise_value']),'computed'),
-          ('Less net debt',money(base['net_debt']),f'debt less selected cash on {day}'+cite(refs.get('net_debt')))]
+          (('Plus net cash',money(-base['net_debt']),f'selected cash less debt on {day}'+cite(refs.get('net_debt')))
+           if isinstance(base.get('net_debt'),(int,float)) and base['net_debt']<0 else
+           ('Less net debt',money(base['net_debt']),f'debt less selected cash on {day}'+cite(refs.get('net_debt'))))]
     components=claims.get('components') if isinstance(claims.get('components'),dict) else None
     if components is not None:
         lease=claims.get('finance_lease_claim',0) or 0
@@ -2808,12 +2898,12 @@ def valuation_section(plan, result):
         measurements.append(label+': '+str(when or 'not supplied'))
     timing=(result.get('discounting') or {}).get('timing',{})
     if timing.get('convention')=='stub_v1':
-        lines += ['', 'Measurement dates — '+ '; '.join(measurements)+'.', '',
+        lines += ['', 'Measurement dates: '+ '; '.join(measurements)+'.', '',
                   f'Valuation date {timing["valuation_date"]}: present value is discounted to this date, the first forecast '
                   f'year counts only its unexpired {1-timing["stub_years"]:.0%}, and net debt stays at the '
                   f'{timing["anchor_date"]} annual balance sheet.']
     else:
-        lines += ['', 'Measurement dates — '+ '; '.join(measurements)+'. '
+        lines += ['', 'Measurement dates: '+ '; '.join(measurements)+'. '
                   'Balances are not rolled forward to the quote date; the annual cash-flow model has no stub-period adjustment.']
     lines += _equity_bridge_exhibit(plan, result, currency)
     lines += _continuity_exhibit(result)
@@ -2834,7 +2924,7 @@ def valuation_section(plan, result):
         lines += ['', 'Exact forecast overrides and fixed-input bases are recorded in assumptions.json and valuation.json.']
     operating=result.get('operating_forecasts')
     if operating:
-        lines += ['', '### Calculated operating bridge — base case', '',
+        lines += ['', '### Calculated operating bridge, base case', '',
                   'Whole currency units. GAAP expense paths retain rent and stock compensation; component margins are forward assumptions.', '',
                   '| Forecast year | Revenue | Gross profit | Operating expenses | EBIT | EBIT margin |',
                   '|---|---:|---:|---:|---:|---:|']
@@ -2852,12 +2942,12 @@ def valuation_section(plan, result):
     comparisons=result.get('calibration_comparisons',[])
     if comparisons and any('terminal_growth' in row for row in comparisons):
         def money(value):
-            return f'{value:,.2f}' if isinstance(value,(int,float)) else '—'
+            return f'{value:,.2f}' if isinstance(value,(int,float)) else 'n/a'
         lines += ['', '| Conditional rate method | Initial rate | Terminal rate | Terminal growth | Base value/share | Change from base | Value with house terminal growth |',
                   '|---|---:|---:|---:|---:|---:|---:|']
         for row in comparisons:
             if row.get('per_share_value') is None:
-                lines.append(f'| {row["name"].replace("_"," ")} | {row["wacc"]:.2%} | — | — | not calculated | — | — |')
+                lines.append(f'| {row["name"].replace("_"," ")} | {row["wacc"]:.2%} | n/a | n/a | not calculated | n/a | n/a |')
             else:
                 lines.append(f'| {row["name"].replace("_"," ")} | {row["wacc"]:.2%} | {row["terminal_rate"]:.2%} | '
                              f'{row["terminal_growth"]:.2%} | {money(row["per_share_value"])} | {row["value_change"]["dollar_delta"]:+,.2f} | '
@@ -2870,7 +2960,7 @@ def valuation_section(plan, result):
                   '|---|---:|---:|---:|']
         for row in comparisons:
             if row.get('per_share_value') is None:
-                lines.append(f'| {row["name"].replace("_"," ")} | {row["wacc"]:.2%} | not calculated | — |')
+                lines.append(f'| {row["name"].replace("_"," ")} | {row["wacc"]:.2%} | not calculated | n/a |')
             else:
                 lines.append(f'| {row["name"].replace("_"," ")} | {row["wacc"]:.2%} | {row["per_share_value"]:,.2f} | {row["value_change"]["dollar_delta"]:+,.2f} |')
         lines += ['', 'Only the named rate inputs change. Historical-fit endpoints are not valuation confidence intervals.']
@@ -2970,8 +3060,11 @@ def _reinvestment_text(check):
                     (f' ({row["sales_to_capital"]:.2f})' if row.get('sales_to_capital') is not None else '')
                     for name,row in check['scenarios'].items())
     base=check.get('net_reinvestment')
+    status=check.get('net_reinvestment_status')
     reported=(f'the reported {base/1e9:,.1f} billion a year' if isinstance(base,(int,float)) and base>0 else
-              'the reported results (net reinvestment not positive, so no floor)')
+              'the reported results (capital expenditure or depreciation not reported for every year, so no floor)'
+              if status=='not_reported' else
+              'the reported results (net reinvestment in the last year not positive, so no floor)')
     return (f'Net reinvestment over forecast years 1-{REINVESTMENT_WINDOW} against {reported} (fiscal year ending '
             f'{check["fiscal_year_end"]}; {check["years"]}-year incremental sales-to-capital {check["incremental_sales_to_capital"]:.2f}'
             f'{_rate_basis_text(check)}) [{", ".join(check["source_refs"])}]: {cells}.')
@@ -2987,7 +3080,7 @@ def _cost_path_lines(result):
     return ['', '### Final-year margin against the reported history', '',
             f'Reported operating margins over {check["years"]} years: peak {check["max_operating_margin"]:.1%}, average '
             f'{check["average_operating_margin"]:.1%} [{", ".join(check["source_refs"])}]'+_run_rate_text(check)+
-            f'. Final-year EBIT margin: {cells}. Ceilings: bear at most the average where it is positive; base and bull at '
+            f'. Final-year EBIT margin: {cells}. Ceilings: bear at most the average (the peak where the average is not positive); base and bull at '
             'most the higher of the peak and the latest twelve-month margin, plus 5 points (less for low-margin '
             'businesses, as in the year-1 check).']
 
@@ -3046,16 +3139,23 @@ def _market_consistency_exhibits(result, currency):
     if panel:
         lines += ['', '### Value under alternative conventions (base case, one change at a time)', '',
                   '| Alternative | Value per share | Change | Status |', '|---|---:|---:|---|']
-        kinds={'sensitivity':' (sensitivity)','horizon':' (horizon)','rate_regime':' (rate regime)'}
+        kinds={'sensitivity':' (sensitivity)','horizon':' (horizon)','rate_regime':' (rate regime)',
+               'country_risk':' (country risk)'}
         for row in panel['rows']:
-            value=f'{currency} {row["per_share_value"]:,.2f}' if row.get('per_share_value') is not None else '—'
-            change=f'{row["dollar_delta"]:+,.2f}' if row.get('dollar_delta') is not None else '—'
+            value=f'{currency} {row["per_share_value"]:,.2f}' if row.get('per_share_value') is not None else 'n/a'
+            change=f'{row["dollar_delta"]:+,.2f}' if row.get('dollar_delta') is not None else 'n/a'
             status=row['status'].replace('_',' ')+kinds.get(row.get('kind'),'')
             lines.append(f'| {row["label"]} | {value} | {change} | {status} |')
         if panel.get('largest_meaningful_step'):
             lines += ['', f'Largest convention step: {panel["largest_meaningful_step"].replace("_"," ")}. Rows carry no probability and are never tuned to the price.']
+        exhibits=_largest_exhibits(panel,lambda value: f'{currency} {value:,.2f}')
+        if exhibits:
+            lines += ['', exhibits]
         if panel.get('exhibit_basis') and any(row.get('kind') in ('horizon','rate_regime') for row in panel['rows']):
             lines += ['', panel['exhibit_basis']]
+        if any(row.get('kind')=='country_risk' for row in panel['rows']):
+            lines += ['', 'The country risk row is an exhibit too: it adds the revenue-weighted country premium to the cost '
+                          'of equity, is not ranked with the convention rows and carries no probability.']
         history=panel.get('rate_history') or {}
         if isinstance(history.get('median_per_share_value'),(int,float)):
             lines += ['', f'Across the {history["calculated"]} monthly pairs from {history["first"][:7]} to {history["last"][:7]} the '
@@ -3075,8 +3175,25 @@ def _market_consistency_exhibits(result, currency):
                 lines.append(f'| {row["label"]} | {row["unlevered_beta"]:.3f} | {row["wacc"]:.2%} | {currency} {row["per_share_value"]:,.2f} | '
                              f'{row["value_change"]["dollar_delta"]:+,.2f} |')
             else:
-                lines.append(f'| {row["label"]} | — | — | not calculated | — |')
+                lines.append(f'| {row["label"]} | n/a | n/a | not calculated | n/a |')
     return lines
+
+
+def _largest_exhibits(panel, money):
+    """One line naming the largest horizon row and the largest rate-regime row, labelled as exhibits, or ''."""
+    rows=[row for row in ((panel or {}).get('rows') or []) if row.get('status')=='calculated' and
+          isinstance(row.get('dollar_delta'),(int,float)) and isinstance(row.get('per_share_value'),(int,float))]
+    parts=[]
+    for kind,name in (('horizon','horizon'),('rate_regime','rate regime')):
+        candidates=[row for row in rows if row.get('kind')==kind]
+        if candidates:
+            row=max(candidates,key=lambda item:abs(item['dollar_delta']))
+            parts.append(f'{name}, {row["label"].split(" (")[0].split(":")[0]} {money(row["per_share_value"])} '
+                         f'({row["dollar_delta"]:+,.2f})')
+    if not parts:
+        return ''
+    return ('Largest exhibit rows (beside the convention panel, not convention steps and not ranked with them): '+
+            '; '.join(parts)+'.')
 
 
 def _implied_return_sentence(row, which, money):
@@ -3137,7 +3254,7 @@ def computed_summary(plan, result):
     # only against 1.00 (the house pairing values the index itself below its price).
     benchmark=result.get('index_benchmark') or {}
     if isinstance(benchmark.get('value_to_price'),(int,float)):
-        lines.append(f'| S&P 500 under the same conventions | index benchmark | — | {benchmark["value_to_price"]:.2f} |')
+        lines.append(f'| S&P 500 under the same conventions | index benchmark | n/a | {benchmark["value_to_price"]:.2f} |')
     if headline:
         lines+=['','The base case is the headline value: the expected path. Bear and bull are stress cases without probabilities.']
     dates=(plan or {}).get('input_dates',{}) if isinstance((plan or {}).get('input_dates'),dict) else {}
@@ -3203,7 +3320,9 @@ def computed_summary(plan, result):
             if row['kind']=='shift':
                 return f'{row["needed"]*100:+.1f} points in every explicit year'
             if row['input']=='sales_to_capital':
-                return f'{capital_path(row)} to {row["needed"]:.2f}'+(' in every year' if row.get('house_sales_to_capital_path') else '')
+                if row.get('house_sales_to_capital_path'):
+                    return f'one ratio of {row["needed"]:.2f} in every year in place of {capital_path(row)}'
+                return f'{capital_path(row)} to {row["needed"]:.2f}'
             return f'{row["house"]:.2%} to {row["needed"]:.2%}'
         closes=[row for row in requirements if row['status']=='solved']
         cannot=[row for row in requirements if row['status']=='not_reachable']
@@ -3222,6 +3341,9 @@ def computed_summary(plan, result):
         lines+=['','Largest convention steps (base case, one change at a time; never added together): '+
                 '; '.join(f'{row["label"].split(" (")[0].split(":")[0]} {money(row["per_share_value"])} ({row["dollar_delta"]:+,.2f})'
                           for row in panel)+'.']
+    exhibits=_largest_exhibits(result.get('convention_panel'),money)
+    if exhibits:
+        lines+=['',exhibits]
     continuity=result.get('forecast_continuity')
     if continuity:
         lines+=['',f'Year-1 EBIT margin against the reported {continuity["reported_operating_margin"]:.1%}: '+
@@ -3253,7 +3375,7 @@ def _with_summary(memo, plan, result):
 def _render(memo, sources, gaps, plan, result, state):
     # The register carries the same tier label as the memo text.
     refs = '\n'.join(f'- [{s["id"]}{" unverified" if s.get("source_tier") in UNVERIFIED_TIERS else ""}] '
-                     f'{s["title"]} — {s.get("url") or "supplied text"}; '
+                     f'{s["title"]}, {s.get("url") or "supplied text"}; '
                      f'retrieved {s.get("retrieved_at","not recorded")}' for s in sources)
     unresolved = [f for r in state.get('review_history',[]) for f in r.get('findings',[])]
     # Only the latest revision's unresolved findings apply; prior findings remain
@@ -3562,7 +3684,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         for field in ('plan','valuation','current_memo'):
             state.pop(field,None)
         state.setdefault('supplement_history',[]).append({'source_ids':added,'at':datetime.now(timezone.utc).isoformat()})
-        (folder/'memo.md').write_text('# '+ticker+' — evidence update in progress\n\nNew evidence requires a recomputed model and a fresh review. Previous frozen drafts remain under revisions/.\n',encoding='utf-8')
+        (folder/'memo.md').write_text('# '+ticker+': evidence update in progress\n\nNew evidence requires a recomputed model and a fresh review. Previous frozen drafts remain under revisions/.\n',encoding='utf-8')
         checkpoint()
     if _refresh_primary_focus(folder,state['sources']):
         if state.get('complete'):
@@ -3609,7 +3731,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             if gate.get('refused') else
             'Supply primary disclosures with --sources, or start a fresh non-snapshot run with --sec-contact'
             if source_snapshot is not None else 'Supply primary disclosures with --sources or retry SEC access with --sec-contact')
-        (folder/'memo.md').write_text('# '+ticker+' — financial input coverage incomplete\n\n'+message+
+        (folder/'memo.md').write_text('# '+ticker+': financial input coverage incomplete\n\n'+message+
             '\n\n'+recovery+'. '
             'No paid research was started for this attempt.\n',encoding='utf-8')
         checkpoint()
@@ -3767,14 +3889,16 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         if note not in state['gaps']:
             state['gaps'].append(note)
     if 'plan' not in state:
+        anchor_revenue=(reported.get('actuals') or {}).get('revenue')
         prompt=('Build an investment valuation plan for '+ticker+'. Ground actuals in supplied evidence; '
                 'use primary reports where accessible, and reconcile secondary-series dates and definitions.\n'+
                 FORECAST_SCHEMA+_rate_convention(state['sources'],reported.get('currency'))+UNDERWRITING_GUIDANCE+PLAN_FIELD_RULES+PLAN_SOURCE_RULE+'\nIMMUTABLE reported inputs (copy these values exactly; forecast judgments only):\n'+json.dumps(reported)+
                 (('\nReported reinvestment (reference for years 1-3 reinvestment and sales_to_capital):\n'+
-                  json.dumps(reinvestment_reference(state['sources']))) if reinvestment_reference(state['sources']) else '')+
+                  json.dumps(reinvestment_reference(state['sources'],anchor_revenue)))
+                 if reinvestment_reference(state['sources'],anchor_revenue) else '')+
                 (('\nReported operating margins (reference for the final-year margin ceilings):\n'+
-                  json.dumps(cost_path_reference(state['sources'],reported.get('operating_reference'))))
-                 if cost_path_reference(state['sources'],reported.get('operating_reference')) else '')+
+                  json.dumps(cost_path_reference(state['sources'],reported.get('operating_reference'),anchor_revenue)))
+                 if cost_path_reference(state['sources'],reported.get('operating_reference'),anchor_revenue) else '')+
                 base_rates.plan_context(reported)+
                 EVIDENCE_ABOVE+'\nDiligence synthesis:\n'+thesis+'\nRetrieval gaps:\n'+gaps+
                 # A rerun after a discarded plan would otherwise resend the identical request.

@@ -500,7 +500,7 @@ def run(ticker, key, *, profile='economy', budget=2.0, directory='research-outpu
         finally:
             save(state_path, state)
     refs = '\n'.join(f'- [{s["id"]}] {s["title"]}: {s.get("url") or "local supplied text"}' for s in state['sources'])
-    report = '# ' + ticker + ' — research draft\n\n' + state['stages']['memo'] + '\n\n## Source register\n' + refs
+    report = '# ' + ticker + ': research draft\n\n' + state['stages']['memo'] + '\n\n## Source register\n' + refs
     report += '\n\n## Run disclosure\nModel-generated research; not certified by the subscription publication pipeline. '
     report += 'Figures may be stale. No investment advice.\n\n' + '\n'.join('- ' + gap for gap in state['gaps'])
     (folder / 'memo.md').write_text(report, encoding='utf-8')

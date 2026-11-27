@@ -2662,7 +2662,8 @@ def main():
     args = parser.parse_args()
     try:
         assumptions = json.loads(args.assumptions.read_text(encoding='utf-8'))
-        results = evaluate(assumptions)
+        from .pipeline import attach_diagnostics  # the pipeline's diagnostics, as for --revalue
+        results = attach_diagnostics(assumptions, evaluate(assumptions))
         paths = save_valuation(args.output or args.assumptions.parent, assumptions, results)
         print(f"{results['currency']} {results['weighted_per_share_value']:.2f} per share (scenario weighted)")
         print(paths['valuation.json'])

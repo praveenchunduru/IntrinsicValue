@@ -89,15 +89,19 @@ class CommandLineTests(unittest.TestCase):
         module = types.ModuleType('investmentideas.valuation')
         module.evaluate = Mock(return_value={'base':123})
         module.save_valuation = Mock()
+        # Changed 2026-11-27: the pipeline's diagnostics are attached before saving.
+        diagnostics = types.ModuleType('investmentideas.pipeline')
+        diagnostics.attach_diagnostics = Mock(side_effect=lambda plan, result: result)
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp)/'edited.json'; path.write_text('{"edited": true}')
             target = Path(temp)/'recomputed'
-            with patch.dict(sys.modules,{'investmentideas.valuation':module}), \
+            with patch.dict(sys.modules,{'investmentideas.valuation':module,'investmentideas.pipeline':diagnostics}), \
                     patch.object(sys,'argv',['investmentideas','--revalue',str(path),'--output',str(target)]), \
                     patch.dict(os.environ,{},clear=True), patch.object(cli,'run') as quick, \
                     contextlib.redirect_stdout(io.StringIO()):
                 cli.main()
             module.evaluate.assert_called_once_with({'edited':True})
+            diagnostics.attach_diagnostics.assert_called_once_with({'edited':True},{'base':123})
             module.save_valuation.assert_called_once_with(target,{'edited':True},{'base':123})
             quick.assert_not_called()
 
