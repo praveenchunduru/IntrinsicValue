@@ -73,12 +73,14 @@ def hand_value(inputs, name='base', *, stub=90 / 365, horizon=10, flat=None, ter
             nopat = revenue * scenario['ebit_margins'][year - 1] * (1 - scenario['tax_rate'])
             fcff = nopat - (revenue - previous) / scenario['sales_to_capital']
         else:
+            # A steady-state year pays for its own revenue increase at the return on new capital.
             revenue *= 1 + g
             nopat = revenue * scenario['ebit_margins'][-1] * (1 - scenario['tax_rate'])
-            fcff = nopat * (1 - g / roic)
+            fcff = nopat - (revenue - previous) * scenario['ebit_margins'][-1] * (1 - scenario['tax_rate']) / roic
         cumulative *= 1 + rates[year - 1]
         value += fcff * (1 - stub if year == 1 else 1) * (1 + rates[0]) ** stub / cumulative
-    terminal_nopat = revenue * (1 + g) * scenario['ebit_margins'][-1] * (1 - scenario['tax_rate'])
+    # The capital in place at the end of the rate path supports that year's NOPAT (2026-11-26).
+    terminal_nopat = revenue * scenario['ebit_margins'][-1] * (1 - scenario['tax_rate'])
     value += terminal_nopat * (1 - g / roic) / (terminal - g) * (1 + rates[0]) ** stub / cumulative
     return (value - inputs['actuals']['net_debt']) / inputs['actuals']['shares_outstanding']
 
@@ -141,15 +143,23 @@ class RatePathTests(unittest.TestCase):
         self.assertNotIn('phase', result['scenarios']['base']['cashflows'][0])
         self.assertIn('discount_rate', result['reverse_dcf'])
 
-    def test_published_examples_still_recompute_exactly(self):
+    def test_published_examples_recompute_with_only_the_continuing_value_retimed(self):
+        # The shipped constant-rate examples keep every explicit cash flow. Their continuing
+        # value now capitalizes year-T NOPAT, which the capital in place supports, instead of
+        # year-T NOPAT grown once more (2026-11-26), so it falls by exactly 1 / (1 + g).
         root = Path(__file__).resolve().parents[2] / 'examples'
         for name in ('AAPL-2026-11-06', 'AAPL-2026-11-06-revised'):
             saved = json.loads((root / name / 'valuation.json').read_text())
-            result = evaluate(json.loads((root / name / 'assumptions.json').read_text()))
+            assumptions = json.loads((root / name / 'assumptions.json').read_text())
+            result = evaluate(assumptions)
             with self.subTest(example=name):
-                self.assertEqual(result['weighted_per_share_value'], saved['weighted_per_share_value'])
                 for scenario in ('bear', 'base', 'bull'):
-                    self.assertEqual(result['scenarios'][scenario]['cashflows'], saved['scenarios'][scenario]['cashflows'])
+                    now, then = result['scenarios'][scenario], saved['scenarios'][scenario]
+                    self.assertEqual(now['cashflows'], then['cashflows'])
+                    self.assertAlmostEqual(now['pv_forecast_fcff'] / then['pv_forecast_fcff'], 1, places=12)
+                    growth = assumptions['scenarios'][scenario]['terminal_growth']
+                    self.assertAlmostEqual(now['pv_terminal_value'] / then['pv_terminal_value'], 1 / (1 + growth), places=12)
+                self.assertLess(result['weighted_per_share_value'], saved['weighted_per_share_value'])
 
 
 class TerminalGrowthTests(unittest.TestCase):

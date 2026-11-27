@@ -110,14 +110,21 @@ class MemoDiagnosticsTests(unittest.TestCase):
         # The actual DCF terminal amount is preserved, not replaced by the exhibit.
         self.assertAlmostEqual(result['scenarios']['base']['terminal_enterprise_value'], 1_500_000_000)
 
-    def test_terminal_next_year_and_final_forecast_denominators_are_distinct(self):
+    def test_capitalized_nopat_is_final_year_nopat_unless_tax_or_rnd_change_it(self):
+        # The continuing value capitalizes year-T NOPAT, which the capital in place supports
+        # (2026-11-26); it was year-T NOPAT grown once more (153 million here).
         inputs = plan()
         inputs['scenarios']['base']['terminal_growth'] = .02
         case = evaluate(inputs)['computed_diagnostics']['valuation_multiples']['scenarios']['base']['original_dcf_exit']
         self.assertEqual(case['final_forecast_nopat'], 150_000_000)
-        self.assertAlmostEqual(case['terminal_year_nopat'], 153_000_000)
-        self.assertAlmostEqual(case['ev_to_final_forecast_nopat']['value'] /
-                               case['ev_to_terminal_year_nopat']['value'], 1.02)
+        self.assertAlmostEqual(case['terminal_year_nopat'], 150_000_000)
+        # A terminal tax rate and the net R&D add-back each make the two denominators differ.
+        inputs['scenarios']['base'].update(terminal_tax_rate=.2, terminal_rnd_share=.1)
+        case = evaluate(inputs)['computed_diagnostics']['valuation_multiples']['scenarios']['base']['original_dcf_exit']
+        amortized = sum(1.02 ** -age for age in range(1, 7)) / 6
+        self.assertAlmostEqual(case['terminal_year_nopat'], 1e9 * .2 * .8 + 1e8 * (1 - amortized))
+        self.assertAlmostEqual(case['ev_to_final_forecast_nopat']['value'] / case['ev_to_terminal_year_nopat']['value'],
+                               case['terminal_year_nopat'] / 150_000_000)
 
     def test_missing_quote_and_nonpositive_earnings_do_not_make_fake_multiples(self):
         inputs = plan()

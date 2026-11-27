@@ -148,9 +148,10 @@ class OperatingUnitLabelTests(unittest.TestCase):
         with patch.object(pipeline, 'canonical_reported_inputs', return_value=fixed), \
                 patch.object(pipeline, 'pin_reported_inputs', side_effect=pinned):
             locked, changes = pipeline._lock_plan(plan_value, [])
-        # The house terminal return (the terminal discount rate) is pinned on every
-        # plan; these tests concern the other normalizations.
-        return locked, [change for change in changes if not change['field'].endswith('.terminal_roic')]
+        # The house terminal return (the terminal discount rate) and the continuing value's
+        # R&D share are pinned on every plan; these tests concern the other normalizations.
+        return locked, [change for change in changes
+                        if not change['field'].endswith(('.terminal_roic', '.terminal_rnd_share'))]
 
     def test_a_currency_code_written_as_the_unit_is_corrected_and_recorded(self):
         proposal = inputs()
