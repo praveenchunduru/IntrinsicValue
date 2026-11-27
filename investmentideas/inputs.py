@@ -1881,6 +1881,10 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
         skipped.append(f'No outstanding share count is reported on the net-debt balance-sheet date ({anchor.isoformat()}) or '
                        f'within {SHARE_DATE_WINDOW_DAYS} days after it; a later count would not match net debt. Supply a '
                        'reviewed primary count for that date')
+    elif not facts:
+        # Nothing was collected to count from: say so, rather than suggest a share-class problem.
+        skipped.append('No SEC company facts were collected, so there is no reported share count; supply a reviewed '
+                       'primary total or rerun once SEC data can be fetched')
     else:
         skipped.append('Outstanding shares are not reported as one entity-wide amount (for example, only by share class); '
                        'supply a reviewed primary total')
@@ -2073,7 +2077,7 @@ def operating_company_gate(sources, reported=None):
         kind = 'bank' if int(sic) in BANK_SIC else 'insurer' if int(sic) in INSURER_SIC else None
     reasons = []
     if kind:
-        reasons.append(f'the issuer is a {kind} by SEC industry code {sic}' + (f' ({description})' if description else '') +
+        reasons.append(f'the issuer is {"an" if kind[0] in "aeiou" else "a"} {kind} by SEC industry code {sic}' + (f' ({description})' if description else '') +
                        '; deposits or policyholder funds are operating liabilities, so a free cash flow to the firm '
                        'less net debt does not value its equity')
     if operating_income is False:
@@ -2083,3 +2087,67 @@ def operating_company_gate(sources, reported=None):
             'operating_income_reported': operating_income, 'reasons': reasons,
             'message': ('The operating-company valuation model does not apply: ' + '; and '.join(reasons) + '.')
             if reasons else None}
+
+
+def _class_symbol(value):
+    """One spelling per share class: BRK.B, BRK-B and brk/b compare equal."""
+    return re.sub(r'[.\-/]', '-', value.strip().upper()) if isinstance(value, str) and value.strip() else None
+
+
+def snapshot_entities(sources):
+    """The tickers, SEC CIKs and issuer names a source snapshot states about its company."""
+    symbols, ciks, issuers = set(), set(), set()
+    for source in sources if isinstance(sources, list) else []:
+        if not isinstance(source, dict) or not isinstance(source.get('data'), dict):
+            continue
+        data = source['data']
+        if source.get('kind') in ('market_snapshot', 'financial_timeseries'):
+            symbols.add(_class_symbol(data.get('symbol')))
+        if source.get('kind') == 'historical_equity_beta':
+            symbols.add(_class_symbol(data.get('equity_symbol')))
+        metadata = data.get('metadata') if isinstance(data.get('metadata'), dict) else {}
+        if source.get('source_tier') in ('regulatory_primary', 'issuer_primary') and metadata:
+            symbols.add(_class_symbol(metadata.get('ticker')))
+            ciks.add(_cik(metadata.get('cik')))
+            if isinstance(metadata.get('issuer'), str) and metadata['issuer'].strip():
+                issuers.add(metadata['issuer'].strip())
+    symbols.discard(None)
+    ciks.discard(None)
+    return symbols, ciks, issuers
+
+
+def snapshot_entity_conflict(ticker, sources, directory=None):
+    """A plain refusal when a snapshot describes another company than ``ticker``, else None.
+
+    The SEC CIK decides when both sides have one: the requested ticker's CIK comes from
+    the bundled SEC directory (``directory`` maps CIK rows as in company_tickers.json),
+    so share classes of one issuer (GOOG and GOOGL) match. Without a comparable CIK the
+    snapshot's own ticker symbols must include the requested one. A snapshot that states
+    no identity at all is not refused here; its review still applies.
+    """
+    symbols, ciks, issuers = snapshot_entities(sources)
+    wanted = _class_symbol(ticker)
+    if directory is None:
+        try:
+            from .sec_directory import _read_snapshot
+            directory = _read_snapshot()['directory']
+        except (RuntimeError, KeyError, TypeError):
+            directory = {}
+    wanted_ciks = {_cik(row.get('cik_str')) for row in directory.values()
+                   if isinstance(row, dict) and _class_symbol(row.get('ticker')) == wanted} - {None}
+    if ciks and wanted_ciks:
+        matched = bool(ciks & wanted_ciks)
+    elif symbols:
+        matched = wanted in symbols
+    else:
+        return None
+    if matched:
+        return None
+    named = ', '.join(sorted(issuers)) or ', '.join(sorted(symbols)) or 'another company'
+    stated = '; '.join(part for part in (
+        ('tickers ' + ', '.join(sorted(symbols))) if symbols else '',
+        ('SEC CIK ' + ', '.join(sorted(ciks))) if ciks else '') if part)
+    return (f'The source snapshot describes {named} ({stated}), and the requested ticker is {ticker}'
+            + (f' (SEC CIK {", ".join(sorted(wanted_ciks))})' if wanted_ciks else '') +
+            '. A memo for one company cannot be written from another company\'s filings. Run with the ticker the '
+            'snapshot belongs to, or supply a snapshot of this company. No paid request was made.')

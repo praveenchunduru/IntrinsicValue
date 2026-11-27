@@ -178,6 +178,18 @@ MAX_RATE_HISTORY_MONTHS = 240
 # figure as the 15% convention row. Damodaran's monthly ERP workbook carries no index
 # earnings or return on equity, so the index benchmark uses this house figure.
 MARKET_RETURN_ON_NEW_CAPITAL = .15
+# Incremental sales-to-capital accepted in a plan. The lowest industry averages in
+# Damodaran's sales-to-invested-capital table (utilities, REITs, renewable power) sit
+# near 0.15-0.3, so 0.1 lies below every industry; saved runs and examples use 0.4-12.
+# Below the floor a revalue produced values such as -$1,393 a share (0.01) and
+# -$15.6 billion (1e-9). Above 50, reinvestment is under 2% of new revenue, which is
+# indistinguishable from none. The pipeline's own check on a model-written plan is
+# relative (at most 1.5 times the reported incremental rate), so it sets no floor.
+MIN_SALES_TO_CAPITAL = .1
+MAX_SALES_TO_CAPITAL = 50
+# A value outside these multiples of the market price is reported with a warning,
+# never refused or adjusted: it usually means an edited input is far off.
+VALUE_TO_PRICE_WARNING = (.1, 10)
 
 
 def _number(value, name):
@@ -202,6 +214,136 @@ def _reference(value):
     return ((isinstance(value, str) and bool(value.strip())) or
             (isinstance(value, list) and bool(value) and
              all(isinstance(item, str) and item.strip() for item in value)))
+
+
+# Every key a plan may carry at these three levels: the inputs read here, the pipeline's
+# records and references, and the fields of plans saved before later conventions.
+# A key outside them is reported; one that is a near spelling of a known key is refused,
+# since the misspelt value would otherwise be ignored and the result look unchanged.
+KNOWN_PLAN_KEYS = frozenset({
+    'actuals', 'amount_unit', 'assumptions_label', 'beta_cross_checks', 'calendar_assumption',
+    'calibration_comparisons', 'capital_efficiency_basis', 'cost_path_reference', 'counterfactual_policy',
+    'counterfactuals', 'country_risk_reference', 'currency', 'discount_rate', 'entry_policy', 'forecast_periods',
+    'forecast_underlying_growth_before_week_effects', 'input_dates', 'invested_capital_reference',
+    'margin_continuity_basis', 'market_price', 'model_rationale', 'monitoring', 'net_debt_bridge',
+    'nonoperating_assets_bridge', 'operating_model', 'other_claims_bridge', 'plan_conventions', 'rate_history',
+    'reinvestment_reference', 'reported_inputs', 'repurchase_tests', 'scenario_rationales', 'scenarios',
+    'share_count_bridge', 'share_unit', 'source_refs', 'terminal_return_reference', 'unavailable',
+    'unavailable_due_to_coverage', 'missing_inputs', 'reason', 'valuation_date', 'valuation_timing',
+    '_discounting', '_timing'})
+KNOWN_SCENARIO_KEYS = frozenset({
+    'probability', 'growth_rates', 'ebit_margins', 'tax_rate', 'terminal_tax_rate', 'sales_to_capital',
+    'sales_to_capital_path', 'wacc', 'terminal_growth', 'terminal_growth_basis', 'terminal_growth_source',
+    'terminal_roic', 'terminal_roic_basis', 'terminal_roic_follows_rate', 'rnd_share_path', 'rnd_basis'})
+KNOWN_ACTUAL_KEYS = frozenset(('revenue', 'net_debt', 'other_equity_claims', 'shares_outstanding',
+                               'nonoperating_assets', 'dilutive_shares'))
+
+
+def _near_key(key, known):
+    """The known key ``key`` is most likely a misspelling of, or None."""
+    import difflib
+    if not isinstance(key, str):
+        return None
+    for match in difflib.get_close_matches(key, sorted(known), n=3, cutoff=.85):
+        if abs(len(match) - len(key)) <= 2:
+            return match
+    return None
+
+
+def input_key_warnings(plan):
+    """Unrecognised keys in the plan, its scenarios and its actuals.
+
+    A key that is a near spelling of a known one (``terminal_growht``) raises, naming
+    the closest valid key. Any other unknown key is returned as a warning; it does not
+    change the value, so files with extra notes of their own still revalue.
+    """
+    if not isinstance(plan, dict):
+        return []
+    levels = [('', plan, KNOWN_PLAN_KEYS)]
+    if isinstance(plan.get('actuals'), dict):
+        levels.append(('actuals.', plan['actuals'], KNOWN_ACTUAL_KEYS))
+    for name in SCENARIOS:
+        scenario = (plan.get('scenarios') or {}).get(name) if isinstance(plan.get('scenarios'), dict) else None
+        if isinstance(scenario, dict):
+            levels.append((f'scenarios.{name}.', scenario, KNOWN_SCENARIO_KEYS))
+    warnings = []
+    for prefix, mapping, known in levels:
+        for key in mapping:
+            if key in known:
+                continue
+            near = _near_key(key, known)
+            if near is not None:
+                also = (f' The file also has {prefix}{near}, so {prefix}{key} would have been ignored; remove it '
+                        f'or move its value to {prefix}{near}.' if near in mapping else
+                        f' Rename it to {prefix}{near}.')
+                raise ValueError(f'{prefix}{key} is not an input this model reads; the closest valid name is '
+                                 f'{prefix}{near}.{also}')
+            warnings.append(f'{prefix}{key} is not an input this model reads and was ignored.')
+    return warnings
+
+
+def _close(left, right):
+    return math.isclose(left, right, rel_tol=1e-9, abs_tol=1.0)
+
+
+def _bridge_consistency(plan):
+    """Refuse an edited net debt that contradicts its own bridge; list edits outside actuals.
+
+    The net debt bridge governs: actuals.net_debt must equal net_debt_bridge.net_debt,
+    which must equal net_debt_bridge.debt less selected_cash_and_nonoperating_investments.
+    ``reported_inputs`` is the record of the filed figures and is never valued, so an
+    actual that differs from it is returned as a warning naming both figures.
+    """
+    warnings = []
+    actuals = plan.get('actuals') if isinstance(plan.get('actuals'), dict) else {}
+    bridge = plan.get('net_debt_bridge')
+    how = ('To value a different net debt, edit net_debt_bridge.debt or '
+           'net_debt_bridge.selected_cash_and_nonoperating_investments, set net_debt_bridge.net_debt and '
+           'actuals.net_debt to debt less that cash, and set discount_rate.financial_debt.value to the new debt.')
+    if isinstance(bridge, dict) and bridge.get('net_debt') is not None:
+        stated = _number(bridge['net_debt'], 'net_debt_bridge.net_debt')
+        if bridge.get('debt') is not None and bridge.get('selected_cash_and_nonoperating_investments') is not None:
+            debt = _number(bridge['debt'], 'net_debt_bridge.debt')
+            cash = _number(bridge['selected_cash_and_nonoperating_investments'],
+                           'net_debt_bridge.selected_cash_and_nonoperating_investments')
+            if not _close(stated, debt - cash):
+                raise ValueError(f'net_debt_bridge.net_debt is {stated:,.0f}, but net_debt_bridge.debt ({debt:,.0f}) less '
+                                 f'net_debt_bridge.selected_cash_and_nonoperating_investments ({cash:,.0f}) is '
+                                 f'{debt - cash:,.0f}. ' + how)
+        if actuals.get('net_debt') is not None:
+            valued = _number(actuals['net_debt'], 'actuals.net_debt')
+            if not _close(valued, stated):
+                raise ValueError(f'actuals.net_debt is {valued:,.0f}, but net_debt_bridge.net_debt is {stated:,.0f}; the '
+                                 'value uses actuals.net_debt and the two must agree. ' + how)
+    reported = (plan.get('reported_inputs') or {}).get('actuals') if isinstance(plan.get('reported_inputs'), dict) else None
+    if isinstance(reported, dict):
+        for key in ACTUAL_FIELDS + OPTIONAL_ACTUAL_FIELDS:
+            filed, used = reported.get(key), actuals.get(key)
+            if (isinstance(filed, (int, float)) and not isinstance(filed, bool) and
+                    isinstance(used, (int, float)) and not isinstance(used, bool) and
+                    math.isfinite(filed) and math.isfinite(used) and not _close(filed, used)):
+                warnings.append(f'actuals.{key} is {used:,.0f}, but the filed figure in reported_inputs.actuals.{key} is '
+                                f'{filed:,.0f}. The value uses actuals.{key}; reported_inputs is the record of the '
+                                'filings and is never valued, so edit actuals to change an input.')
+    return warnings
+
+
+def _value_warnings(scenarios, weighted, market):
+    """Plain notices for a negative value per share or one far from the market price."""
+    warnings = []
+    negative = [name for name in SCENARIOS if scenarios[name]['per_share_value'] < 0]
+    if negative or weighted < 0:
+        warnings.append('The value per share is negative in the ' + ', '.join(negative or ['weighted']) +
+                        ' case (weighted value ' + f'{weighted:,.2f}' + '): enterprise value is below net debt and '
+                        'other claims. Check net debt, other claims, sales_to_capital and EBIT margins before using it.')
+    if market and weighted > 0:
+        ratio = weighted / market
+        low, high = VALUE_TO_PRICE_WARNING
+        if not low <= ratio <= high:
+            warnings.append(f'The weighted value per share ({weighted:,.2f}) is {ratio:,.2f} times the market price '
+                            f'({market:,.2f}). Check the edited inputs, especially share counts, net debt, '
+                            'non-operating assets and sales_to_capital, before using it.')
+    return warnings
 
 
 def sales_to_capital_path(spec, horizon, name='scenario'):
@@ -236,6 +378,14 @@ def _sales_to_capital_ratios(spec, horizon, name):
         path = [_number(spec, field)] * horizon
     if any(value <= 0 for value in path):
         raise ValueError(f'{name}: sales_to_capital must be positive')
+    outside = [value for value in path if not MIN_SALES_TO_CAPITAL <= value <= MAX_SALES_TO_CAPITAL]
+    if outside:
+        raise ValueError(
+            f'scenarios.{field} is {outside[0]:g}, outside the supported range of {MIN_SALES_TO_CAPITAL:g} to '
+            f'{MAX_SALES_TO_CAPITAL:g}. Below {MIN_SALES_TO_CAPITAL:g}, each dollar of new revenue needs more than '
+            f'{1 / MIN_SALES_TO_CAPITAL:g} dollars of new capital, more than any industry average in Damodaran\'s '
+            f'sales-to-invested-capital table; above {MAX_SALES_TO_CAPITAL:g}, reinvestment is effectively zero. '
+            f'Enter a ratio from {MIN_SALES_TO_CAPITAL:g} to {MAX_SALES_TO_CAPITAL:g}.')
     return path
 
 
@@ -1467,7 +1617,11 @@ def _calibration_reconciliations(plan, spec):
             if reported is not None and same_date and comparable:
                 reported = _number(reported, bridge_name + '.' + amount_name)
                 if not math.isclose(record['value'], reported, rel_tol=1e-8, abs_tol=1e-6):
-                    raise ValueError(f'discount_rate.{field} conflicts with the same-date reported equity bridge')
+                    raise ValueError(f'discount_rate.{field}.value is {record["value"]:,.0f}, but {bridge_name}.{amount_name} '
+                                     f'for the same date is {reported:,.0f}; the two must agree. Set both to the same '
+                                     'amount' + ('; for a different net debt also set net_debt_bridge.net_debt and '
+                                                 'actuals.net_debt to debt less net_debt_bridge.selected_cash_and_nonoperating_investments.'
+                                                 if field == 'financial_debt' else '.'))
                 status = 'reconciled'
             checks.append({'field': field, 'status': status, 'rate_input': record['value'],
                            'bridge_input': reported, 'rate_date': _measurement_day(record),
@@ -1483,12 +1637,21 @@ def _calibration_reconciliations(plan, spec):
     expected = None
     status = 'not_comparable_dates_or_measurement'
     if 'market_price' in plan and (comparable or explicit_quote_basis):
-        expected = _number(plan['market_price'], 'market_price') * _number(plan['actuals']['shares_outstanding'], 'shares_outstanding')
+        price = _number(plan['market_price'], 'market_price')
+        shares = _number(plan['actuals']['shares_outstanding'], 'actuals.shares_outstanding')
+        if price <= 0:
+            raise ValueError(f'market_price is {price:g}; it must be positive')
+        if shares <= 0:
+            raise ValueError(f'actuals.shares_outstanding is {shares:g}; it must be positive')
+        expected = price * shares
         if not math.isclose(record['value'], expected, rel_tol=1e-8, abs_tol=1e-6):
             explained = (construction == 'independent_market_cap' and
                          isinstance(record.get('reconciliation'), str) and record['reconciliation'].strip())
             if not explained:
-                raise ValueError('discount_rate.market_equity conflicts with the comparable quote and share count')
+                raise ValueError(f'discount_rate.market_equity.value is {record["value"]:,.0f}, but market_price '
+                                 f'({price:g}) times actuals.shares_outstanding ({shares:,.0f}) is {expected:,.0f}. '
+                                 'After changing the price or the share count, set discount_rate.market_equity.value '
+                                 f'to {expected:.0f}.')
             status = 'independent_market_cap_difference_disclosed'
         else:
             status = 'reconciled_quote_times_reported_shares'
@@ -1521,6 +1684,18 @@ def materialize(plan):
     These are calculations, not model-selected replacements for actuals. Duplicate
     aggregate paths/rates must agree; omit them when the detailed inputs govern.
     """
+    if isinstance(plan, dict) and 'valuation_date' in plan:
+        # Named here, before the rate calculation reports it as its own as_of.
+        try:
+            valued = date.fromisoformat(plan['valuation_date'])
+        except (ValueError, TypeError):
+            raise ValueError(f'valuation_date is {plan["valuation_date"]!r}; it must be a real date written '
+                             'YYYY-MM-DD') from None
+        stated = plan.get('discount_rate', {}).get('as_of') if isinstance(plan.get('discount_rate'), dict) else None
+        if isinstance(stated, str) and re.fullmatch(r'\d{4}-\d{2}-\d{2}', stated) and stated != valued.isoformat():
+            raise ValueError(f'valuation_date is {valued.isoformat()}, but discount_rate.as_of is {stated}; the rate '
+                             'inputs are dated, so the two must be the same date. Keep valuation_date at '
+                             f'{stated} or supply rate inputs dated {valued.isoformat()}.')
     prepared, operating = apply_operating(plan)
     if operating is not None and operating.get('earnings_mode') == 'gross_profit_less_expenses':
         for name in SCENARIOS:
@@ -1735,6 +1910,8 @@ def _calibration_comparisons(plan, actuals, base, baseline):
 def evaluate(plan):
     """Recompute all scenarios, bridge enterprise to equity, and return results."""
     canonical_plan=copy.deepcopy(plan)
+    input_warnings = input_key_warnings(canonical_plan)
+    input_warnings += _bridge_consistency(canonical_plan) if isinstance(canonical_plan, dict) else []
     plan, operating, calibration = materialize(canonical_plan)
     actuals, definitions, market = _validated(plan)
     discounting = plan.get('_discounting') or {'convention': 'constant'}
@@ -1839,6 +2016,12 @@ def evaluate(plan):
         result['computed_diagnostics']['entry_policy'] = _entry_policy(plan, scenarios, weighted, market)
     if 'repurchase_tests' in plan:
         result['computed_diagnostics']['repurchase_tests'] = _repurchase_tests(plan, actuals, scenarios, weighted)
+    # Present only when there is something to say, so a clean plan's output is unchanged.
+    if input_warnings:
+        result['input_warnings'] = input_warnings
+    value_warnings = _value_warnings(scenarios, weighted, market)
+    if value_warnings:
+        result['value_warnings'] = value_warnings
     return result
 
 
@@ -2689,13 +2872,25 @@ def main():
     parser.add_argument('--output', type=Path, help='Output directory; defaults to the assumptions file directory')
     args = parser.parse_args()
     try:
-        assumptions = json.loads(args.assumptions.read_text(encoding='utf-8'))
+        if not args.assumptions.is_file():
+            raise ValueError(f'{args.assumptions} is not a file')
+        if args.assumptions.stat().st_size > 1_000_000:
+            raise ValueError(f'{args.assumptions} is larger than 1 MB')
+        try:
+            # utf-8-sig: Windows Notepad saves a byte-order mark.
+            assumptions = json.loads(args.assumptions.read_text(encoding='utf-8-sig'))
+        except UnicodeDecodeError:
+            raise ValueError(f'{args.assumptions} is not UTF-8 text') from None
+        except json.JSONDecodeError as exc:
+            raise ValueError(f'{args.assumptions} is not valid JSON ({exc.msg} at line {exc.lineno}, column {exc.colno})') from None
         from .pipeline import attach_diagnostics  # the pipeline's diagnostics, as for --revalue
         results = attach_diagnostics(assumptions, evaluate(assumptions))
         paths = save_valuation(args.output or args.assumptions.parent, assumptions, results)
         print(f"{results['currency']} {results['weighted_per_share_value']:.2f} per share (scenario weighted)")
+        for warning in results.get('input_warnings', []) + results.get('value_warnings', []):
+            print('Warning: ' + warning, file=sys.stderr)
         print(paths['valuation.json'])
-    except (ValueError, TypeError, OSError, KeyError) as exc:
+    except (ValueError, TypeError, OSError, KeyError, RecursionError) as exc:
         print(f'Valuation stopped: {exc}', file=sys.stderr)
         sys.exit(1)
 

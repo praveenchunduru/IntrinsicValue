@@ -30,6 +30,17 @@ def plan():
     }
 
 
+def with_net_debt(inputs, value):
+    """Net debt edited as a revalue must edit it: in the bridge and the actuals together."""
+    bridge = inputs['net_debt_bridge']
+    if value >= -bridge['selected_cash_and_nonoperating_investments']:
+        bridge['debt'] = value + bridge['selected_cash_and_nonoperating_investments']
+    else:
+        bridge['selected_cash_and_nonoperating_investments'] = bridge['debt'] - value
+    bridge['net_debt'] = inputs['actuals']['net_debt'] = value
+    return inputs
+
+
 def repurchase(amount=100_000_000, price=20, **overrides):
     return {'name': 'purchase', 'amount': amount, 'price': price,
             'source_refs': ['S2'], 'label': 'Synthetic one-period illustration',
@@ -146,7 +157,7 @@ class MemoDiagnosticsTests(unittest.TestCase):
 
     def test_negative_market_EV_is_retained_without_conventional_multiple(self):
         inputs = plan()
-        inputs['actuals']['net_debt'] = -3_000_000_000
+        with_net_debt(inputs, -3_000_000_000)
         case = evaluate(inputs)['computed_diagnostics']['valuation_multiples']
         self.assertEqual(case['market']['enterprise_value'], -980_000_000)
         self.assertEqual(case['scenarios']['base']['forecast_year1']['market_ev_to_ebit']['status'], 'not_meaningful')
@@ -176,7 +187,7 @@ class MemoDiagnosticsTests(unittest.TestCase):
         policy = evaluate(inputs)['computed_diagnostics']['entry_policy']
         # (.25 * 750m + .5 * 1500m + .25 * 3000m + net80m) /100m.
         self.assertAlmostEqual(policy['conditional_entry_price'], 17.675)
-        inputs['actuals']['net_debt'] = 100_000_000_000
+        with_net_debt(inputs, 100_000_000_000)
         policy = evaluate(inputs)['computed_diagnostics']['entry_policy']
         self.assertLess(policy['reference_per_share_value'], 0)
         self.assertIsNone(policy['conditional_entry_price'])
