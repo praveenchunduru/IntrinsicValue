@@ -1342,8 +1342,12 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                 collections.append((data['reported_facts'], 'sec_companyfacts'))
                 selection = data.get('selection') if isinstance(data.get('selection'), dict) else {}
                 scanned, dates_kept = selection.get('absence_scan_concepts'), selection.get('protected_balance_dates')
-                if (isinstance(scanned, list) and FINANCING_ABSENCE_SCAN <= set(scanned) and isinstance(dates_kept, list) and
-                        (_day(selection.get('as_of')) or cutoff) <= cutoff):
+                # The scan holds on either side of the cutoff. Run after it, absence in the
+                # larger record is absence in the smaller one; run before it, the scan covers
+                # every fact this source holds, all filed by its as_of. Requiring a scan no
+                # later than the cutoff dropped net debt whenever the valuation date was the
+                # US calendar day before the UTC retrieval date (live run, 2026-11-27 03:10Z).
+                if isinstance(scanned, list) and FINANCING_ABSENCE_SCAN <= set(scanned) and isinstance(dates_kept, list):
                     scanned_dates.update(day for day in dates_kept if isinstance(day, str))
             else:
                 skipped.append('Structured primary facts lack a recognized SEC companyfacts origin and issuer endpoint')
