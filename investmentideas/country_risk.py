@@ -37,8 +37,9 @@ country table and his GDP-weighted regional sheet:
   for the same year on another breakdown, when the country's revenue is smaller:
   Apple's Americas segment less its US revenue by country is Canada and Latin America.
 
-Labels are mapped by name. A company's own definition of a region (Apple's Europe
-segment includes India, the Middle East and Africa) is not read.
+Labels are mapped by their plain meaning, unless the issuer's filed definition of a
+member is in ``ISSUER_DEFINITIONS``: Apple's Europe segment includes India, the Middle
+East and Africa, so India is priced there and left out of Rest of Asia Pacific.
 """
 from __future__ import annotations
 
@@ -82,13 +83,17 @@ NAMED_COUNTRIES = {
 AMERICAS = ('North America', 'Central and South America', 'Caribbean')
 LATIN_AMERICA = ('Central and South America', 'Caribbean')
 ASIA_PACIFIC = ('Asia', 'Australia & New Zealand')
-# Damodaran's EMEA grouping: Western Europe, the Middle East and Africa by GDP.
-EMEA = ('Western Europe', 'Middle East', 'Africa')
+EUROPE = ('Western Europe', 'Eastern Europe & Russia')
+# Europe, the Middle East and Africa: every region of Damodaran's sheet in them, by GDP.
+EMEA = (*EUROPE, 'Middle East', 'Africa')
 WORLD = 'every region'
 
 _AMERICAS_CHOICE = 'The Americas are Damodaran\'s North America, Central and South America and Caribbean regions.'
 _RESIDUAL_CHOICE = 'A residual or remainder member covers the countries the same breakdown does not report separately.'
 _GDP_CHOICE = 'Within a region, countries are weighted by GDP because the company does not report sales by country.'
+_PLAIN_CHOICE = ('Region labels are mapped by their plain meaning unless the company\'s filed definition of the member '
+                 'is known.')
+_EUROPE_CHOICE = 'Europe covers Damodaran\'s Western Europe and Eastern Europe & Russia regions.'
 # The choice sentence saved with runs before 2026-11-27.
 _GDP_CHOICE_SAVED = 'Within a region, countries are weighted by GDP, not by the company\'s sales.'
 
@@ -109,12 +114,12 @@ REGION_LABELS = {
     'latinamericaandthecaribbean': {'regions': LATIN_AMERICA},
     'centralandsouthamerica': {'regions': LATIN_AMERICA},
     'southamerica': {'regions': LATIN_AMERICA},
-    'europe': {'regions': ('Western Europe',)},
+    'europe': {'regions': EUROPE, 'choice': _EUROPE_CHOICE},
     'westerneurope': {'regions': ('Western Europe',)},
     'easterneurope': {'regions': ('Eastern Europe & Russia',)},
-    'emea': {'regions': EMEA},
-    'europemiddleeastandafrica': {'regions': EMEA},
-    'europemiddleeastafrica': {'regions': EMEA},
+    'emea': {'regions': EMEA, 'choice': _EUROPE_CHOICE},
+    'europemiddleeastandafrica': {'regions': EMEA, 'choice': _EUROPE_CHOICE},
+    'europemiddleeastafrica': {'regions': EMEA, 'choice': _EUROPE_CHOICE},
     'middleeast': {'regions': ('Middle East',)},
     'africa': {'regions': ('Africa',)},
     'middleeastandafrica': {'regions': ('Middle East', 'Africa')},
@@ -135,6 +140,52 @@ REGION_LABELS = {
     'othergeographicalareas': {'residual': WORLD}, 'other': {'residual': WORLD}}
 
 
+# Members whose filed definition differs from the label's plain meaning, by issuer CIK.
+# Apple 10-K (fiscal 2026, segment note): "Europe includes European countries, as well
+# as India, the Middle East and Africa. Greater China includes China mainland, Hong
+# Kong and Taiwan." Its net sales by country: "China includes Hong Kong and Taiwan."
+ISSUER_DEFINITIONS = {
+    '320193': {
+        'aapl:EuropeSegmentMember': {
+            'regions': (*EUROPE, 'Middle East', 'Africa'), 'countries': ('India',),
+            'definition': "Apple's Europe segment includes European countries, India, the Middle East and Africa, as "
+                          "its 10-K defines it; India is priced there and left out of Rest of Asia Pacific."},
+        'aapl:GreaterChinaSegmentMember': {
+            'countries': ('China', 'Hong Kong', 'Taiwan'), 'premium_country': 'China',
+            'definition': "Apple's Greater China includes China mainland, Hong Kong and Taiwan, as its 10-K defines it."},
+        'country:CN': {
+            'countries': ('China', 'Hong Kong', 'Taiwan'), 'premium_country': 'China',
+            'label': 'China, including Hong Kong and Taiwan',
+            'definition': "Apple's China in its net sales by country includes Hong Kong and Taiwan."},
+    }}
+
+
+# The same labels by the issuer's extension prefix, for tables that carry no CIK.
+ISSUER_PREFIXES = {'320193': 'aapl'}
+ISSUER_PREFIX_LABELS = {ISSUER_PREFIXES[cik]: {member: spec['label'] for member, spec in members.items() if spec.get('label')}
+                        for cik, members in ISSUER_DEFINITIONS.items() if cik in ISSUER_PREFIXES}
+
+
+def issuer_cik(sources):
+    """The issuer's CIK as a string: from the primary sources' metadata, else from an extension prefix in a breakdown table."""
+    prefixes = set()
+    for source in sources if isinstance(sources, list) else []:
+        data = source.get('data') if isinstance(source, dict) else None
+        metadata = data.get('metadata') if isinstance(data, dict) else None
+        cik = metadata.get('cik') if isinstance(metadata, dict) else None
+        if isinstance(cik, (int, str)) and not isinstance(cik, bool) and str(cik).isdigit() and int(cik) > 0:
+            return str(int(cik))
+        tables = (source.get('breakdown_tables') if isinstance(source, dict) else None) or (
+            data.get('breakdown_tables') if isinstance(data, dict) else None) or {}
+        for table in tables.values() if isinstance(tables, dict) else []:
+            for entry in (table or {}).get('members') or []:
+                member = entry.get('member') if isinstance(entry, dict) else None
+                if isinstance(member, str) and ':' in member:
+                    prefixes.add(member.split(':', 1)[0])
+    known = [cik for cik, prefix in ISSUER_PREFIXES.items() if prefix in prefixes]
+    return known[0] if len(known) == 1 else None
+
+
 def _key(member):
     """A member QName as a dictionary key: 'aapl:RestOfAsiaPacificSegmentMember' -> 'restofasiapacific'."""
     local = member.split(':', 1)[-1]
@@ -144,10 +195,16 @@ def _key(member):
     return re.sub(r'[^a-z0-9]', '', local.lower())
 
 
-def mapping_for(member):
-    """The country or region a reported member names, or None when it is not in the dictionaries."""
+def mapping_for(member, issuer=None):
+    """The country or region a reported member names, or None when it is not in the dictionaries.
+
+    An issuer's filed definition of the member (``ISSUER_DEFINITIONS``) replaces the label's plain meaning.
+    """
     if not isinstance(member, str) or ' within ' in member:
         return None
+    override = ISSUER_DEFINITIONS.get(str(issuer) if issuer is not None else '', {}).get(member)
+    if override:
+        return {key: value for key, value in override.items() if key != 'label'}
     if member.startswith('country:'):
         name = ISO_COUNTRIES.get(member.split(':', 1)[1].upper())
         return {'countries': (name,)} if name else None
@@ -166,8 +223,11 @@ def _dataset(sources, name):
     return None
 
 
-def _label(member):
+def _label(member, issuer=None):
     """A reader's label for a member: 'aapl:RestOfAsiaPacificSegmentMember' -> 'Rest of Asia Pacific'."""
+    override = ISSUER_DEFINITIONS.get(str(issuer) if issuer is not None else '', {}).get(member) or {}
+    if override.get('label'):
+        return override['label']
     if member.startswith('country:'):
         return ISO_COUNTRIES.get(member.split(':', 1)[1].upper(), member)
     local = re.sub(r'Member$', '', member.split(':', 1)[-1])
@@ -267,16 +327,16 @@ def _describe(entry):
         if len(names) == 1:
             return f'{next(iter(names))}: {scope} less the countries reported separately'
         return f'{scope} less the countries reported separately, {len(names)} countries, GDP-weighted'
-    text = _and(spec['regions'])
+    text = _and([*spec['regions'], *(spec.get('countries') or ())])
     if spec.get('exclude'):
         text += ' less ' + _and(spec['exclude'])
     if len(names) == 1:
         return f'{next(iter(names))}: {text}{less}'
-    weighted = len(spec['regions']) > 1 or spec.get('exclude') or removed
+    weighted = len(spec['regions']) > 1 or spec.get('countries') or spec.get('exclude') or removed
     return text + less + (', GDP-weighted' if weighted else ', Damodaran\'s regional average')
 
 
-def _resolve(members, premiums, axis):
+def _resolve(members, premiums, axis, issuer=None):
     """Entries for one candidate set of members: (resolved, unmapped), or None when the set is not a partition.
 
     The set adds up to reported revenue, so its members are disjoint by that
@@ -287,24 +347,24 @@ def _resolve(members, premiums, axis):
     """
     entries, unmapped, residual = [], [], None
     for member, revenue in members:
-        spec = mapping_for(member)
+        spec = mapping_for(member, issuer)
         if spec is None:
             if axis == 'segment':
                 return None  # A segment axis counts only when every member is a region.
-            unmapped.append({'member': member, 'label': _label(member), 'revenue': revenue,
+            unmapped.append({'member': member, 'label': _label(member, issuer), 'revenue': revenue,
                              'reason': 'not in the country and region dictionaries'})
             continue
         if spec.get('residual'):
             if residual is not None:
                 return None
-            residual = {'member': member, 'label': _label(member), 'revenue': revenue, 'spec': spec, 'removed': []}
+            residual = {'member': member, 'label': _label(member, issuer), 'revenue': revenue, 'spec': spec, 'removed': []}
             continue
         names = premiums.covered(spec)
         if names is None:
-            unmapped.append({'member': member, 'label': _label(member), 'revenue': revenue,
+            unmapped.append({'member': member, 'label': _label(member, issuer), 'revenue': revenue,
                              'reason': 'the regional sheet was not collected'})
             continue
-        entries.append({'member': member, 'label': _label(member), 'revenue': revenue, 'spec': spec,
+        entries.append({'member': member, 'label': _label(member, issuer), 'revenue': revenue, 'spec': spec,
                         'names': names, 'removed': []})
     for entry in entries:
         entry['single'] = len(entry['names']) == 1 and not entry['spec'].get('regions')
@@ -334,7 +394,7 @@ def _resolve(members, premiums, axis):
     return entries, unmapped
 
 
-def _refine(entries, pool, margin):
+def _refine(entries, pool, margin, issuer=None):
     """Split a region or residual by single countries the filing reports elsewhere for the same year.
 
     Apple reports the Americas as a segment and the United States in its revenue by
@@ -358,18 +418,19 @@ def _refine(entries, pool, margin):
             refined.append(entry)
             continue
         for name, member, revenue, source_id in inside:
-            refined.append({'member': member, 'label': _label(member), 'revenue': revenue, 'source': source_id,
+            refined.append({'member': member, 'label': _label(member, issuer), 'revenue': revenue, 'source': source_id,
                             'spec': {'countries': (name,)}, 'names': {name}, 'removed': [],
                             'derived': f'reported separately; splits {entry["label"]}'})
         refined.append(dict(entry, names=rest, removed=[*entry['removed'], *(item[0] for item in inside)],
                             revenue=entry['revenue'] - split,
-                            label=entry['label'] + ' less ' + _and(_label(item[1]) for item in inside),
+                            label=entry['label'] + ' less ' + _and(_label(item[1], issuer) for item in inside),
                             derived=f'{entry["label"]} less the countries reported separately: the difference of reported amounts'))
     return refined
 
 
-def _exposures(entries, premiums, unmapped):
+def _exposures(entries, premiums, unmapped, issuer=None):
     exposures, choices = [], []
+    definitions = ISSUER_DEFINITIONS.get(str(issuer) if issuer is not None else '', {})
     for entry in entries:
         value = premiums.premium(entry['names'], entry['spec'])
         if value is None:
@@ -384,6 +445,10 @@ def _exposures(entries, premiums, unmapped):
         exposures.append(exposure)
         if entry['spec'].get('choice'):
             choices.append(entry['spec']['choice'])
+        if entry['member'] in definitions:
+            choices.append(definitions[entry['member']]['definition'])
+        elif entry['spec'].get('regions') or entry['spec'].get('residual'):
+            choices.append(_PLAIN_CHOICE)
         if entry['spec'].get('residual') or (basis != 'country page' and (entry['removed'] or entry.get('derived'))):
             choices.append(_RESIDUAL_CHOICE)
     if any(item['premium_basis'] != 'country page' for item in exposures):
@@ -418,6 +483,7 @@ def country_risk_reference(sources, reported):
     if not tables:
         return _not_applicable(f'The filings report no revenue by geography for the fiscal year ending {end}.', refs)
     premiums = _Premiums(country['data'], regional['data'] if regional else None)
+    issuer = issuer_cik(sources)
     margin = RECONCILE_TOLERANCE * total
     candidates = []
     for axis, source_id, members in tables:
@@ -428,7 +494,7 @@ def country_risk_reference(sources, reported):
                 geographic = sum(revenue for _, revenue in subset)
                 if abs(geographic - total) > margin:
                     continue
-                resolved = _resolve(subset, premiums, axis)
+                resolved = _resolve(subset, premiums, axis, issuer)
                 if resolved is None or not resolved[0]:
                     continue
                 entries, unmapped = resolved
@@ -456,13 +522,13 @@ def country_risk_reference(sources, reported):
     pool = []
     for _, table_source, members in tables:
         for member, revenue in members:
-            spec = mapping_for(member)
+            spec = mapping_for(member, issuer)
             if member in chosen or not spec or spec.get('residual') or spec.get('regions') or len(spec['countries']) != 1:
                 continue
             pool.append((member, revenue, spec['countries'][0], table_source))
-    refined = _refine(entries, pool, margin)
+    refined = _refine(entries, pool, margin, issuer)
     used_sources = [source_id, *(entry['source'] for entry in refined if entry.get('source'))]
-    exposures, choices = _exposures(refined, premiums, unmapped)
+    exposures, choices = _exposures(refined, premiums, unmapped, issuer)
     mapped = sum(item['revenue'] for item in exposures)
     if not exposures or mapped < MIN_MAPPED_SHARE * geographic:
         return _not_applicable(' '.join([f'Less than half of reported revenue maps to a country or region '

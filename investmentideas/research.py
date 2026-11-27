@@ -18,7 +18,7 @@ from urllib.request import Request
 
 from .sec_directory import load_directory, snapshot_metadata
 from .sec_http import MAX_SOURCE_BYTES, open_http as urlopen, user_agent
-from .inputs import PRIMARY_INPUT_CONCEPTS
+from .inputs import PLAN_TYPE_AXIS, PLAN_TYPE_CONCEPTS, PLAN_TYPE_MEMBERS, PRIMARY_INPUT_CONCEPTS
 from .companyfacts import FINANCIAL_CONTEXT_CONCEPTS
 
 MAX_DOCUMENT_BYTES = MAX_SOURCE_BYTES
@@ -899,14 +899,27 @@ def _class_cover_shares(name, context):
             bool(members[CLASS_OF_STOCK_AXIS]))
 
 
+# Two plan types, a handful of balance concepts and two or three dates.
+MAX_PLAN_TYPE_FACTS = 60
+
+
+def _plan_type_benefit(name, context):
+    """A pension or retiree-health balance on the plan-type axis (Coca-Cola tags these only by plan type)."""
+    members = context.get('members', {})
+    return (isinstance(name, str) and name.split(':', 1)[-1] in PLAN_TYPE_CONCEPTS and
+            list(members) == [PLAN_TYPE_AXIS] and members[PLAN_TYPE_AXIS] in PLAN_TYPE_MEMBERS.values())
+
+
 def inline_facts(document):
-    """Return at most 100 recent selected inline-XBRL facts.
+    """Return at most 100 recent selected inline-XBRL facts, plus defined-benefit balances by plan type.
 
     Values retain exact concepts, contexts, dates, units, transformations and raw
     locations; no concepts are aggregated and missing or nil values never become
     zero. Dimensional contexts are excluded, except cover-page outstanding
     shares by share class, which keep their dimension and are marked
-    ``class_of_stock_cover_shares``. A numeric zero is emitted
+    ``class_of_stock_cover_shares``, and pension and other postretirement
+    balances on the plan-type axis, marked ``defined_benefit_plan_type`` and
+    kept outside the 100-fact limit. A numeric zero is emitted
     only for a stated zero or an explicit XBRL zero transform. Offsets/columns are
     Unicode-character positions in the original decoded HTML, with 1-based lines.
     """
@@ -917,7 +930,7 @@ def inline_facts(document):
         raise ValueError('Inline XBRL document exceeds the 3 MB source limit')
     parser = _InlineFactParser(document)
     parser.feed(document)
-    result, seen = [], set()
+    result, plans, seen = [], [], set()
     for frame in parser.facts:
         attrs = frame['attrs']
         context = parser.contexts.get(attrs.get('contextref'))
@@ -925,7 +938,8 @@ def inline_facts(document):
         if context is None or unit is None:
             continue
         by_class = context['has_dimensions'] and _class_cover_shares(attrs.get('name'), context)
-        if context['has_dimensions'] and not by_class:
+        by_plan = context['has_dimensions'] and not by_class and _plan_type_benefit(attrs.get('name'), context)
+        if context['has_dimensions'] and not by_class and not by_plan:
             continue
         period = context['period']
         try:
@@ -949,18 +963,20 @@ def inline_facts(document):
         seen.add(unique)
         scale_raw = attrs.get('scale', '0')
         scale = int(scale_raw) if isinstance(scale_raw, str) and re.fullmatch(r'-?\d{1,2}', scale_raw) else None
-        result.append({'concept': attrs['name'], 'context_ref': attrs.get('contextref'),
+        (plans if by_plan else result).append({'concept': attrs['name'], 'context_ref': attrs.get('contextref'),
                        'instant': period.get('instant'), 'start_date': period.get('start_date'),
                        'end_date': period.get('end_date'), 'entity_identifier': context['entity_identifier'],
                        'unit_ref': attrs.get('unitref'), 'unit': unit_value,
                        'scale': scale, 'sign': attrs.get('sign'), 'decimals': attrs.get('decimals'),
                        'format': attrs.get('format'), 'normalized_value': value, 'normalized_decimal': exact,
                        'is_nil': is_nil, 'parse_status': status, 'raw_token': token,
-                       'dimensions': dict(context['members']) if by_class else {},
-                       'dimension_filter': 'class_of_stock_cover_shares' if by_class else 'nondimensional_only',
+                       'dimensions': dict(context['members']) if by_class or by_plan else {},
+                       'dimension_filter': ('class_of_stock_cover_shares' if by_class else
+                                            'defined_benefit_plan_type' if by_plan else 'nondimensional_only'),
                        'location': {'fact_id': attrs.get('id'), 'start_char': frame['start_char'],
                                     'end_char': frame['end_char'], 'line': frame['line'], 'column': frame['column'],
                                     'raw_html': document[frame['start_char']:frame['end_char']]}})
     result.sort(key=lambda fact: (fact['instant'] or fact['end_date'] or '',
                                   fact['start_date'] or '', fact['concept'], fact['context_ref']), reverse=True)
-    return result[:100]
+    plans.sort(key=lambda fact: (fact['instant'] or '', fact['concept'], fact['context_ref']), reverse=True)
+    return result[:100] + plans[:MAX_PLAN_TYPE_FACTS]
