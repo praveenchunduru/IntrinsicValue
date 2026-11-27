@@ -10,6 +10,25 @@ from .core import MODELS, run
 from .sec_http import sec_contact_scope
 
 
+def setup_notes(sec_contact=None, environ=None, needs_sec=True):
+    """First-run hints: which of the two settings is missing and what that stops.
+
+    Notes only. A run with no key is the free way to collect evidence and check inputs,
+    and a run with supplied sources can do without SEC access, so neither is refused here.
+    The values themselves are never printed.
+    """
+    environ = os.environ if environ is None else environ
+    notes = []
+    if not environ.get('OPENROUTER_API_KEY', '').strip():
+        notes.append('Setup: OPENROUTER_API_KEY is not set. Evidence collection is free, but the run stops '
+                     'before its first model call. Set the variable, or run with no ticker and use the browser form.')
+    contact = sec_contact or environ.get('SEC_CONTACT_EMAIL', '').strip() or environ.get('SEC_USER_AGENT', '').strip()
+    if needs_sec and not contact:
+        notes.append('Setup: no SEC contact email is set, so SEC filings cannot be collected. '
+                     'Set SEC_CONTACT_EMAIL or pass --sec-contact you@example.com.')
+    return notes
+
+
 def main():
     parser = argparse.ArgumentParser(description='InvestmentIdeas: OpenRouter-only research')
     parser.add_argument('ticker', nargs='?')
@@ -98,6 +117,8 @@ def main():
                 extra['counterfactuals']=json.loads(args.counterfactuals.read_text(encoding='utf-8'))
         elif args.review_notes or args.counterfactuals or args.draft or args.snapshot or args.forecast_plan or args.plan_samples:
             raise ValueError('--review-notes, --counterfactuals, --draft, --snapshot, --forecast-plan and --plan-samples apply only to full research')
+        for note in setup_notes(args.sec_contact, needs_sec=not args.snapshot):
+            print(note, file=sys.stderr)
         with sec_contact_scope(args.sec_contact):
             folder = runner(args.ticker, os.environ.get('OPENROUTER_API_KEY', ''), profile=args.profile,
                             budget=args.budget, directory=args.output, evidence=evidence,
