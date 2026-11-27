@@ -50,6 +50,19 @@ class IncompleteResponse(RuntimeError):
     """A charged response ended without a complete answer (length, filter, provider error, empty)."""
 
 
+class LengthLimited(IncompleteResponse):
+    """A charged response stopped at its output limit; the stage may retry once with more room."""
+
+
+# Models whose unrequested reasoning OpenRouter lets a request switch off. A live
+# Microsoft run (2026-11-26) had Claude Haiku 5.5 spend 11,078 of 12,000 tokens
+# reasoning on the evidence synthesis; {"enabled": false} gives it none. Opus 5.5
+# rejects the setting ("Reasoning is mandatory"), so it is not sent there.
+REASONING_OFF_MODELS = ('anthropic/claude-haiku-',)
+# A response cut off at its limit is retried once at this multiple of the limit.
+LENGTH_RETRY_FACTOR = 1.75
+
+
 def reasoning_budget(stage):
     if stage.endswith(WITHOUT_REASONING):
         return 0
@@ -386,6 +399,8 @@ class Router:
             payload['session_id'] = session[:256]
         if reasoning is not None:
             payload['reasoning'] = reasoning
+        elif model.startswith(REASONING_OFF_MODELS):
+            payload['reasoning'] = {'enabled': False}
         parameters = catalog_model.get('supported_parameters')
         # Anthropic extended thinking does not accept a custom temperature.
         if (not isinstance(parameters, list) or 'temperature' in parameters) and not (
@@ -456,9 +471,10 @@ class Router:
                 row['partial_response']=content[:80000]
             reason = {'length': 'reached its output limit', 'error': 'failed at the provider',
                       'content_filter': 'was filtered by the provider'}.get(choice.get('finish_reason'), 'was empty or refused')
-            raise IncompleteResponse(f'The {stage} response from {model} {reason}, so it was not used. '
-                               'Run the same command again to retry this stage; completed stages are reused. '
-                               'If it repeats, choose another model')
+            error = LengthLimited if choice.get('finish_reason') == 'length' else IncompleteResponse
+            raise error(f'The {stage} response from {model} {reason}, so it was not used. '
+                        'Run the same command again to retry this stage; completed stages are reused. '
+                        'If it repeats, choose another model')
         row['status'] = 'complete'
         return content
 

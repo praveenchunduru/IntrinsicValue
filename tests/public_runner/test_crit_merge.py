@@ -35,10 +35,6 @@ class HorizonRowsWithPathsTests(unittest.TestCase):
         self.assertEqual(valuation._resized_paths(scenario, 2)['other'], 1)
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class LargerRndTests(unittest.TestCase):
     """Reported R&D is the larger of the inclusive concept and its part (J&J, fiscal 2025)."""
 
@@ -69,3 +65,42 @@ class LargerRndTests(unittest.TestCase):
         concepts = dict(inputs.OPERATING_REFERENCE)['research_and_development']
         concept, chosen = inputs._larger_rnd(facts, concepts, date(2024, 12, 30), date(2025, 12, 28), 'USD', [], 'R&D')
         self.assertEqual(concept, 'us-gaap:ResearchAndDevelopmentExpense')
+
+
+class ReasoningAndLengthRetryTests(unittest.TestCase):
+    """Haiku reasoning is switched off where unrequested; a length cut-off is a LengthLimited error."""
+    CATALOG = {model: {'pricing': {'prompt': '0.000001', 'completion': '0.000005'},
+                       'supported_parameters': ['reasoning', 'temperature']}
+               for model in ('anthropic/claude-haiku-5.5', 'anthropic/claude-opus-5.5')}
+
+    def send(self, stage, model, finish='stop'):
+        from unittest.mock import patch
+        from investmentideas import core
+        router = core.Router.__new__(core.Router)
+        router.key, router.budget, router.ledger, router.checkpoint = 'k', 10.0, [], lambda: None
+        router.catalog, router.session = self.CATALOG, 'iv-test-session'
+        sent = []
+        def transport(url, *, key=None, payload=None, timeout=90):
+            sent.append(payload)
+            return {'choices': [{'finish_reason': finish, 'message': {'content': 'ok'}}], 'usage': {'cost': 0.001}}
+        with patch.object(core, 'request_json', transport):
+            router.complete(stage, model, 'Prompt.', max_tokens=100)
+        return sent[0]
+
+    def test_haiku_reasoning_is_switched_off_unless_requested(self):
+        self.assertEqual(self.send('web_business', 'anthropic/claude-haiku-5.5')['reasoning'], {'enabled': False})
+        self.assertNotIn('reasoning', self.send('valuation_plan', 'anthropic/claude-opus-5.5'))
+        self.assertEqual(self.send('full_draft', 'anthropic/claude-opus-5.5')['reasoning'],
+                         {'max_tokens': 8000, 'exclude': True})
+
+    def test_a_length_cut_off_is_length_limited(self):
+        from investmentideas import core
+        with self.assertRaises(core.LengthLimited):
+            self.send('evidence_synthesis', 'anthropic/claude-haiku-5.5', finish='length')
+        with self.assertRaises(core.IncompleteResponse) as caught:
+            self.send('evidence_synthesis', 'anthropic/claude-haiku-5.5', finish='content_filter')
+        self.assertNotIsInstance(caught.exception, core.LengthLimited)
+
+
+if __name__ == '__main__':
+    unittest.main()

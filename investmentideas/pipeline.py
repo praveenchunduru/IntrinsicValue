@@ -3839,6 +3839,12 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 checkpoint()
                 progress(name+core.WITHOUT_REASONING+': '+model)
                 value=router.complete(name+core.WITHOUT_REASONING,model,prompt,max_tokens=tokens,web=web,**extra)
+            except core.LengthLimited:
+                # Spent and recorded; one retry with more room rather than a stopped run.
+                # Mandatory reasoning (Opus 5.5) grows with the prompt and counts in the limit.
+                checkpoint()
+                progress(name+' (retry with a larger output limit): '+model)
+                value=router.complete(name,model,prompt,max_tokens=int(tokens*core.LENGTH_RETRY_FACTOR),web=web,**extra)
             state['stages'][cache]=value
             return value
         except core.BudgetExceeded as exc:
