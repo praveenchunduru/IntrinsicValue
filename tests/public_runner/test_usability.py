@@ -340,6 +340,40 @@ class RevalueTable(unittest.TestCase):
         self.assertIn('nothing charged', lines)
 
 
+class RevalueWarnings(unittest.TestCase):
+    def test_input_and_value_warnings_are_printed_plainly(self):
+        lines = cli.revalue_warnings({'input_warnings': ['scenarios.base.terminal_growht is not an input name'],
+                                      'value_warnings': [{'message': 'Base value is negative'}]})
+        self.assertIn('scenarios.base.terminal_growht is not an input name', '\n'.join(lines))
+        self.assertIn('- Base value is negative', lines)
+        self.assertEqual(cli.revalue_warnings({}), [])
+
+
+class QuickState(unittest.TestCase):
+    def test_a_damaged_state_file_is_named_and_kept(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(core, 'collect') as collect:
+            with patch.object(core, 'Router', side_effect=ValueError('stop')), \
+                    patch.object(core, 'collect', return_value=([{'id': 'S1', 'kind': 'sec_facts', 'data': {}}], [])):
+                with self.assertRaises(ValueError):
+                    core.run('AAPL', 'k', directory=temp)
+            state = next(Path(temp).glob('AAPL/*/state.json'))
+            for text, words in (('', 'is empty'), ('{"ledger": [', 'cut short')):
+                state.write_text(text)
+                with self.subTest(words=words), self.assertRaises(ValueError) as caught:
+                    core.run('AAPL', 'k', directory=temp)
+                self.assertIn(words, str(caught.exception))
+                self.assertIn(str(state), str(caught.exception))
+                self.assertIn('--output', str(caught.exception))
+                self.assertEqual(state.read_text(), text)
+            collect.assert_not_called()
+
+    def test_missing_evidence_says_why(self):
+        self.assertIn('no SEC contact email', core._missing_evidence([], ['SEC contact email required: use --sec-contact']))
+        self.assertIn('internet connection', core._missing_evidence([], [
+            'Market snapshot unavailable. No verified current quote.',
+            'SEC facts unavailable or ticker not mapped. Supply filings with --evidence for deeper research.']))
+
+
 class Progress(unittest.TestCase):
     def test_stage_names_become_plain_steps(self):
         seen = []

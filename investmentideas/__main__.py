@@ -194,7 +194,36 @@ def revalue(path, output):
     folder = Path(output)
     folder.mkdir(parents=True, exist_ok=True)
     save_valuation(folder, assumptions, results)
-    return revalue_table(results, before, folder)
+    return revalue_table(results, before, folder), revalue_warnings(results)
+
+
+def _warning_text(item):
+    if isinstance(item, str):
+        return item
+    if isinstance(item, dict):
+        for field in ('message', 'warning', 'text', 'reason'):
+            if isinstance(item.get(field), str):
+                return item[field]
+        return '; '.join(f'{key}: {value}' for key, value in item.items() if not isinstance(value, (dict, list)))
+    return str(item)
+
+
+def revalue_warnings(results):
+    """Plain lines for the valuation's input and value warnings, for stderr."""
+    lines = []
+    if not isinstance(results, dict):
+        return lines
+    for field, heading in (('input_warnings', 'Check these edits; the valuation used them as written:'),
+                           ('value_warnings', 'Check this result; it is outside the usual range:')):
+        items = results.get(field)
+        if isinstance(items, (str, dict)):
+            items = [items]
+        if isinstance(items, list) and items:
+            lines.append(heading)
+            lines += [f'- {_warning_text(item)}' for item in items[:20]]
+            if len(items) > 20:
+                lines.append(f'- and {len(items) - 20} more in valuation.json')
+    return lines
 
 
 def revalue_table(results, before, folder):
@@ -279,10 +308,16 @@ def main(prog=None):
                          'leave out ' + ', '.join(research_only))
         output = args.output if args.output != 'research-output' else args.revalue.parent / 'revalued'
         try:
-            for line in revalue(args.revalue, output):
+            lines, warnings = revalue(args.revalue, output)
+            for line in lines:
                 say(line)
+            for line in warnings:
+                warn(line)
+        except RecursionError:
+            warn(f'Revalue stopped: {args.revalue} is nested too deeply to be an assumptions.json file from a run.')
+            sys.exit(1)
         except (ValueError, OSError, KeyError, TypeError, IndexError) as exc:
-            warn(f'Stopped: {exc}')
+            warn(f'Revalue stopped: {exc}')
             sys.exit(1)
         return
     if args.budget is None:

@@ -12,7 +12,7 @@
   Version 0.3.0 answers it: one-time `--setup`, checks before any work (ticker, SEC email,
   key), plain progress and a closing summary, `memo.html`, `--list`, `--dry-run`, clean
   stops and a shorter browser form. See the [changelog](../CHANGELOG.md).
-- **Tests.** __TESTS__ offline tests pass on Python 3.9, 3.12 and 3.13; CI runs 3.9, 3.10,
+- **Tests.** 1,137 offline tests pass on Python 3.9, 3.12 and 3.13; CI runs 3.9, 3.10,
   3.12 and 3.13 with mocked transports only.
 
 The rest of this page is the record, oldest first: the November 6 external audit, the

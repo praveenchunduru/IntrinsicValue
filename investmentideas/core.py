@@ -561,6 +561,22 @@ class Router:
         return content
 
 
+def _missing_evidence(sources, gaps):
+    """What a quick run could not collect, and what to do about it."""
+    text = ' '.join(gaps)
+    head = ('No evidence could be retrieved' if not sources else
+            'Only a share price was found; no financial evidence was retrieved')
+    if 'SEC contact email required' in text:
+        return (head + ': no SEC contact email was set, so no filings were fetched. Run python3 -m intrinsicvalue '
+                '--setup, or add --sec-contact you@example.com, and run again')
+    if 'ticker not mapped' in text and 'Market snapshot unavailable' in text:
+        return (head + ': neither SEC nor Yahoo answered for this ticker. Check your internet connection and the '
+                'ticker, then run again; nothing is saved from this attempt')
+    if 'ticker not mapped' in text:
+        return head + ': the SEC has no financial facts for this ticker. Check the ticker, or add --evidence FILE with a filing excerpt'
+    return head + '. Check your internet connection and run again, or add --evidence FILE with a filing excerpt'
+
+
 def sec_contact_available():
     """Whether an SEC contact is configured for this run (scope or environment)."""
     try:
@@ -575,16 +591,23 @@ def _load_state(path):
     if not path.exists():
         return {'ledger': [], 'stages': {}}
     try:
-        state = json.loads(path.read_text(encoding='utf-8'))
-        if isinstance(state, dict) and isinstance(state.get('ledger', []), list) and isinstance(state.get('stages', {}), dict):
-            state.setdefault('ledger', [])
-            state.setdefault('stages', {})
-            return state
-    except (ValueError, UnicodeDecodeError):
-        pass
-    aside = path.with_name(f'state.damaged-{time.strftime("%Y%m%dT%H%M%S", time.gmtime())}.json')
-    path.replace(aside)
-    return {'ledger': [], 'stages': {}, 'damaged_state_moved_to': aside.name}
+        text = path.read_text(encoding='utf-8')
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f'The saved run file {path} cannot be read ({getattr(exc, "strerror", None) or "not UTF-8 text"}). '
+                         f'Move the folder {path.parent} aside, or run again with --output and a new folder') from None
+    try:
+        state = json.loads(text)
+    except (ValueError, RecursionError):
+        problem = 'is empty' if not text.strip() else 'is cut short or damaged'
+        # Not replaced automatically: its ledger records what this run already spent.
+        raise ValueError(f'The saved run file {path} {problem}. Move the folder {path.parent} aside, or run again with '
+                         '--output and a new folder; the new run starts from scratch') from None
+    if not isinstance(state, dict) or not isinstance(state.get('ledger', []), list) or not isinstance(state.get('stages', {}), dict):
+        raise ValueError(f'The saved run file {path} does not hold a saved run. Move the folder {path.parent} aside, or run '
+                         'again with --output and a new folder')
+    state.setdefault('ledger', [])
+    state.setdefault('stages', {})
+    return state
 
 
 def save(path, data):
@@ -622,8 +645,7 @@ def run(ticker, key, *, profile='economy', budget=2.0, directory='research-outpu
                             'url': None, 'kind': 'user_evidence', 'data': evidence[:100000]})
         if not sources or all(s.get('kind') == 'market_snapshot' for s in sources):
             # Not saved: the next attempt collects again.
-            reason = 'No evidence could be retrieved' if not sources else 'Only a share price was found; no financial evidence was retrieved'
-            raise RuntimeError(reason + '. ' + ' '.join(gaps[:3]))
+            raise RuntimeError(_missing_evidence(sources, gaps))
         state['sources'], state['gaps'] = sources, gaps
         state['collected_with_sec_contact'] = contact
         save(state_path, state)

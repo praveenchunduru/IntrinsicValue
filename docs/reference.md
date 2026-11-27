@@ -370,7 +370,7 @@ python3 -m pip install .
 intrinsicvalue --help
 ```
 
-The current source passes **__TESTS__ tests** locally on Python 3.9, 3.12 and 3.13 (five
+The current source passes **1,137 tests** locally on Python 3.9, 3.12 and 3.13 (five
 skip unless saved runs are named for them); the v0.2.0 release passed 268. The CI matrix
 tests Python 3.9, 3.10, 3.12 and 3.13 with synthetic evidence and mocked transports,
 without model calls or secrets. [Live-validation guidance](openrouter_live_validation.md)
