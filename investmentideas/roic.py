@@ -21,10 +21,17 @@ analysis to Mauboussin's instructions.
   intangibles, and ROIC with internally generated intangibles capitalized, by
   the company method the paper applies to Microsoft (p18-20): 100% of R&D over
   six years, 70% of selling and marketing and 20% of G&A over two years each,
-  straight line from the year after the spending.
+  straight line from the year after the spending. Where SG&A is one line, the
+  shares are Peters and Taylor's as the companion paper states them ("ROIC and
+  Intangible Assets", November 2022, p9): all of R&D and 30% of non-R&D SG&A.
+  That paper's own lives vary by industry and are not given, so the lives are
+  the company method's: six years for R&D, two for selling and administrative
+  spending. Each year records which shares it used.
 - Incremental ROIC over three years: the NOPAT change over three years divided
   by the invested-capital change one year earlier (p22). It is noisy and the
   paper warns against comparing it directly with the cost of capital (p22-23).
+  A capital change under a tenth of the average of the two capital figures is
+  not meaningful (Johnson & Johnson 1,614%, Apple 534%, 2026-11-26 critique).
 
 Checked against the paper's Microsoft fiscal 2022 example (p5, p7, p19-20):
 NOPAT $70 billion, invested capital $96, $120 and $165 billion for 2020-2022,
@@ -36,12 +43,19 @@ from __future__ import annotations
 OPERATING_CASH_SHARE = .02
 STATUTORY_TAX_FALLBACK = .25
 # (share treated as investment, life in years); Corrado and Hulten, as applied to
-# Microsoft in the paper (p18). Applied only when selling and marketing and G&A
-# are reported separately: the paper gives no share for SG&A as one line.
+# Microsoft in the paper (p18). Applied when selling and marketing and G&A are
+# reported separately.
 CAPITALIZATION = {'research_and_development': (1.0, 6),
                   'selling_and_marketing': (.7, 2),
                   'general_and_administrative': (.2, 2)}
+# SG&A as one line: Peters and Taylor's shares ("ROIC and Intangible Assets", p9),
+# with the lives above. The one-line SG&A is taken as non-R&D SG&A.
+ONE_LINE_CAPITALIZATION = {'research_and_development': (1.0, 6),
+                           'selling_general_administrative': (.3, 2)}
+CAPITALIZATION_BASES = (('split', CAPITALIZATION), ('one_line', ONE_LINE_CAPITALIZATION))
 ROIIC_YEARS = 3
+# A three-year capital change below this share of average capital gives no meaningful incremental return.
+ROIIC_MIN_CAPITAL_CHANGE = .1
 # Consecutive fiscal years are 350-380 days apart; a gap breaks every lagged figure.
 CONSECUTIVE_DAYS = (350, 380)
 
@@ -180,7 +194,16 @@ def _consecutive(earlier, later):
     return CONSECUTIVE_DAYS[0] <= days <= CONSECUTIVE_DAYS[1]
 
 
-def _capitalized(history, index):
+def _line(row, line):
+    """A spending line; one-line SG&A is the reported total, else selling and marketing plus G&A."""
+    value = _number(row.get(line))
+    if value is None and line == 'selling_general_administrative':
+        selling, general = _number(row.get('selling_and_marketing')), _number(row.get('general_and_administrative'))
+        value = selling + general if selling is not None and general is not None else None
+    return value
+
+
+def _capitalized(history, index, shares=CAPITALIZATION):
     """(investment, amortization, net asset) at ``index`` from straight-line vintages, or None.
 
     Needs every line's spending for the asset life before the year. A line missing
@@ -188,14 +211,14 @@ def _capitalized(history, index):
     spending under its own concept, not R&D.
     """
     investment = amortization = net = 0.0
-    for line, (share, life) in CAPITALIZATION.items():
+    for line, (share, life) in shares.items():
         if index < life:
             return None
         window = history[index - life:index + 1]
-        if any(row.get(line) is None for row in window) or not all(
+        if any(_line(row, line) is None for row in window) or not all(
                 _consecutive(a, b) for a, b in zip(window, window[1:])):
             return None
-        spend = [share * row[line] for row in window]
+        spend = [share * _line(row, line) for row in window]
         investment += spend[-1]
         amortization += sum(spend[:-1]) / life
         # Vintage t is whole; vintage t-k has (life - k) / life of its cost left.
@@ -222,7 +245,7 @@ def history(rows):
     split = bool(rows) and all(_split_reported(row) for row in rows if row.get('selling_and_marketing') is not None
                                or row.get('general_and_administrative') is not None) and any(
         _split_reported(row) for row in rows)
-    output = []
+    output, alternatives = [], []
     for index, row in enumerate(rows):
         prior = rows[index - 1] if index and _consecutive(rows[index - 1], row) else None
         capital = invested_capital(row)
@@ -268,30 +291,53 @@ def history(rows):
         item['investment_rate'] = ((capital - opening['invested_capital']) / nopat
                                    if opening and capital is not None and opening.get('invested_capital') is not None
                                    and nopat and nopat > 0 else None)
-        capitalized = _capitalized(rows, index) if split else None
-        if capitalized and nopat is not None and capital is not None:
-            investment, amortization, net = capitalized
-            item.update(intangible_investment=investment, intangible_amortization=amortization,
-                        capitalized_intangibles=net, adjusted_nopat=nopat + investment - amortization,
-                        adjusted_invested_capital=capital + net)
-        adjusted = average('adjusted_invested_capital')
+        # The company method where selling and administrative lines are reported
+        # apart, otherwise the one-line shares. A year takes the first basis on
+        # which its opening capital is also measured, so an average never mixes
+        # two bases (Apple tags selling and G&A apart only from fiscal 2023), and
+        # records the basis it used.
+        candidates = {}
+        if nopat is not None and capital is not None:
+            for basis, shares in CAPITALIZATION_BASES:
+                capitalized = _capitalized(rows, index, shares) if split or basis == 'one_line' else None
+                if capitalized:
+                    candidates[basis] = capitalized
+        openings = alternatives[-1] if opening else {}
+        alternatives.append(candidates)
+        chosen = (next((basis for basis, _ in CAPITALIZATION_BASES if basis in candidates and basis in openings), None) or
+                  next((basis for basis, _ in CAPITALIZATION_BASES if basis in candidates), None))
+        item['intangibles_basis'] = chosen
+        adjusted = None
+        if chosen:
+            investment, amortization, net = candidates[chosen]
+            item.update(intangible_investment=investment, intangible_amortization=amortization, capitalized_intangibles=net,
+                        adjusted_nopat=nopat + investment - amortization, adjusted_invested_capital=capital + net)
+            if chosen in openings:
+                adjusted = (opening['invested_capital'] + openings[chosen][2] + item['adjusted_invested_capital']) / 2
         item['adjusted_return'], item['adjusted_return_unbounded'] = ratio(item.get('adjusted_nopat'), adjusted)
         # Three-year incremental return: NOPAT change over three years against the
         # capital change over the three years ending one year earlier (p22).
-        item['incremental_return'] = None
+        item['incremental_return'] = item['incremental_return_status'] = None
         if index >= ROIIC_YEARS + 1 and all(_consecutive(a, b) for a, b in zip(rows[index - ROIIC_YEARS - 1:index],
                                                                             rows[index - ROIIC_YEARS:index + 1])):
             then = output[index - ROIIC_YEARS]
             before, after = output[index - ROIIC_YEARS - 1].get('invested_capital'), output[index - 1].get('invested_capital')
             if nopat is not None and then.get('nopat') is not None and before is not None and after is not None:
                 change = after - before
-                item['incremental_return'] = (nopat - then['nopat']) / change if change > 0 else None
                 item['incremental_capital_change'] = change
+                if change <= 0:
+                    item['incremental_return_status'] = 'capital_fell'
+                elif change < ROIIC_MIN_CAPITAL_CHANGE * abs(before + after) / 2:
+                    item['incremental_return_status'] = 'small_capital_change'
+                else:
+                    item['incremental_return'] = (nopat - then['nopat']) / change
         output.append(item)
-    if not split:
-        status = 'no_split'
+    if output and output[-1].get('adjusted_return') is not None:
+        status = 'computed'
     elif all(row.get('research_and_development') is None for row in rows):
         status = 'no_rnd'
+    elif all(_line(row, 'selling_general_administrative') is None for row in rows):
+        status = 'no_sga'
     else:
-        status = 'computed' if output and output[-1].get('adjusted_return') is not None else 'short_history'
+        status = 'short_history'
     return output, status

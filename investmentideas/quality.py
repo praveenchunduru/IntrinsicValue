@@ -603,10 +603,10 @@ def prereview_checks(memo, sources, computed=()):
 def assessment_findings(review):
     """Findings implied by the reviewer's own assessment of the conclusion.
 
-    The review schema asks for a major finding whenever the reviewer says the
-    memo does not fully handle the central weakness or explain the difference
-    between value and price. That instruction alone did not bind: a reviewer
-    could answer "no" and still pass the draft. This makes the statement count.
+    Only a review that states neither answer gets a finding, a minor one. Until
+    2026-11-15 an answer short of "yes" on the central weakness or the gap to
+    price became a major finding; the answers are now recorded for the reader
+    (commit 8864a45, see below).
     """
     weakness = review.get('central_weakness') if isinstance(review.get('central_weakness'), dict) else None
     explained = review.get('gap_explained')

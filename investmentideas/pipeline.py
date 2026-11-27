@@ -6,7 +6,7 @@ recorded assessments, never the original system's signed publication authority.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 import hashlib
 import copy
@@ -28,8 +28,9 @@ from .quality import (DIAGNOSTIC_SCOPE, HOUSE_ATTRIBUTION, RUBRIC, TRADING_TERMS
                       inspect_memo, parse_json, parse_review, prereview_checks, prose_words, trace_pools, untraced_figures)
 from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_breakdown_facts, inline_facts, archive_focus_excerpts
 from .evidence_tables import (breakdown_tables, filing_supplement_for, historical_baseline, render_baseline, render_roic,
-                              render_breakdowns)
+                              render_breakdowns, render_quarterly)
 from .macro import gather_us_calibration
+from .roic import _consecutive as roic_consecutive
 from .market_beta import gather_weekly_beta
 from .prompt_context import valuation_context as render_valuation_context
 from .primary_debt import classify_primary_debt
@@ -81,7 +82,8 @@ decimals>] and "ebit_margins":[<10 annual decimals>] in every scenario.
 Placeholders mark where your evidence-based numbers go; nothing here is a default.
 Start from the COMPUTED FROM REPORTED FILINGS tables: year-1 growth, gross and operating margins,
 expense levels, tax rate and capital intensity begin at the reported history and year to date, and
-each departure needs evidence in scenario_rationales.
+each departure needs evidence in scenario_rationales. The reported fiscal quarters give the latest
+growth, margin, inventory and deferred revenue, the run-rate the first forecast years start from.
 Use 10 forecast years, the same horizon in all scenarios. The base case is the headline value and
 must be written as the expected path; bear and bull are stress cases without probabilities (give
 probability 0, 1 and 0; Python sets them). Never cite frequencies, base rates or historical patterns
@@ -440,38 +442,69 @@ REINVESTMENT_SHARE = 2 / 3
 REINVESTMENT_RATIO = 1.5
 
 
-def reinvestment_reference(sources):
-    """Last reported net reinvestment and the incremental sales-to-capital behind it, or None.
+def _amount(value):
+    return value if isinstance(value,(int,float)) and not isinstance(value,bool) else None
 
-    Net reinvestment is capital expenditure less depreciation and amortization plus
-    acquisitions. A business whose depreciation exceeds its capital spending, or
-    whose revenue fell, has no meaningful rate and is not checked.
+
+def reinvestment_reference(sources):
+    """Last reported net reinvestment and the incremental sales-to-capital the plan is held to, or None.
+
+    The rate is computed two ways over the same years, the revenue increase over the
+    last three fiscal years divided by (i) capital expenditure less depreciation and
+    amortization plus acquisitions and finance-lease additions, and (ii) the change in
+    invested capital by Mauboussin and Callahan's method ("investment in future growth
+    is therefore equivalent to the change in invested capital", ROIC, October 2022,
+    p8), which also counts working capital, operating leases and purchased
+    intangibles. The lower rate, which asks more capital of each unit of growth, is
+    the reference (2026-11-26 critique: Nvidia 9.6 on capital expenditure against 2.2
+    on invested capital). A business whose capital expenditure is below depreciation
+    is still checked when invested capital rose (Apple, Uber). The floor stays on (i),
+    the owner's net reinvestment, and applies only when its last year is positive.
+    A business whose revenue fell has no meaningful rate and is not checked.
     """
-    grouped={}
-    for sid,row in _history_rows(sources):
-        grouped.setdefault(sid,[]).append(row)
-    for sid,rows in grouped.items():
-        usable=[row for row in rows if all(isinstance(row.get(key),(int,float)) and not isinstance(row.get(key),bool)
-                                           for key in ('revenue','capital_expenditure','depreciation_amortization'))]
+    for sid,rows in _grouped_history(sources).items():
+        usable=[row for row in rows if _amount(row.get('revenue')) is not None]
         if len(usable)<2:
             continue
         recent=usable[-(REINVESTMENT_YEARS+1):]
-        # Finance-lease additions are capacity bought on credit (Microsoft FY26: USD 24.6
-        # billion, 21% of capex), counted as reinvestment by owner choice (2026-11-15).
-        nets=[row['capital_expenditure']-row['depreciation_amortization']+(row.get('acquisitions') or 0)+
-              (row.get('finance_lease_additions') or 0) for row in recent[1:]]
         growth=recent[-1]['revenue']-recent[0]['revenue']
-        if sum(nets)<=0 or nets[-1]<=0 or growth<=0:
+        if growth<=0:
             return None
         last=recent[-1]
-        return {'fiscal_year_end':last.get('fiscal_year_end'),'net_reinvestment':nets[-1],
-                'capital_expenditure':last['capital_expenditure'],'depreciation_amortization':last['depreciation_amortization'],
+        nets=None
+        if all(_amount(row.get(key)) is not None for row in recent[1:]
+               for key in ('capital_expenditure','depreciation_amortization')):
+            # Finance-lease additions are capacity bought on credit (Microsoft FY26: USD 24.6
+            # billion, 21% of capex), counted as reinvestment by owner choice (2026-11-15).
+            nets=[row['capital_expenditure']-row['depreciation_amortization']+(row.get('acquisitions') or 0)+
+                  (row.get('finance_lease_additions') or 0) for row in recent[1:]]
+        opening,closing=_amount(recent[0].get('invested_capital')),_amount(recent[-1].get('invested_capital'))
+        consecutive=all(roic_consecutive(a,b) for a,b in zip(recent,recent[1:]))
+        change=closing-opening if opening is not None and closing is not None and consecutive else None
+        rates={}
+        if nets and sum(nets)>0:
+            rates['capital_expenditure']=growth/sum(nets)
+        if change is not None and change>0:
+            rates['invested_capital']=growth/change
+        if not rates:
+            return None
+        chosen=min(rates,key=rates.get)
+        floor=nets[-1] if nets and nets[-1]>0 else None
+        return {'fiscal_year_end':last.get('fiscal_year_end'),'net_reinvestment':floor,
+                'capital_expenditure':last.get('capital_expenditure'),
+                'depreciation_amortization':last.get('depreciation_amortization'),
                 'acquisitions':last.get('acquisitions'),'finance_lease_additions':last.get('finance_lease_additions'),
-                'incremental_sales_to_capital':growth/sum(nets),'years':len(nets),
-                'source_refs':[sid],
-                'basis':'Net reinvestment is reported capital expenditure less depreciation and amortization plus '
-                        'acquisitions and finance-lease additions where reported; incremental sales-to-capital is the '
-                        'revenue increase over those years divided by their net reinvestment. Working capital is not included.'}
+                'incremental_sales_to_capital':rates[chosen],'sales_to_capital_basis':chosen,
+                'capital_expenditure_sales_to_capital':rates.get('capital_expenditure'),
+                'invested_capital_sales_to_capital':rates.get('invested_capital'),
+                'net_reinvestment_over_years':sum(nets) if nets else None,'invested_capital_change':change,
+                'revenue_increase':growth,'years':len(recent)-1,'source_refs':[sid],
+                'basis':'Incremental sales-to-capital is the revenue increase over the last '
+                        f'{len(recent)-1} fiscal years divided by each of two measures of the investment in those years: '
+                        'net reinvestment (capital expenditure less depreciation and amortization plus acquisitions and '
+                        'finance-lease additions where reported) and the change in invested capital (Mauboussin and '
+                        'Callahan method, which includes working capital and operating leases). The lower rate is the '
+                        'reference. The reinvestment floor uses the last year of net reinvestment, where it is positive.'}
     return None
 
 
@@ -491,8 +524,9 @@ def reinvestment_continuity(plan, result):
         reinvested=sum(row[0] for row in values)
         change=values[-1][2]-values[0][2]/(1+values[0][1])
         efficiency=change/reinvested if reinvested>0 else None
-        floor=REINVESTMENT_SHARE*years*reference['net_reinvestment']
-        low=change>0 and (reinvested<floor or efficiency is None or
+        base=reference.get('net_reinvestment')
+        floor=REINVESTMENT_SHARE*years*base if isinstance(base,(int,float)) and base>0 else None
+        low=change>0 and ((floor is not None and reinvested<floor) or efficiency is None or
                           efficiency>REINVESTMENT_RATIO*reference['incremental_sales_to_capital'])
         row={'years':years,'net_reinvestment':reinvested,'sales_to_capital':efficiency,
              'reinvestment_floor':floor,'within_band':not low}
@@ -508,10 +542,49 @@ def reinvestment_continuity(plan, result):
 # for low-margin businesses by the same band as the year-1 check (Costco's 3.9%
 # peak would otherwise allow 8.9%). Plans had let R&D and SG&A fall from 19% to
 # 10% of Microsoft's revenue.
+#
+# Two fixes (2026-11-26 critiques). An inflection already in reported numbers lifts
+# the base and bull ceiling: the peak includes the latest twelve-month operating
+# margin from the reported quarters (Nvidia's base ceiling on filings to December
+# 2023 was 42.3% while its last four quarters ran at 45.9%), or failing that a year
+# to date of at least two quarters (one quarter is seasonal). And a ceiling only
+# applies when it is positive, because the engine requires a positive final margin:
+# with a five-year average of -1.5% (Uber at the end of 2023) no bear case could pass.
+YTD_CEILING_MIN_DAYS = 160
 
 
-def cost_path_reference(sources):
-    """Reported five-year peak and average operating margin, or None."""
+def _latest_run_rate(sid, sources, rows, operating_reference):
+    """The latest twelve-month operating margin after the last fiscal year, or a long-enough year to date, or None."""
+    last=rows[-1].get('fiscal_year_end')
+    for source in sources:
+        if source.get('id')!=sid:
+            continue
+        data=source.get('data') if isinstance(source.get('data'),dict) else {}
+        baseline=source.get('historical_baseline') or data.get('historical_baseline') or {}
+        ttm=(baseline.get('quarterly') or {}).get('trailing_twelve_months')
+        if (isinstance(ttm,dict) and isinstance(ttm.get('operating_margin'),(int,float)) and ttm.get('quarters')==4 and
+                isinstance(last,str) and str((ttm.get('period') or {}).get('end_date'))>last):
+            return {'basis':'trailing_twelve_months','period':ttm['period'],'operating_margin':ttm['operating_margin'],
+                    'source_refs':[sid],'label':f'the operating margin for the twelve months to {ttm["period"]["end_date"]}'}
+    ytd=(operating_reference or {}).get('year_to_date') if isinstance(operating_reference,dict) else None
+    period=(ytd or {}).get('period') or {}
+    try:
+        start,end=date.fromisoformat(period['start_date']),date.fromisoformat(period['end_date'])
+        anchored=start-timedelta(days=1)==date.fromisoformat(last)
+    except (KeyError,TypeError,ValueError):
+        return None
+    if anchored and (end-start).days>=YTD_CEILING_MIN_DAYS and isinstance(ytd.get('operating_margin'),(int,float)):
+        return {'basis':'year_to_date','period':period,'operating_margin':ytd['operating_margin'],
+                'source_refs':list(ytd.get('source_refs') or []),'label':f'the year-to-date operating margin to {period["end_date"]}'}
+    return None
+
+
+def cost_path_reference(sources, operating_reference=None):
+    """Reported five-year peak and average operating margin and the final-year ceilings they set, or None.
+
+    ``operating_reference`` (reported_inputs.operating_reference) supplies the year
+    to date where the reported quarters give no twelve-month margin.
+    """
     for sid,rows in _grouped_history(sources).items():
         margins=[row['operating_margin'] for row in rows[-5:] if isinstance(row.get('operating_margin'),(int,float))]
         if len(margins)<3:
@@ -519,18 +592,36 @@ def cost_path_reference(sources):
         reference={'fiscal_year_end':rows[-1].get('fiscal_year_end'),'years':len(margins),
                    'max_operating_margin':max(margins),'average_operating_margin':sum(margins)/len(margins),
                    'source_refs':[sid],
-                   'basis':'Reported operating margins over the last five fiscal years in the reported history.'}
-        if reference['max_operating_margin']>0:
-            reference['final_year_margin_ceilings']={name:_margin_ceiling(name,reference)[0] for name in SCENARIO_NAMES}
+                   'basis':'Reported operating margins over the last five fiscal years in the reported history; the base '
+                           'and bull peak also includes the latest twelve-month operating margin, or a year to date of at '
+                           'least two quarters, where it is higher.'}
+        latest=_latest_run_rate(sid,sources,rows,operating_reference)
+        if latest:
+            reference['latest_run_rate']=latest
+        ceilings={name:_margin_ceiling(name,reference)[0] for name in SCENARIO_NAMES}
+        ceilings={name:value for name,value in ceilings.items() if value is not None}
+        if ceilings:
+            reference['final_year_margin_ceilings']=ceilings
         return reference
     return None
 
 
 def _margin_ceiling(name, reference):
+    """(ceiling, label), or (None, reason) where no positive ceiling exists for the scenario."""
     if name=='bear':
-        return reference['average_operating_margin'],'the reported five-year average'
-    allowance=_continuity_band(reference['max_operating_margin'])
-    return reference['max_operating_margin']+allowance,f'the reported five-year peak plus {allowance*100:.1f} points'
+        average=reference['average_operating_margin']
+        if average<=0:
+            return None,'no bear ceiling: the reported five-year average is not positive'
+        return average,'the reported five-year average'
+    # A business that has not been profitable has no margin history to bound it.
+    if reference['max_operating_margin']<=0:
+        return None,'no ceiling: no reported year in the history is profitable'
+    peak,label=reference['max_operating_margin'],'the reported five-year peak'
+    latest=reference.get('latest_run_rate') if isinstance(reference.get('latest_run_rate'),dict) else None
+    if latest and isinstance(latest.get('operating_margin'),(int,float)) and latest['operating_margin']>peak:
+        peak,label=latest['operating_margin'],latest.get('label') or 'the latest reported operating margin'
+    allowance=_continuity_band(peak)
+    return peak+allowance,f'{label} plus {allowance*100:.1f} points'
 
 
 def cost_path_continuity(plan, result):
@@ -546,8 +637,7 @@ def cost_path_continuity(plan, result):
         explicit=min(scenario.get('explicit_forecast_years') or len(flows),len(flows))
         final=flows[explicit-1]['ebit_margin']
         ceiling,label=_margin_ceiling(name,reference)
-        # A business that has not been profitable has no margin history to bound it.
-        applies=reference['max_operating_margin']>0
+        applies=ceiling is not None
         rows[name]={'final_ebit_margin':final,'ceiling':ceiling,'ceiling_basis':label,
                     'within_band':(not applies) or final<=ceiling+1e-9,'applies':applies}
     return dict(reference,scenarios=rows)
@@ -579,8 +669,18 @@ def _cost_path_breaks(locked, result, known, prior):
         return []
     return ['Final-year EBIT margin exceeds the house ceiling (reported five-year operating margins: peak '
             f'{check["max_operating_margin"]:.1%}, average {check["average_operating_margin"]:.1%} '
-            f'[{", ".join(check["source_refs"])}]) in: '+', '.join(breaks)+'. Lower the margin path (gross margins or '
-            'expense shares) so the final year is at or below the ceiling; there is no exception']
+            f'[{", ".join(check["source_refs"])}]'+_run_rate_text(check)+') in: '+', '.join(breaks)+
+            '. Lower the margin path (gross margins or expense shares) so the final year is at or below the ceiling; '
+            'there is no exception']
+
+
+def _run_rate_text(reference):
+    latest=reference.get('latest_run_rate') if isinstance(reference.get('latest_run_rate'),dict) else None
+    if not latest:
+        return ''
+    kind='twelve months' if latest.get('basis')=='trailing_twelve_months' else 'year to date'
+    return (f'; {kind} to {(latest.get("period") or {}).get("end_date")}: {latest["operating_margin"]:.1%} '
+            f'[{", ".join(latest.get("source_refs") or [])}]')
 
 
 def _reinvestment_breaks(locked, result, known, prior):
@@ -614,20 +714,36 @@ def _reinvestment_breaks(locked, result, known, prior):
             raise ValueError(f'capital_efficiency_basis.{name} cites {", ".join(unknown)}, which is not in the evidence')
         if not row['within_band'] and not (isinstance(basis,str) and len(basis.strip())>=40 and cited):
             efficiency=row['sales_to_capital']
-            breaks.append(f'{name} {row["net_reinvestment"]/1e9:,.1f} billion over years 1-{row["years"]} against a floor of '
-                          f'{row["reinvestment_floor"]/1e9:,.1f} billion'+
+            floor=row.get('reinvestment_floor')
+            breaks.append(f'{name} {row["net_reinvestment"]/1e9:,.1f} billion over years 1-{row["years"]}'+
+                          (f' against a floor of {floor/1e9:,.1f} billion' if floor is not None else '')+
                           (f', sales-to-capital {efficiency:.2f}' if efficiency is not None else ''))
     if not breaks:
         return []
-    return [f'Reinvestment over forecast years 1-{REINVESTMENT_WINDOW} departs from the reported run-rate: net reinvestment '
-            f'must be at least two thirds of {REINVESTMENT_WINDOW} years at the reported {check["net_reinvestment"]/1e9:,.1f} billion '
-            f'(fiscal year ending {check["fiscal_year_end"]}: capital expenditure {check["capital_expenditure"]/1e9:,.1f} billion '
-            f'less depreciation and amortization {check["depreciation_amortization"]/1e9:,.1f} billion plus acquisitions'+
-            (' and finance-lease additions' if check.get('finance_lease_additions') else '')+'), '
-            f'and sales-to-capital at most {REINVESTMENT_RATIO:g} times the reported {check["years"]}-year incremental rate of '
-            f'{check["incremental_sales_to_capital"]:.2f} [{", ".join(check["source_refs"])}]. Outside the band: '+', '.join(breaks)+
+    base=check.get('net_reinvestment')
+    floor_text=(f'net reinvestment must be at least two thirds of {REINVESTMENT_WINDOW} years at the reported '
+                f'{base/1e9:,.1f} billion (fiscal year ending {check["fiscal_year_end"]}: capital expenditure '
+                f'{check["capital_expenditure"]/1e9:,.1f} billion less depreciation and amortization '
+                f'{check["depreciation_amortization"]/1e9:,.1f} billion plus acquisitions'+
+                (' and finance-lease additions' if check.get('finance_lease_additions') else '')+'), and '
+                if isinstance(base,(int,float)) and base>0 else '')
+    return [f'Reinvestment over forecast years 1-{REINVESTMENT_WINDOW} departs from the reported run-rate: '+floor_text+
+            f'sales-to-capital may be at most {REINVESTMENT_RATIO:g} times the reported {check["years"]}-year incremental rate of '
+            f'{check["incremental_sales_to_capital"]:.2f}'+_rate_basis_text(check)+f' [{", ".join(check["source_refs"])}]. '
+            'Outside the band: '+', '.join(breaks)+
             '. Set sales_to_capital from the reported rate, or, if falling reinvestment is the forecast, state its evidence '
             'in capital_efficiency_basis.<scenario> with [S#] citations to sources in the evidence']
+
+
+def _rate_basis_text(reference):
+    """Which measure of investment set the reference rate, and the other rate where there is one."""
+    rates={'capital_expenditure':(reference.get('capital_expenditure_sales_to_capital'),'net reinvestment'),
+           'invested_capital':(reference.get('invested_capital_sales_to_capital'),'the change in invested capital')}
+    chosen=reference.get('sales_to_capital_basis')
+    if chosen not in rates:
+        return ''
+    other=[f'{value:.2f} on {label}' for name,(value,label) in rates.items() if name!=chosen and value is not None]
+    return f' on {rates[chosen][1]}'+(f', against {other[0]}' if other else '')
 
 
 def _check_continuity(locked, result, sources=(), prior=None):
@@ -714,7 +830,8 @@ CONTINUITY_RULE = ('\nYear-1 continuity: start year-1 gross margins and expenses
                    'margin_continuity_basis.<bear|base|bull> with [S#] citations to sources in the evidence. Start '
                    'reinvestment from the reported net reinvestment and incremental sales-to-capital; a large fall needs '
                    'capital_efficiency_basis.<bear|base|bull> with [S#] citations. Final-year EBIT margins may not exceed the '
-                   'reported five-year average (bear) or the reported five-year peak plus 5 points, less for low-margin '
+                   'reported five-year average (bear, where that average is positive) or the higher of the reported '
+                   'five-year peak and the latest twelve-month operating margin, plus 5 points, less for low-margin '
                    'businesses (base and bull).')
 LEGACY_PLAN_NOTE = ('This forecast plan was saved before the market-consistent rate and terminal-growth conventions and is '
                     'valued under its own conventions. Run in a new --output folder to build a plan under the current '
@@ -1170,6 +1287,9 @@ def _computed_tables(sources):
         breakdowns=source.get('breakdown_tables') or data.get('breakdown_tables')
         if baseline:
             tables.append(render_baseline(baseline,source.get('id')))
+            quarterly=render_quarterly(baseline,source.get('id'))
+            if quarterly:
+                tables.append(quarterly)
         if breakdowns:
             tables.append(render_breakdowns(breakdowns,source.get('id')))
     return '\n\n'.join(tables)
@@ -1984,7 +2104,7 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
         locked['reinvestment_reference']=reference
     else:
         locked.pop('reinvestment_reference',None)
-    costs=cost_path_reference(sources)
+    costs=cost_path_reference(sources,reported.get('operating_reference'))
     if costs:
         locked['cost_path_reference']=costs
     else:
@@ -2350,6 +2470,9 @@ def reported_tables_section(sources):
                 lines.append(f'| {name} | '+' | '.join(row[index] if index<len(row) else 'n/a' for row in rows)+' |')
             if notes:
                 lines+=['']+notes
+            quarterly=render_quarterly(baseline,source.get('id'),markdown=True)
+            if quarterly:
+                lines+=quarterly.split('\n')
             returns=render_roic(baseline,source.get('id')).split('\n')
             if len(returns)>2:
                 basis=returns.index('ROIC basis:') if 'ROIC basis:' in returns else len(returns)
@@ -2521,21 +2644,26 @@ def _reinvestment_text(check):
     cells='; '.join(f'{name} {row["net_reinvestment"]/1e9:,.1f} billion'+
                     (f' ({row["sales_to_capital"]:.2f})' if row.get('sales_to_capital') is not None else '')
                     for name,row in check['scenarios'].items())
-    return (f'Net reinvestment over forecast years 1-{REINVESTMENT_WINDOW} against the reported {check["net_reinvestment"]/1e9:,.1f} billion a year (fiscal year ending '
-            f'{check["fiscal_year_end"]}; {check["years"]}-year incremental sales-to-capital {check["incremental_sales_to_capital"]:.2f}) '
-            f'[{", ".join(check["source_refs"])}]: {cells}.')
+    base=check.get('net_reinvestment')
+    reported=(f'the reported {base/1e9:,.1f} billion a year' if isinstance(base,(int,float)) and base>0 else
+              'the reported results (net reinvestment not positive, so no floor)')
+    return (f'Net reinvestment over forecast years 1-{REINVESTMENT_WINDOW} against {reported} (fiscal year ending '
+            f'{check["fiscal_year_end"]}; {check["years"]}-year incremental sales-to-capital {check["incremental_sales_to_capital"]:.2f}'
+            f'{_rate_basis_text(check)}) [{", ".join(check["source_refs"])}]: {cells}.')
 
 
 def _cost_path_lines(result):
     check=result.get('cost_path_continuity')
     if not check or not check.get('scenarios'):
         return []
-    cells='; '.join(f'{name} {row["final_ebit_margin"]:.1%} (ceiling {row["ceiling"]:.1%})'
+    cells='; '.join(f'{name} {row["final_ebit_margin"]:.1%} '+
+                    (f'(ceiling {row["ceiling"]:.1%})' if row.get('ceiling') is not None else '(no ceiling)')
                     for name,row in check['scenarios'].items())
     return ['', '### Final-year margin against the reported history', '',
             f'Reported operating margins over {check["years"]} years: peak {check["max_operating_margin"]:.1%}, average '
-            f'{check["average_operating_margin"]:.1%} [{", ".join(check["source_refs"])}]. Final-year EBIT margin: {cells}. '
-            'Ceilings: bear at most the average; base and bull at most the peak plus 5 points (less for low-margin '
+            f'{check["average_operating_margin"]:.1%} [{", ".join(check["source_refs"])}]'+_run_rate_text(check)+
+            f'. Final-year EBIT margin: {cells}. Ceilings: bear at most the average where it is positive; base and bull at '
+            'most the higher of the peak and the latest twelve-month margin, plus 5 points (less for low-margin '
             'businesses, as in the year-1 check).']
 
 
@@ -3246,7 +3374,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 (('\nReported reinvestment (reference for years 1-3 reinvestment and sales_to_capital):\n'+
                   json.dumps(reinvestment_reference(state['sources']))) if reinvestment_reference(state['sources']) else '')+
                 (('\nReported operating margins (reference for the final-year margin ceilings):\n'+
-                  json.dumps(cost_path_reference(state['sources']))) if cost_path_reference(state['sources']) else '')+
+                  json.dumps(cost_path_reference(state['sources'],reported.get('operating_reference'))))
+                 if cost_path_reference(state['sources'],reported.get('operating_reference')) else '')+
                 EVIDENCE_ABOVE+'\nDiligence synthesis:\n'+thesis+'\nRetrieval gaps:\n'+gaps+
                 # A rerun after a discarded plan would otherwise resend the identical request.
                 ('\nAn earlier attempt at this plan was rejected for these reasons; avoid them: '+
