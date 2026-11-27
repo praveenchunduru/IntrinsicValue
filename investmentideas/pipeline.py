@@ -2333,7 +2333,7 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
         'not reported zeros. All selected cash and investments are treated as nonoperating; any part the business '
         'needs to operate would lower equity value. '+lease_allocation+
         ('Non-operating investments outside the selected cash are added, and noncontrolling interests, preferred stock '
-         'and net unfunded pension and postretirement obligations are deducted, at carrying value; pension obligations '
+         'and unfunded pension and postretirement obligations are deducted, at carrying value; pension obligations '
          'are taken before tax. Value per share divides by outstanding shares plus the latest fiscal year\'s dilutive '
          'increment. ' if locked.get('nonoperating_assets_bridge') or locked.get('share_count_bridge') else '')+
         'Additional unidentified '
@@ -2611,7 +2611,7 @@ def _role(name, probability, headline):
 CLAIM_LABELS = (('noncontrolling_interests', 'Less noncontrolling interests'),
                 ('redeemable_noncontrolling_interests', 'Less redeemable noncontrolling interests'),
                 ('preferred_stock', 'Less preferred stock'),
-                ('defined_benefit_obligations', 'Less net unfunded pension and postretirement obligations, before tax'))
+                ('defined_benefit_obligations', 'Less unfunded pension and postretirement obligations, before tax'))
 NONOPERATING_LABELS = {'long_term_investments': 'long-term investments', 'securities_noncurrent': 'noncurrent securities',
                        'equity_method_investments': 'equity-method investments',
                        'other_long_term_investments': 'other long-term investments',
@@ -2656,10 +2656,9 @@ def _equity_bridge_exhibit(plan, result, currency):
                 rows.append((label,money(0),f'carrying value {money(item["carrying_value_not_deducted"])} counted through '
                                             'conversion shares in the dilutive increment'+cite(item.get('source_refs'))))
             elif name=='defined_benefit_obligations':
-                text=(f'recognized liabilities {money(item.get("recognized_liabilities",0))} less overfunded plan assets '
-                      f'{money(item.get("overfunded_plan_assets",0))}')
-                if item.get('net_surplus_not_added') is not None:
-                    text+=f'; net surplus of {money(item["net_surplus_not_added"])} not added'
+                text='recognized liabilities of underfunded plans'
+                if item.get('overfunded_plan_assets'):
+                    text+=f'; {money(item["overfunded_plan_assets"])} of overfunded plan assets not credited'
                 rows.append((label,money(item['value']),text+cite(item.get('source_refs'))))
             else:
                 rows.append((label,money(item['value']),'carrying value'+cite(item.get('source_refs'))))

@@ -388,23 +388,31 @@ class SweepShapeTests(unittest.TestCase):
                       pinned(data)['coverage']['conflicts'])
 
     def test_class_cover_counts_are_summed_only_without_an_entity_total(self):
-        # Meta's October 2026 10-Q cover: Class A and Class B, no entity-wide count.
-        def cover(member, value):
-            return {'concept': 'dei:EntityCommonStockSharesOutstanding', 'instant': '2026-10-16', 'unit': 'xbrli:shares',
+        # Meta's 10-K cover, 23 days after its balance sheet: Class A and Class B, no
+        # entity-wide count. Shares are counted beside net debt, so a later 10-Q cover is not used.
+        def cover(member, value, instant='2026-07-23'):
+            return {'concept': 'dei:EntityCommonStockSharesOutstanding', 'instant': instant, 'unit': 'xbrli:shares',
                     'normalized_value': value, 'normalized_decimal': str(value), 'parse_status': 'parsed',
                     'entity_identifier': '123456', 'context_ref': member, 'decimals': 'INF',
                     'dimensions': {'us-gaap:StatementClassOfStockAxis': member},
                     'dimension_filter': 'class_of_stock_cover_shares'}
         filing = {'id': 'S9', 'kind': 'sec_filing', 'source_tier': 'regulatory_primary',
-                  'data': {'metadata': {'cik': 123456, 'form': '10-Q', 'filingDate': '2026-10-22'},
-                           'inline_facts': [cover('us-gaap:CommonClassAMember', 2214472367),
-                                            cover('us-gaap:CommonClassBMember', 341768886)]}}
+                  'data': {'metadata': {'cik': 123456, 'form': '10-K', 'filingDate': '2026-07-29'},
+                           'inline_facts': [cover('us-gaap:CommonClassAMember', 2187177748),
+                                            cover('us-gaap:CommonClassBMember', 342377716)]}}
+        quarterly = {'id': 'S10', 'kind': 'sec_filing', 'source_tier': 'regulatory_primary',
+                     'data': {'metadata': {'cik': 123456, 'form': '10-Q', 'filingDate': '2026-10-22'},
+                              'inline_facts': [cover('us-gaap:CommonClassAMember', 2214472367, '2026-10-16'),
+                                               cover('us-gaap:CommonClassBMember', 341768886, '2026-10-16')]}}
         source = normalize_companyfacts(issuer({**TERM, **LEASES}, shares=None), identity=IDENTITY, as_of='2026-11-06',
                                         entity_record_complete=True)
-        result = canonical_reported_inputs([source, filing], as_of='2026-11-06')
-        self.assertEqual(result['actuals']['shares_outstanding'], 2556241253)
-        self.assertEqual(result['input_dates']['shares_outstanding']['instant'], '2026-10-16')
+        result = canonical_reported_inputs([source, filing, quarterly], as_of='2026-11-06')
+        self.assertEqual(result['actuals']['shares_outstanding'], 2529555464)
+        self.assertEqual(result['input_dates']['shares_outstanding']['instant'], '2026-07-23')
         self.assertIn('by share class', result['input_dates']['shares_outstanding']['basis'])
+        later_only = canonical_reported_inputs([source, quarterly], as_of='2026-11-06')
+        self.assertNotIn('shares_outstanding', later_only['actuals'])
+        self.assertTrue(any('within 60 days' in note for note in later_only['coverage']['notes']))
         # An entity-wide count, when reported, decides.
         source = normalize_companyfacts(issuer({**TERM, **LEASES}), identity=IDENTITY, as_of='2026-11-06',
                                         entity_record_complete=True)

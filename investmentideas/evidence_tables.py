@@ -1165,7 +1165,9 @@ def _roic_inputs(gaap, period, as_of):
     """One fiscal year's inputs to roic.history from company facts."""
     start, end, currency = period['start'], period['end'], period['currency']
     row = {'fiscal_year_end': end, 'revenue': period['revenue']}
-    for name in ('operating_income', 'income_tax_expense', 'pretax_income', 'net_income', 'selling_general_administrative'):
+    # Cost of revenue and gross profit only tell whether R&D is reported inside SG&A.
+    for name in ('operating_income', 'income_tax_expense', 'pretax_income', 'net_income', 'selling_general_administrative',
+                 'cost_of_revenue', 'gross_profit'):
         row[name], _, _ = _duration(gaap, DURATIONS[name], start, end, currency, as_of)
     row['research_and_development'], _, _ = _research_and_development(gaap, start, end, currency, as_of)
     for name, options in roic.DURATIONS.items():
@@ -1184,7 +1186,7 @@ ROIC_FIELDS = ('nopat', 'nopat_margin', 'ebita', 'ebit_basis', 'operating_lease_
                'return_on_capital_unbounded', 'invested_capital_excluding_acquired', 'return_excluding_acquired',
                'return_excluding_acquired_unbounded', 'intangible_investment', 'intangible_amortization',
                'capitalized_intangibles', 'adjusted_nopat', 'adjusted_invested_capital', 'adjusted_return',
-               'adjusted_return_unbounded', 'intangibles_basis', 'incremental_return', 'incremental_return_status',
+               'adjusted_return_unbounded', 'intangibles_basis', 'sga_includes_rnd', 'incremental_return', 'incremental_return_status',
                'incremental_capital_change', 'investment_rate')
 # The basis note flags a latest NOPAT tax rate this far from its three-year median
 # (Microsoft, Alphabet, Amazon, Meta and Salesforce: 8-12% in the latest year
@@ -1356,7 +1358,10 @@ def _roic_lines(rows, ref):
     if 'one_line' in bases:
         capitalization.append('Years marked (one line), where SG&A is one line, use the shares of Peters and Taylor that '
                               'Mauboussin and Callahan state ("ROIC and Intangible Assets", November 2022): 100% of R&D over '
-                              'six years and 30% of SG&A, taken as non-R&D SG&A, over two years.')
+                              'six years and 30% of SG&A, taken as non-R&D SG&A, over two years.' +
+                              (' R&D is reported inside SG&A (revenue less cost of revenue less SG&A equals operating '
+                               'income), so the 30% applies to SG&A less R&D.'
+                               if any(row.get('sga_includes_rnd') for row in rows) else ''))
     marked = any(row.get('ebit_basis') not in (None, 'operating income') for row in rows)
     rates = [row.get('nopat_tax_rate') for row in rows[-3:]]
     tax = []

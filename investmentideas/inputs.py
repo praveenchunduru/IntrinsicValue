@@ -274,6 +274,8 @@ MARKETABLE_EQUITY = tuple(dict.fromkeys((*roic.INSTANTS['equity_securities_marke
 EQUITY_METHOD_QUOTED_VALUE = 'EquityMethodInvestmentQuotedMarketValue'
 # Selected cash categories that can contain noncurrent securities.
 NONCURRENT_CASH_CATEGORIES = ('noncurrent_marketable_securities', 'marketable_securities', 'available_for_sale_debt_securities')
+# Investments maturing within a year; equity securities cannot be among them.
+OTHER_SHORT_TERM_INVESTMENTS = 'OtherShortTermInvestments'
 # Selected cash categories that exclude equity securities by definition.
 EQUITY_FREE_CASH_CATEGORIES = frozenset({'cash_and_cash_equivalents', 'cash_including_restricted_cash',
                                          'available_for_sale_debt_securities'})
@@ -281,9 +283,11 @@ NONOPERATING_POLICY = (
     'Explicit house policy: non-operating investments are added to equity value at carrying value on the balance-sheet '
     'date of net debt. The lines are those the return-on-capital table removes from invested capital: the '
     'balance-sheet investments line (us-gaap:LongTermInvestments) where it is tagged, otherwise noncurrent securities '
-    'plus the largest of equity-method investments, other long-term investments and non-marketable equity securities, '
-    'which can contain one another. Marketable equity securities (us-gaap:EquitySecuritiesFvNi) are added when the '
-    'selected cash holds only cash and debt securities and no investment line added can contain them. A line that may '
+    'plus the larger of other long-term investments and equity-method investments plus non-marketable equity '
+    'securities, which never overlap (ASC 321 excludes equity-method investments) but can both sit inside other '
+    'long-term investments. Marketable equity securities (us-gaap:EquitySecuritiesFvNi) are added when the selected '
+    'cash holds only cash, cash equivalents, debt securities and investments with maturities, and no investment line '
+    'added can contain them. A line that may '
     'already be in the selected cash is not added again. Quoted market values are not used. Any of these investments '
     'the business needs to operate would lower equity value.')
 NONOPERATING_ABSENCE_POLICY = ('Explicit house assumption: no non-operating investment concept is reported on the '
@@ -325,10 +329,11 @@ CLAIMS_COMPONENT_POLICY = (
     'counts in diluted shares is deducted through the share count instead.')
 PENSION_POLICY = (
     'Explicit house policy: defined-benefit pension and other postretirement obligations are deducted as the recognized '
-    'liabilities less recognized assets of overfunded plans, before tax. Damodaran deducts underfunded pension and health '
-    'care obligations when moving from firm value to equity value and keeps them out of the cost of capital; a net '
-    'surplus is not added, his conservative rule for excess plan assets, which usually cannot be reclaimed without a '
-    'large tax ("Dealing with Cash, Cross Holdings and Other Non-Operating Assets", 2005). The tax deduction on future '
+    'liabilities of underfunded plans, gross and before tax. Damodaran deducts underfunded pension and health care '
+    'obligations when moving from firm value to equity value and keeps them out of the cost of capital. Recognized '
+    'assets of overfunded plans are not credited, either as an asset or against other plans\' deficits: his '
+    'conservative rule for excess plan assets assumes the cost of reclaiming them is prohibitive ("Dealing with Cash, '
+    'Cross Holdings and Other Non-Operating Assets", 2005). The tax deduction on future '
     'contributions is not credited; at a marginal tax rate t it would raise equity value by t times the deduction. '
     'Where no defined-benefit concept is tagged, a reported postemployment benefit obligation is deducted as the '
     'retirement obligation; AT&T reports its pension and postretirement obligation that way.')
@@ -360,7 +365,7 @@ FINANCING_ABSENCE_SCAN = frozenset(
     for concept in group.values())
 EQUITY_BRIDGE_CONCEPTS = frozenset(
     'us-gaap:' + concept for concept in (
-        CASH_INCLUDING_RESTRICTED, *RESTRICTED_CASH, EQUITY_METHOD_QUOTED_VALUE, *NONCONTROLLING,
+        CASH_INCLUDING_RESTRICTED, *RESTRICTED_CASH, OTHER_SHORT_TERM_INVESTMENTS, EQUITY_METHOD_QUOTED_VALUE, *NONCONTROLLING,
         *REDEEMABLE_NONCONTROLLING, *TOTAL_EQUITY, *PREFERRED, *BENEFIT_ASSETS,
         *(concept for field in NONOPERATING_FIELDS for concept in roic.INSTANTS[field]),
         *(concept for _, parts in BENEFIT_GROUPS for part in parts for concept in part[1:] if concept),
@@ -376,6 +381,9 @@ ANNUAL_REPORT_FORMS = STRUCTURED_FORMS - {'10-Q', '10-Q/A'}
 REPORTED_FIELDS = ('revenue', 'net_debt', 'other_equity_claims', 'shares_outstanding', 'nonoperating_assets',
                    'dilutive_shares')
 FIELD_PREREQUISITES = {'nonoperating_assets': 'net_debt', 'dilutive_shares': 'revenue'}
+# The annual report's cover count stands in for a balance-sheet count within this
+# many days after the balance-sheet date (Coca-Cola's 10-K cover is dated 49 days after).
+SHARE_DATE_WINDOW_DAYS = 60
 CLASS_OF_STOCK_AXIS = 'us-gaap:StatementClassOfStockAxis'
 CLASS_SHARES_BASIS = ('sum of cover-page outstanding shares by share class (dei:EntityCommonStockSharesOutstanding on '
                       'us-gaap:StatementClassOfStockAxis) on one date; no entity-wide total is reported')
@@ -396,15 +404,15 @@ def _share_class(raw, origin):
     return dimensions[CLASS_OF_STOCK_AXIS] or None
 
 
-def _class_share_total(items, conflicts):
-    """The latest single-date sum of class cover counts, used only without an entity-wide count."""
+def _class_share_total(items, conflicts, *, earliest=False):
+    """The latest (or earliest) single-date sum of class cover counts, used only without an entity-wide count."""
     by_date = {}
     for item in items:
         if item['unit'] == 'xbrli:shares' and item['parsed_instant'] and item['value'] > 0:
             by_date.setdefault(item['parsed_instant'], []).append(item)
     if not by_date:
         return None
-    latest = max(by_date)
+    latest = min(by_date) if earliest else max(by_date)
     totals = {}
     for item in by_date[latest]:
         totals.setdefault(item['source_id'], {}).setdefault(item['share_class'], set()).add(item['value'])
@@ -1091,6 +1099,28 @@ def _first_reported(pick, concepts, label):
     return None, None
 
 
+def _equity_free_inclusive_cash(pick, cash):
+    """{'cash_and_short_term_investments'} when that selected total is cash plus investments with maturities.
+
+    Coca-Cola's cash, cash equivalents and short-term investments ($13,872 million)
+    are its cash and cash equivalents ($10,270 million) plus other short-term
+    investments ($3,602 million). OtherShortTermInvestments are investments
+    maturing within a year, which equity securities cannot be, so the total holds
+    no equity; Coca-Cola reports its marketable equity on separate lines. Any other
+    composition, or a short-term investments concept that can hold trading equity,
+    leaves the total able to contain equity securities.
+    """
+    total = cash.get('cash_and_short_term_investments')
+    if not total:
+        return set()
+    parts = [pick('us-gaap:' + concept, 'equity-free cash test ' + concept, [])
+             for concept in (CASH['cash_and_cash_equivalents'], OTHER_SHORT_TERM_INVESTMENTS)]
+    if not all(parts):
+        return set()
+    tolerance = _half_unit(total) + sum((_half_unit(item) for item in parts), Decimal(0))
+    return {'cash_and_short_term_investments'} if abs(total['value'] - sum(item['value'] for item in parts)) <= tolerance else set()
+
+
 def _nonoperating_assets(pick, cash):
     """Non-operating investments at carrying value: the lines roic removes from invested capital, less selected cash.
 
@@ -1116,7 +1146,7 @@ def _nonoperating_assets(pick, cash):
                           'reason': 'Noncurrent securities are already in the selected cash (' + ', '.join(noncurrent_cash) + ')'})
         lines = [line for line in lines if line[0] != 'securities_noncurrent']
     if 'equity_securities_marketable' in row:
-        holders = sorted(set(cash) - EQUITY_FREE_CASH_CATEGORIES)
+        holders = sorted(set(cash) - EQUITY_FREE_CASH_CATEGORIES - _equity_free_inclusive_cash(pick, cash))
         containers = [field for field, _ in lines if field in ('long_term_investments', 'other_long_term_investments')]
         if holders:
             not_added.append({'line': 'equity_securities_marketable',
@@ -1128,10 +1158,16 @@ def _nonoperating_assets(pick, cash):
         else:
             lines.append(('equity_securities_marketable', row['equity_securities_marketable']))
     chosen = {field for field, _ in lines}
-    for field in roic.NESTED_INVESTMENTS:
-        if field in found and field not in chosen and any(line in chosen for line in roic.NESTED_INVESTMENTS):
-            not_added.append({'line': field, 'reason': 'Can contain, or be contained in, the larger investment line added; '
-                                                       'only the largest of these lines is added'})
+    if 'other_long_term_investments' in chosen:
+        for field in roic.DISJOINT_INVESTMENTS:
+            if field in found:
+                not_added.append({'line': field, 'reason': 'Other long-term investments, which can contain equity-method '
+                                                           'stakes and non-marketable equity, are larger than those two '
+                                                           'lines together and are added instead'})
+    elif any(field in chosen for field in roic.DISJOINT_INVESTMENTS) and 'other_long_term_investments' in found:
+        not_added.append({'line': 'other_long_term_investments',
+                          'reason': 'Smaller than equity-method investments plus non-marketable equity, which it can '
+                                    'contain; those two disjoint lines are added instead'})
     if 'long_term_investments' in chosen:
         for field in ('securities_noncurrent', *roic.NESTED_INVESTMENTS):
             if field in found:
@@ -1159,7 +1195,14 @@ def _nonoperating_assets(pick, cash):
 
 
 def _benefit_obligations(pick, conflicts):
-    """Recognized defined-benefit liabilities less overfunded plan assets; a net surplus is not added."""
+    """Recognized defined-benefit liabilities of underfunded plans, gross; overfunded plans are not credited.
+
+    Johnson & Johnson reports $4,691 million of pension and retiree-health
+    liabilities and $7,300 million of plan assets in excess of obligations in other
+    plans. One plan's surplus cannot pay another's deficit, and reclaiming it is
+    taxed heavily, so the conservative rule the policy cites applies: the $4,691
+    million is deducted and the surplus is not netted against it.
+    """
     def part(label, total, current, noncurrent):
         whole = pick('us-gaap:' + total, label + ' (us-gaap:' + total + ')') if total else None
         first = pick('us-gaap:' + current, label + ' (us-gaap:' + current + ')') if current else None
@@ -1184,17 +1227,15 @@ def _benefit_obligations(pick, conflicts):
     assets_concept, assets = _first_reported(pick, BENEFIT_ASSETS, 'overfunded plan assets')
     liabilities = sum((item['value'] for _, (_, item) in used), Decimal(0))
     surplus = assets['value'] if assets else Decimal(0)
-    net = liabilities - surplus
-    claim = max(net, Decimal(0))
-    record = {'value': claim, 'group': group_name,
+    record = {'value': liabilities, 'group': group_name,
               'recognized_liabilities': _json_number(liabilities),
               'liability_lines': [{'plan': part_name, **_component(concept, item, 'recognized liability, before tax')}
                                   for part_name, (concept, item) in used],
               'overfunded_plan_assets': _json_number(surplus),
-              **({'overfunded_plan_assets_line': _component(assets_concept, assets, 'recognized plan assets in excess of obligations')}
+              **({'overfunded_plan_assets_line': _component(assets_concept, assets, 'recognized plan assets in excess of '
+                                                            'obligations; not credited against other plans')}
                  if assets else {}),
-              'net_unfunded_before_tax': _json_number(net),
-              **({'net_surplus_not_added': _json_number(-net)} if net < 0 else {}),
+              'overfunded_plan_assets_credited': 0,
               'tax_treatment': 'before tax', 'basis': PENSION_POLICY,
               'assumed_absent': not used and not assets,
               'source_refs': sorted({ref for _, (_, item) in used for ref in item['source_refs']} |
@@ -1641,7 +1682,27 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
             fields['other_equity_claims'] = 'pinned_with_disclosed_assumption'
     outstanding = [item for item in facts if item['concept'] in SHARES and item['unit'] == 'xbrli:shares' and
                    item['parsed_instant'] and item['value'] > 0]
-    class_total = None if outstanding else _class_share_total(class_shares, conflicts)
+    # Shares are counted where net debt is: on its balance-sheet date, or on the
+    # annual report's cover within SHARE_DATE_WINDOW_DAYS after it. Salesforce's
+    # latest cover (823 million, 2026-08-20) followed $27.3 billion of buybacks
+    # that the year-end net debt does not include; its balance sheet shows 929 million.
+    window, reported_counts = None, bool(outstanding or class_shares)
+    if anchor:
+        window = [item for item in outstanding if anchor <= item['parsed_instant'] <= anchor + timedelta(days=SHARE_DATE_WINDOW_DAYS)]
+        outstanding = ([item for item in window if item['parsed_instant'] == anchor] or
+                       [item for item in window if item['parsed_instant'] == min(other['parsed_instant'] for other in window)]
+                       if window else [])
+        class_shares = [item for item in class_shares if item['parsed_instant'] and
+                        anchor <= item['parsed_instant'] <= anchor + timedelta(days=SHARE_DATE_WINDOW_DAYS)]
+    class_total = None if outstanding else _class_share_total(class_shares, conflicts, earliest=bool(anchor))
+    def share_basis(instant):
+        if not anchor:
+            return 'latest reported ordinary shares outstanding; never annual average or issued shares'
+        if instant == anchor:
+            return ('reported ordinary shares outstanding on the balance-sheet date of net debt; never annual average or '
+                    'issued shares')
+        return (f'cover-page ordinary shares outstanding {(instant - anchor).days} days after the balance-sheet date of net '
+                'debt, the nearest reported count; no count is reported on that date')
     if outstanding:
         latest = max(item['parsed_instant'] for item in outstanding)
         chosen = _unique(_cover_rounding(item for item in outstanding if item['parsed_instant'] == latest),
@@ -1649,14 +1710,24 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
         if chosen:
             actuals['shares_outstanding'] = _json_number(chosen['value'])
             refs['shares_outstanding'] = chosen['source_refs']
-            dates['shares_outstanding'] = {'instant': latest.isoformat(), 'basis': 'latest reported ordinary shares outstanding; never annual average or issued shares'}
+            dates['shares_outstanding'] = {'instant': latest.isoformat(), 'basis': share_basis(latest)}
+            if anchor:
+                dates['shares_outstanding']['days_after_net_debt_date'] = (latest - anchor).days
             fields['shares_outstanding'] = 'pinned'
     elif class_total:
         actuals['shares_outstanding'] = _json_number(class_total['value'])
         refs['shares_outstanding'] = class_total['source_refs']
-        dates['shares_outstanding'] = {'instant': class_total['instant'], 'basis': CLASS_SHARES_BASIS,
+        instant = date.fromisoformat(class_total['instant'])
+        dates['shares_outstanding'] = {'instant': class_total['instant'],
+                                       'basis': CLASS_SHARES_BASIS + ('; ' + share_basis(instant) if anchor else ''),
                                        'classes': class_total['classes']}
+        if anchor:
+            dates['shares_outstanding']['days_after_net_debt_date'] = (instant - anchor).days
         fields['shares_outstanding'] = 'pinned'
+    elif anchor and reported_counts and not window and not class_shares:
+        skipped.append(f'No outstanding share count is reported on the net-debt balance-sheet date ({anchor.isoformat()}) or '
+                       f'within {SHARE_DATE_WINDOW_DAYS} days after it; a later count would not match net debt. Supply a '
+                       'reviewed primary count for that date')
     else:
         skipped.append('Outstanding shares are not reported as one entity-wide amount (for example, only by share class); '
                        'supply a reviewed primary total')
@@ -1711,7 +1782,7 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                 assumptions.append('assumption: ' + ', '.join(entry['line'].replace('_', ' ') for entry in absent) +
                                    ' not reported on the date; zero, not a reported fact')
             refs['other_equity_claims'] = reported + assumptions
-            dates['other_equity_claims']['basis'] += ('; noncontrolling interests, preferred stock and net unfunded '
+            dates['other_equity_claims']['basis'] += ('; noncontrolling interests, preferred stock and unfunded '
                                                       'defined-benefit obligations at carrying value, before tax')
             claims_bridge.update(finance_lease_claim=_json_number(lease_claim), components=components,
                                  components_assumed_zero=absent, component_policy=CLAIMS_COMPONENT_POLICY,
@@ -1746,7 +1817,8 @@ def canonical_reported_inputs(sources, *, currency=None, as_of=None):
                         *([nonoperating_bridge['basis']] if nonoperating_bridge else []),
                         *([CLAIMS_COMPONENT_POLICY, PENSION_POLICY] if claims_bridge.get('components') is not None else []),
                         *([share_bridge['basis']] if share_bridge else []),
-                        'Reported shares can postdate the balance sheet and predate the quote; the dates remain distinct.',
+                        'Shares are counted on the balance-sheet date of net debt, or on the annual report cover within '
+                        f'{SHARE_DATE_WINDOW_DAYS} days after it; the quote is later and the dates remain distinct.',
                         'Missing primary facts are not zero; unsupported or ambiguous inputs remain unpinned.']}
     if operating_reference and operating_reference['lines']:
         output['operating_reference'] = operating_reference

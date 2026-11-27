@@ -106,15 +106,17 @@ class CompanyfactsTests(unittest.TestCase):
         older = normalize_companyfacts(data, identity=IDENTITY, as_of='2025-11-06')
         self.assertTrue(all(f['filing_date'] <= '2025-11-06' for f in older['data']['reported_facts']))
 
-    def test_latest_cover_shares_remain_distinct_from_annual_dates_and_averages(self):
+    def test_cover_shares_near_the_balance_sheet_remain_distinct_from_later_covers_and_averages(self):
+        # Shares are counted where net debt is: the annual cover 20 days after the
+        # balance sheet, not a later quarterly cover.
         data = payload()
         data['facts']['dei']['EntityCommonStockSharesOutstanding']['units']['shares'].append(
             row(480, '2026-10-23', filed='2026-10-24', form='10-Q'))
         data['facts']['us-gaap']['WeightedAverageNumberOfDilutedSharesOutstanding'] = {'units': {'shares': [row(999)]}}
         source = normalize(data)
         report = canonical_reported_inputs([source], as_of='2026-11-06')
-        self.assertEqual(report['actuals']['shares_outstanding'], 480)
-        self.assertEqual(report['input_dates']['shares_outstanding']['instant'], '2026-10-23')
+        self.assertEqual(report['actuals']['shares_outstanding'], 500)
+        self.assertEqual(report['input_dates']['shares_outstanding']['instant'], '2026-07-20')
         self.assertTrue(any('WeightedAverage' in f['concept'] for f in source['data']['reported_facts']))
         average = next(item for item in source['data']['financial_context_table'] if 'WeightedAverage' in item['concept'])
         self.assertFalse(average['ordinary_share_denominator_eligible'])
@@ -128,7 +130,8 @@ class CompanyfactsTests(unittest.TestCase):
             row(490, '2026-08-20', filed='2026-08-25', form='10-Q'),
             row(480, '2026-10-23', filed='2026-10-24', form='10-Q')])
         source = normalize(data)
-        for as_of, expected in (('2024-11-06', 600), ('2025-11-06', 550), ('2026-11-06', 480)):
+        # Each as-of date takes the annual cover beside its own net-debt balance sheet.
+        for as_of, expected in (('2024-11-06', 600), ('2025-11-06', 550), ('2026-11-06', 500)):
             with self.subTest(as_of=as_of):
                 self.assertEqual(canonical_reported_inputs([source], as_of=as_of)['actuals']['shares_outstanding'], expected)
 

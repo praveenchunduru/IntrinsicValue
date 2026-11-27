@@ -317,7 +317,7 @@ class ReportedInputTests(unittest.TestCase):
         # The equity bridge adds non-operating investments (none outside the selected cash here)
         # and the dilutive increment (zero: no basic weighted-average count in this fixture).
         self.assertEqual(corrected['actuals'],{'revenue':478834000000,'net_debt':-56824000000,
-                                            'other_equity_claims':1456000000,'shares_outstanding':14532182000,
+                                            'other_equity_claims':1456000000,'shares_outstanding':14532259000,
                                             'nonoperating_assets':0,'dilutive_shares':0})
         bridge=corrected['net_debt_bridge']
         self.assertEqual(bridge['debt'],80111000000)
@@ -334,16 +334,18 @@ class ReportedInputTests(unittest.TestCase):
         self.assertNotIn('1259000000',json.dumps(bridge))
         self.assertTrue(corrected['reported_inputs']['coverage']['complete'])
         self.assertEqual(corrected['source_refs']['net_debt'],['S19'])
-        self.assertEqual({r['field'] for r in changes}, {'actuals.net_debt','actuals.shares_outstanding','market_price',
+        # The plan's 14,532,259,000 shares are the balance-sheet count the bridge now pins.
+        self.assertEqual({r['field'] for r in changes}, {'actuals.net_debt','market_price',
                                                         'actuals.nonoperating_assets','actuals.dilutive_shares'})
         repeated,repeated_changes=pin_reported_inputs(corrected,sources())
         self.assertEqual(repeated,corrected)
         self.assertEqual(repeated_changes,[])
 
-    def test_latest_cover_shares_and_dated_quote_are_pinned_not_averages(self):
+    def test_balance_sheet_shares_and_dated_quote_are_pinned_not_averages(self):
+        # Shares are counted on the net-debt balance-sheet date, not the later cover.
         corrected,_=pin_reported_inputs(bad_plan(),sources())
-        self.assertEqual(corrected['actuals']['shares_outstanding'],14532182000)
-        self.assertEqual(corrected['input_dates']['shares_outstanding']['instant'],'2026-10-23')
+        self.assertEqual(corrected['actuals']['shares_outstanding'],14532259000)
+        self.assertEqual(corrected['input_dates']['shares_outstanding']['instant'],BALANCE_DATE)
         self.assertEqual(corrected['market_price'],344.17)
         self.assertEqual(corrected['input_dates']['market_price']['observed_at'],'2026-11-05T21:00:01+00:00')
         self.assertEqual(corrected['valuation_date'],'2026-11-06')

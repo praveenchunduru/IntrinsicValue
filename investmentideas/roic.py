@@ -113,8 +113,15 @@ INSTANTS = {
     'operating_lease_liability': ('OperatingLeaseLiability',),
 }
 RATES = {'operating_lease_rate': ('OperatingLeaseWeightedAverageDiscountRatePercent',)}
-# Investment lines that can contain one another; only the largest is removed.
-NESTED_INVESTMENTS = ('equity_method_investments', 'other_long_term_investments', 'equity_securities_nonmarketable')
+# Equity-method stakes and equity securities without a readily determinable fair
+# value never overlap: ASC 321 excludes equity-method investments. Either can sit
+# inside other long-term investments (Alphabet), so invested capital removes the
+# larger of that line and the two disjoint lines together.
+DISJOINT_INVESTMENTS = ('equity_method_investments', 'equity_securities_nonmarketable')
+NESTED_INVESTMENTS = (*DISJOINT_INVESTMENTS, 'other_long_term_investments')
+# Revenue less cost of revenue less SG&A within this share of revenue of operating
+# income, in most reported years, means R&D is reported inside SG&A (Procter & Gamble).
+RND_IN_SGA_TOLERANCE = .001
 
 
 def _number(value):
@@ -139,19 +146,21 @@ def nonoperating_investments(row):
     """(field, amount) lines that invested capital removes as non-operating investments.
 
     The balance-sheet investments line where it is tagged; otherwise noncurrent
-    securities plus the largest of the investment lines that can nest (Alphabet's
-    other investments contain its equity-method stakes). The equity bridge adds
-    the same lines, less any already selected as cash (inputs.py).
+    securities plus the larger of other long-term investments and equity-method
+    investments plus non-marketable equity, which are disjoint (Alphabet's other
+    investments contain both). The equity bridge adds the same lines, less any
+    already selected as cash (inputs.py).
     """
     if row.get('long_term_investments') is not None:
         return [('long_term_investments', _amount(row, 'long_term_investments'))]
     lines = [('securities_noncurrent', _amount(row, 'securities_noncurrent'))] if row.get('securities_noncurrent') is not None else []
-    nested = [name for name in NESTED_INVESTMENTS if row.get(name) is not None]
-    if nested:
-        # The largest overlapping line: an investment left in errs toward lower ROIC,
-        # one counted twice could take capital below zero.
-        largest = max(nested, key=lambda name: _amount(row, name))
-        lines.append((largest, _amount(row, largest)))
+    disjoint = [(name, _amount(row, name)) for name in DISJOINT_INVESTMENTS if row.get(name) is not None]
+    other = ([('other_long_term_investments', _amount(row, 'other_long_term_investments'))]
+             if row.get('other_long_term_investments') is not None else [])
+    # The larger group: an investment left in errs toward lower ROIC, one counted
+    # twice could take capital below zero.
+    if disjoint or other:
+        lines.extend(max((disjoint, other), key=lambda group: sum(amount for _, amount in group)))
     return lines
 
 
@@ -219,16 +228,46 @@ def _consecutive(earlier, later):
     return CONSECUTIVE_DAYS[0] <= days <= CONSECUTIVE_DAYS[1]
 
 
-def _line(row, line):
-    """A spending line; one-line SG&A is the reported total, else selling and marketing plus G&A."""
+def _line(row, line, rnd_in_sga=False):
+    """A spending line; one-line SG&A is the reported total, else selling and marketing plus G&A.
+
+    Where R&D is reported inside SG&A, the one-line SG&A capitalized at 30% is
+    SG&A less R&D, so R&D is not counted again.
+    """
     value = _number(row.get(line))
-    if value is None and line == 'selling_general_administrative':
+    if value is not None and line == 'selling_general_administrative' and rnd_in_sga:
+        rnd = _number(row.get('research_and_development'))
+        value = value - rnd if rnd is not None and rnd <= value else None
+    if value is None and line == 'selling_general_administrative' and _number(row.get(line)) is None:
         selling, general = _number(row.get('selling_and_marketing')), _number(row.get('general_and_administrative'))
         value = selling + general if selling is not None and general is not None else None
     return value
 
 
-def _capitalized(history, index, shares=CAPITALIZATION):
+def rnd_inside_sga(rows):
+    """True when revenue less cost of revenue less SG&A equals operating income in most reported years.
+
+    Procter & Gamble reports R&D ($2.1 billion in fiscal 2026) inside its one-line
+    SG&A: revenue less cost of products sold less SG&A is its operating income to
+    the dollar in five of the six years to 2026 (fiscal 2024 carries an intangible
+    impairment). An issuer with R&D on its own line misses by the R&D amount.
+    """
+    matches = checked = 0
+    for row in rows:
+        revenue, sga = _number(row.get('revenue')), _number(row.get('selling_general_administrative'))
+        operating, rnd = _number(row.get('operating_income')), _number(row.get('research_and_development'))
+        cost = _number(row.get('cost_of_revenue'))
+        if cost is None and _number(row.get('gross_profit')) is not None and revenue is not None:
+            cost = revenue - row['gross_profit']
+        if None in (revenue, sga, operating, rnd, cost) or not revenue or not 0 < rnd <= sga:
+            continue
+        checked += 1
+        gap = abs(revenue - cost - sga - operating)
+        matches += gap <= RND_IN_SGA_TOLERANCE * abs(revenue) and gap < rnd / 2
+    return checked > 0 and matches * 2 > checked
+
+
+def _capitalized(history, index, shares=CAPITALIZATION, rnd_in_sga=False):
     """(investment, amortization, net asset) at ``index`` from straight-line vintages, or None.
 
     Needs every line's spending for the asset life before the year. A line missing
@@ -240,10 +279,10 @@ def _capitalized(history, index, shares=CAPITALIZATION):
         if index < life:
             return None
         window = history[index - life:index + 1]
-        if any(_line(row, line) is None for row in window) or not all(
+        if any(_line(row, line, rnd_in_sga) is None for row in window) or not all(
                 _consecutive(a, b) for a, b in zip(window, window[1:])):
             return None
-        spend = [share * _line(row, line) for row in window]
+        spend = [share * _line(row, line, rnd_in_sga) for row in window]
         investment += spend[-1]
         amortization += sum(spend[:-1]) / life
         # Vintage t is whole; vintage t-k has (life - k) / life of its cost left.
@@ -271,6 +310,7 @@ def history(rows):
                                or row.get('general_and_administrative') is not None) and any(
         _split_reported(row) for row in rows)
     output, alternatives = [], []
+    in_sga = rnd_inside_sga(rows)
     for index, row in enumerate(rows):
         prior = rows[index - 1] if index and _consecutive(rows[index - 1], row) else None
         capital = invested_capital(row)
@@ -324,7 +364,8 @@ def history(rows):
         candidates = {}
         if nopat is not None and capital is not None:
             for basis, shares in CAPITALIZATION_BASES:
-                capitalized = _capitalized(rows, index, shares) if split or basis == 'one_line' else None
+                capitalized = (_capitalized(rows, index, shares, in_sga and basis == 'one_line')
+                               if split or basis == 'one_line' else None)
                 if capitalized:
                     candidates[basis] = capitalized
         openings = alternatives[-1] if opening else {}
@@ -332,6 +373,7 @@ def history(rows):
         chosen = (next((basis for basis, _ in CAPITALIZATION_BASES if basis in candidates and basis in openings), None) or
                   next((basis for basis, _ in CAPITALIZATION_BASES if basis in candidates), None))
         item['intangibles_basis'] = chosen
+        item['sga_includes_rnd'] = in_sga if chosen == 'one_line' else None
         adjusted = None
         if chosen:
             investment, amortization, net = candidates[chosen]

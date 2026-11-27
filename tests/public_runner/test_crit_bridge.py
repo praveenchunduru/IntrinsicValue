@@ -37,8 +37,11 @@ M = 1000000
 LEASES = {'FinanceLeaseLiability': 15, 'FinanceLeaseLiabilityCurrent': 7, 'FinanceLeaseLiabilityNoncurrent': 8}
 
 
-def facts_source(balance, *, shares=1000, periods=None, cash=True):
-    """A companyfacts record after an attested whole-record scan. Values may be lists of (value, row kwargs)."""
+def facts_source(balance, *, shares=1000, periods=None, cash=True, counts=None):
+    """A companyfacts record after an attested whole-record scan. Values may be lists of (value, row kwargs).
+
+    ``counts`` replaces the cover count with ``(namespace, tag, value, date, row kwargs)`` share observations.
+    """
     tags = {}
 
     def add(tag, value, unit='USD', **kwargs):
@@ -51,8 +54,13 @@ def facts_source(balance, *, shares=1000, periods=None, cash=True):
             add(tag, amount, **kwargs)
     for tag, value in (periods or {}).items():
         add(tag, value, unit='shares', start=START)
-    payload = {'cik': 123456, 'entityName': 'Test Issuer', 'facts': {
-        'us-gaap': tags, 'dei': {'EntityCommonStockSharesOutstanding': {'units': {'shares': [row(shares, '2026-07-20')]}}}}}
+    dei = {'EntityCommonStockSharesOutstanding': {'units': {'shares': [row(shares, '2026-07-20')]}}}
+    if counts is not None:
+        dei = {}
+        for namespace, tag, value, day, kwargs in counts:
+            target = dei if namespace == 'dei' else tags
+            target.setdefault(tag, {'units': {}})['units'].setdefault('shares', []).append(row(value, day, **kwargs))
+    payload = {'cik': 123456, 'entityName': 'Test Issuer', 'facts': {'us-gaap': tags, 'dei': dei}}
     return normalize_companyfacts(payload, identity=IDENTITY, as_of='2026-11-06', source_id='S2',
                                   entity_record_complete=True)
 
@@ -86,16 +94,32 @@ class NonOperatingAssetTests(unittest.TestCase):
         self.assertEqual(result['coverage']['fields']['nonoperating_assets'], 'pinned')
         self.assertEqual(bridge['as_of'], result['net_debt_bridge']['as_of'])
 
-    def test_only_the_largest_nested_line_is_added_as_in_invested_capital(self):
-        # Alphabet's other investments contain its equity-method stakes.
-        balance = {**TERM, **LEASES, 'OtherLongTermInvestments': 68, 'EquityMethodInvestments': 5,
+    def test_other_investments_or_the_two_disjoint_lines_whichever_is_larger(self):
+        # Alphabet's other investments contain its non-marketable stakes and are larger.
+        balance = {**TERM, **LEASES, 'OtherLongTermInvestments': 68, 'EquityMethodInvestments': 3,
                    'EquitySecuritiesWithoutReadilyDeterminableFairValueAmount': 64}
         result = report(balance)
         self.assertEqual(result['actuals']['nonoperating_assets'], 68)
-        # The bridge adds exactly what the return-on-capital table removes.
-        row_inputs = {'long_term_investments': None, 'securities_noncurrent': None, 'other_long_term_investments': 68.0,
-                      'equity_method_investments': 5.0, 'equity_securities_nonmarketable': 64.0}
-        self.assertEqual(sum(amount for _, amount in roic.nonoperating_investments(row_inputs)), 68)
+        self.assertEqual({entry['line'] for entry in result['nonoperating_assets_bridge']['not_added']},
+                         {'equity_method_investments', 'equity_securities_nonmarketable'})
+        # Meta: ASC 321 excludes equity-method stakes from equity securities, so the two add.
+        meta = report({**TERM, **LEASES, 'EquityMethodInvestments': 7448, 'EquitySecuritiesWithoutReadilyDeterminableFairValueAmount': 20076})
+        self.assertEqual(meta['actuals']['nonoperating_assets'], 7448 + 20076)
+        self.assertEqual(set(meta['nonoperating_assets_bridge']['components']),
+                         {'equity_method_investments', 'equity_securities_nonmarketable'})
+        smaller = report({**TERM, **LEASES, 'OtherLongTermInvestments': 20, 'EquityMethodInvestments': 9,
+                          'EquitySecuritiesWithoutReadilyDeterminableFairValueAmount': 15})
+        self.assertEqual(smaller['actuals']['nonoperating_assets'], 24)
+        self.assertEqual(smaller['nonoperating_assets_bridge']['not_added'][0]['line'], 'other_long_term_investments')
+        # Invested capital removes exactly the same lines.
+        for row_inputs, removed in (({'other_long_term_investments': 68.0, 'equity_method_investments': 3.0,
+                                      'equity_securities_nonmarketable': 64.0}, 68),
+                                     ({'equity_method_investments': 7448.0, 'equity_securities_nonmarketable': 20076.0}, 27524),
+                                     ({'other_long_term_investments': 20.0, 'equity_method_investments': 9.0,
+                                       'equity_securities_nonmarketable': 15.0}, 24)):
+            self.assertEqual(sum(amount for _, amount in roic.nonoperating_investments(row_inputs)), removed)
+            base = {'assets': 1000.0, 'current_liabilities': 100.0, 'revenue': 500.0}
+            self.assertEqual(roic.invested_capital(base) - roic.invested_capital(dict(base, **row_inputs)), removed)
 
     def test_noncurrent_securities_selected_as_cash_are_not_added_again(self):
         # Apple: noncurrent marketable securities are in the selected cash.
@@ -122,6 +146,22 @@ class NonOperatingAssetTests(unittest.TestCase):
         meta = {'MarketableSecuritiesCurrent': 45, **TERM, **LEASES, 'EquitySecuritiesFvNi': 6,
                 'EquitySecuritiesWithoutReadilyDeterminableFairValueAmount': 20}
         self.assertEqual(report(meta)['actuals']['nonoperating_assets'], 20)
+        # Coca-Cola: cash and short-term investments are exactly cash plus other short-term
+        # investments, which mature and so hold no equity; marketable equity is reported apart.
+        coca_cola = {'CashCashEquivalentsAndShortTermInvestments': 13872, 'OtherShortTermInvestments': 3602,
+                     'MarketableSecurities': 1934, **TERM, **LEASES, 'EquityMethodInvestments': 20235,
+                     'EquitySecuritiesFvNiCurrentAndNoncurrent': 2589,
+                     'EquitySecuritiesWithoutReadilyDeterminableFairValueAmount': 44}
+        result = report(dict(coca_cola, CashAndCashEquivalentsAtCarryingValue=10270), cash=False)
+        self.assertEqual(result['actuals']['nonoperating_assets'], 20235 + 44 + 2589)
+        # A total that is not exactly those parts, or that holds short-term investments, can contain equity.
+        for name, balance in (('other composition', dict(coca_cola, CashAndCashEquivalentsAtCarryingValue=10000)),
+                              ('short-term investments', {**{key: value for key, value in coca_cola.items()
+                                                             if key != 'OtherShortTermInvestments'},
+                                                          'ShortTermInvestments': 3602,
+                                                          'CashAndCashEquivalentsAtCarryingValue': 10270})):
+            with self.subTest(name):
+                self.assertEqual(report(balance, cash=False)['actuals']['nonoperating_assets'], 20235 + 44)
         # Salesforce: the other-investments line added can contain its public stakes.
         salesforce = {'AvailableForSaleSecuritiesDebtSecurities': 2, **TERM, **LEASES, 'EquitySecuritiesFvNi': 1,
                       'OtherLongTermInvestments': 7}
@@ -170,7 +210,7 @@ class ClaimTests(unittest.TestCase):
         self.assertTrue(restated['coverage']['complete'])
         self.assertNotIn('noncontrolling_interests', restated['other_claims_bridge']['components'])
 
-    def test_pension_underfunding_is_deducted_before_tax_and_a_surplus_is_not_added(self):
+    def test_pension_underfunding_is_deducted_gross_before_tax_and_surpluses_are_not_credited(self):
         # Procter & Gamble: separate pension and retiree-health liabilities, no plan asset line.
         pg = report({**TERM, **LEASES, 'DefinedBenefitPensionPlanLiabilitiesNoncurrent': 2204,
                      'OtherPostretirementDefinedBenefitPlanLiabilitiesNoncurrent': 736})
@@ -178,17 +218,18 @@ class ClaimTests(unittest.TestCase):
         self.assertEqual(benefits['value'], 2940)
         self.assertEqual(benefits['tax_treatment'], 'before tax')
         self.assertIn(PENSION_POLICY, pg['notes'])
-        # Johnson & Johnson: overfunded plans exceed the recognized liabilities. The combined
-        # employee-obligations concept, which also holds postemployment benefits, is not used.
+        # Johnson & Johnson: overfunded plans exceed the recognized liabilities of the others. One
+        # plan's surplus does not pay another's deficit, so the deficits are deducted gross. The
+        # combined employee-obligations concept, which also holds postemployment benefits, is not used.
         jnj = report({**TERM, **LEASES, 'DefinedBenefitPensionPlanCurrentAndNoncurrentLiabilities': 2917,
                       'OtherPostretirementDefinedBenefitPlanLiabilitiesCurrentAndNoncurrent': 1774,
                       'PensionAndOtherPostretirementDefinedBenefitPlansLiabilitiesNoncurrent': 6957,
                       'DefinedBenefitPlanAssetsForPlanBenefitsNoncurrent': 7300})
         benefits = jnj['other_claims_bridge']['components']['defined_benefit_obligations']
         self.assertEqual(benefits['recognized_liabilities'], 4691)
-        self.assertEqual(benefits['value'], 0)
-        self.assertEqual(benefits['net_surplus_not_added'], 2609)
-        self.assertEqual(jnj['actuals']['other_equity_claims'], 15)
+        self.assertEqual(benefits['value'], 4691)
+        self.assertEqual((benefits['overfunded_plan_assets'], benefits['overfunded_plan_assets_credited']), (7300, 0))
+        self.assertEqual(jnj['actuals']['other_equity_claims'], 15 + 4691)
 
     def test_postemployment_obligation_stands_in_only_without_defined_benefit_concepts(self):
         # AT&T tags its pension and postretirement obligation as postemployment benefits.
@@ -204,6 +245,65 @@ class ClaimTests(unittest.TestCase):
         result = report({**TERM, **LEASES, 'DefinedBenefitPensionPlanCurrentAndNoncurrentLiabilities': 100,
                          'DefinedBenefitPensionPlanLiabilitiesCurrent': 10, 'DefinedBenefitPensionPlanLiabilitiesNoncurrent': 80})
         self.assertEqual(result['coverage']['status'], 'conflicted')
+
+
+class ShareDateTests(unittest.TestCase):
+    Q3 = {'filed': '2026-11-05', 'form': '10-Q', 'accn': '0001193125-26-777777'}
+
+    def test_shares_are_counted_on_the_net_debt_balance_sheet_date(self):
+        # Salesforce: 929 million on the balance sheet at 2026-01-31; 823 million on a cover
+        # 201 days later, after buybacks the year-end net debt does not include.
+        counts = [('us-gaap', 'CommonStockSharesOutstanding', 929, END, {}),
+                  ('dei', 'EntityCommonStockSharesOutstanding', 923, '2026-07-25', {}),
+                  ('dei', 'EntityCommonStockSharesOutstanding', 823, '2026-10-20', self.Q3)]
+        result = report({**TERM, **LEASES}, counts=counts)
+        self.assertEqual(result['actuals']['shares_outstanding'], 929)
+        self.assertEqual(result['input_dates']['shares_outstanding']['instant'], END)
+        self.assertEqual(result['input_dates']['shares_outstanding']['days_after_net_debt_date'], 0)
+        self.assertIn('on the balance-sheet date of net debt', result['input_dates']['shares_outstanding']['basis'])
+        self.assertEqual(result['share_count_bridge']['shares_outstanding_as_of'], END)
+
+    def test_the_annual_cover_stands_in_only_within_sixty_days(self):
+        # Johnson & Johnson tags no balance-sheet count; its 10-K cover is 40 days later.
+        counts = [('dei', 'EntityCommonStockSharesOutstanding', 2409, '2026-08-09', {'filed': '2026-08-12'}),
+                  ('dei', 'EntityCommonStockSharesOutstanding', 2407, '2026-10-20', self.Q3)]
+        result = report({**TERM, **LEASES}, counts=counts)
+        self.assertEqual(result['actuals']['shares_outstanding'], 2409)
+        self.assertIn('40 days after the balance-sheet date', result['input_dates']['shares_outstanding']['basis'])
+        later = report({**TERM, **LEASES}, counts=[counts[1]])
+        self.assertNotIn('shares_outstanding', later['actuals'])
+        self.assertIn('shares_outstanding', later['coverage']['missing_fields'])
+        self.assertTrue(any('within 60 days' in note for note in later['coverage']['notes']))
+
+
+class RnDInsideSgaTests(unittest.TestCase):
+    def rows(self, inside):
+        output = []
+        for year in range(2019, 2027):
+            rnd, sga, cost, revenue = 20.0, 200.0, 500.0, 1000.0
+            operating = revenue - cost - sga - (0 if inside else rnd)
+            output.append({'fiscal_year_end': f'{year}-06-30', 'revenue': revenue, 'cost_of_revenue': cost,
+                           'selling_general_administrative': sga, 'research_and_development': rnd,
+                           'operating_income': operating, 'income_tax_expense': 50.0, 'pretax_income': 250.0,
+                           'assets': 2000.0, 'current_liabilities': 300.0})
+        return output
+
+    def test_rnd_inside_one_line_sga_is_not_capitalized_twice(self):
+        # Procter & Gamble: revenue less cost of products sold less SG&A is operating income.
+        self.assertTrue(roic.rnd_inside_sga(self.rows(True)))
+        self.assertFalse(roic.rnd_inside_sga(self.rows(False)))
+        inside, _ = roic.history(self.rows(True))
+        apart, _ = roic.history(self.rows(False))
+        self.assertEqual(inside[-1]['intangibles_basis'], 'one_line')
+        self.assertTrue(inside[-1]['sga_includes_rnd'])
+        self.assertAlmostEqual(inside[-1]['intangible_investment'], 20 + .3 * (200 - 20))
+        self.assertAlmostEqual(apart[-1]['intangible_investment'], 20 + .3 * 200)
+        self.assertFalse(apart[-1]['sga_includes_rnd'])
+
+    def test_one_impairment_year_does_not_change_the_reading(self):
+        rows = self.rows(True)
+        rows[3]['operating_income'] -= 16.0
+        self.assertTrue(roic.rnd_inside_sga(rows))
 
 
 class DilutionTests(unittest.TestCase):
@@ -406,7 +506,7 @@ class PinAndMemoTests(unittest.TestCase):
         result = evaluate(locked)
         text = pipeline.valuation_section(locked, result)
         for label in ('Less net debt', 'Less finance leases', 'Less noncontrolling interests',
-                      'Less net unfunded pension and postretirement obligations, before tax',
+                      'Less unfunded pension and postretirement obligations, before tax',
                       'Plus non-operating investments', 'Plus dilutive increment', 'Diluted shares', 'Value per share'):
             self.assertIn('| ' + label, text)
         self.assertIn('equity-method investments', text)
