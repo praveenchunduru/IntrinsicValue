@@ -37,3 +37,35 @@ class HorizonRowsWithPathsTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class LargerRndTests(unittest.TestCase):
+    """Reported R&D is the larger of the inclusive concept and its part (J&J, fiscal 2025)."""
+
+    def fact(self, concept, value):
+        from datetime import date
+        from decimal import Decimal
+        value = Decimal(value)
+        return {'concept': concept, 'parsed_start': date(2024, 12, 30), 'parsed_end': date(2025, 12, 28),
+                'unit': 'iso4217:USD', 'value': value, 'source_id': 'S1', 'form': '10-K', 'fact_origin': 'sec_companyfacts'}
+
+    def test_part_wins_when_the_inclusive_concept_is_smaller(self):
+        from datetime import date
+        from investmentideas import inputs
+        facts = [self.fact('us-gaap:ResearchAndDevelopmentExpense', 109_000_000),
+                 self.fact('us-gaap:ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost', 14_665_000_000)]
+        concepts = dict(inputs.OPERATING_REFERENCE)['research_and_development']
+        conflicts = []
+        concept, chosen = inputs._larger_rnd(facts, concepts, date(2024, 12, 30), date(2025, 12, 28), 'USD', conflicts, 'R&D')
+        self.assertEqual(concept, 'us-gaap:ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost')
+        self.assertEqual(chosen['value'], 14_665_000_000)
+        self.assertEqual(conflicts, [])
+
+    def test_inclusive_wins_when_larger(self):
+        from datetime import date
+        from investmentideas import inputs
+        facts = [self.fact('us-gaap:ResearchAndDevelopmentExpense', 15_000_000_000),
+                 self.fact('us-gaap:ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost', 14_665_000_000)]
+        concepts = dict(inputs.OPERATING_REFERENCE)['research_and_development']
+        concept, chosen = inputs._larger_rnd(facts, concepts, date(2024, 12, 30), date(2025, 12, 28), 'USD', [], 'R&D')
+        self.assertEqual(concept, 'us-gaap:ResearchAndDevelopmentExpense')

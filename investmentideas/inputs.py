@@ -62,6 +62,29 @@ def _period_line(facts, concepts, start, end, currency, signed, conflicts, label
     return None
 
 
+def _larger_rnd(facts, concepts, start, end, currency, conflicts, label):
+    """R&D: the larger of the inclusive concept and its part excluding acquired in-process cost.
+
+    ResearchAndDevelopmentExpense includes acquired in-process R&D, so it cannot be
+    smaller than its part. Johnson & Johnson tags only its in-process charge with the
+    inclusive concept ($0.1 billion against $14.7 billion of R&D excluding it, fiscal
+    2025), so taking the first concept left a plan's R&D near 0.1% of revenue. The ROIC
+    table applies the same rule. A conflicted inclusive concept still leaves the line
+    out, and a conflicted part only counts when the inclusive concept is absent.
+    """
+    inclusive, part = concepts
+    before = len(conflicts)
+    first = _period_line(facts, (inclusive,), start, end, currency, False, conflicts, label)
+    if first is None and len(conflicts) > before:
+        return None
+    scratch = []
+    second = _period_line(facts, (part,), start, end, currency, False, scratch, label)
+    if first is None:
+        conflicts.extend(scratch)
+    found = [item for item in (first, second) if item]
+    return max(found, key=lambda item: item[1]['value']) if found else None
+
+
 def _operating_reference(facts, start, end, currency, revenue, revenue_concept=None):
     """Unique reported operating lines for the revenue anchor's exact fiscal year.
 
@@ -70,8 +93,11 @@ def _operating_reference(facts, start, end, currency, revenue, revenue_concept=N
     """
     lines, conflicts = {}, []
     for name, concepts in OPERATING_REFERENCE:
-        found = _period_line(facts, concepts, start, end, currency, name in SIGNED_REFERENCE_LINES, conflicts,
-                             'reported ' + name.replace('_', ' '))
+        label = 'reported ' + name.replace('_', ' ')
+        if name == 'research_and_development':
+            found = _larger_rnd(facts, concepts, start, end, currency, conflicts, label)
+        else:
+            found = _period_line(facts, concepts, start, end, currency, name in SIGNED_REFERENCE_LINES, conflicts, label)
         if found:
             concept, chosen = found
             lines[name] = {'value': _json_number(chosen['value']), 'concept': concept, 'basis': 'reported',

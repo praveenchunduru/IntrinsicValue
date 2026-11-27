@@ -371,16 +371,21 @@ class ValuationBridgeTests(unittest.TestCase):
         market = evaluate(priced)['computed_diagnostics']['valuation_multiples']['market']
         self.assertEqual(market['enterprise_value'], 10 * 104 + 100 + 20 - 50)
 
-    def test_shipped_examples_revalue_to_their_saved_values(self):
+    def test_shipped_examples_value_alike_with_zero_bridge_fields(self):
+        # The shipped examples predate both fields; stating them as zero changes nothing.
+        # (Their saved values predate the 2026-11-26 continuing-value retiming, which
+        # test_market_consistency checks separately.)
         for name in ('AAPL-2026-11-06', 'AAPL-2026-11-06-revised'):
-            folder = ROOT / 'examples' / name
-            saved = json.loads((folder / 'valuation.json').read_text())
-            result = evaluate(json.loads((folder / 'assumptions.json').read_text()))
+            plan_value = json.loads((ROOT / 'examples' / name / 'assumptions.json').read_text())
+            stated = json.loads(json.dumps(plan_value))
+            stated['actuals'].update(nonoperating_assets=0, dilutive_shares=0)
+            for field in ('nonoperating_assets', 'dilutive_shares'):
+                stated['source_refs'][field] = ['assumption: zero for this test']
+            before, after = evaluate(plan_value), evaluate(stated)
             with self.subTest(name):
-                # Python 3.12 sums floats with compensation, so 3.9 can differ in the last bit.
                 for scenario in ('bear', 'base', 'bull'):
-                    self.assertAlmostEqual(result['scenarios'][scenario]['per_share_value'],
-                                           saved['scenarios'][scenario]['per_share_value'], places=9)
+                    self.assertEqual(before['scenarios'][scenario]['per_share_value'],
+                                     after['scenarios'][scenario]['per_share_value'])
 
 
 class PinAndMemoTests(unittest.TestCase):
