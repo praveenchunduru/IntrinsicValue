@@ -23,6 +23,9 @@ def main():
     parser.add_argument('--review-model',help='Explicit review-model override, saved with the current run; it is not checked against the author model')
     parser.add_argument('--strong-model', help='Override the forecast and writing model with an OpenRouter model ID; the default reviewer stays a different model')
     parser.add_argument('--max-revisions',type=int,default=2,help='Revision rounds after the first review, 0–8 (default: 2); each round edits the prose and rewrites it only when needed')
+    parser.add_argument('--plan-samples',type=int,choices=range(1,6),metavar='N',
+                        help='Forecast plans written from the same evidence, 1–5; the plan valued combines them input by input '
+                             '(default: 3 for the balanced profile, 1 otherwise; 1 is a single forecast)')
     parser.add_argument('--sources',type=Path,help='Append a JSON list of supplemental archived sources to the same full run (at most 3 MB)')
     parser.add_argument('--snapshot',type=Path,help='Replay a dated S1… source manifest without refreshing evidence or quotes (at most 3 MB)')
     parser.add_argument('--forecast-plan',type=Path,help='Review an explicit forecast JSON against pinned reported inputs; never bypasses review (at most 150 KB)')
@@ -71,7 +74,8 @@ def main():
             if args.sources and args.sources.stat().st_size>3000000:
                 raise ValueError('Supplemental source JSON must be at most 3 MB')
             sources=json.loads(args.sources.read_text(encoding='utf-8')) if args.sources else None
-            extra={'max_revisions':args.max_revisions,'review_notes':notes,'extra_sources':sources}
+            extra={'max_revisions':args.max_revisions,'review_notes':notes,'extra_sources':sources,
+                   'plan_samples':args.plan_samples}
             for path, limit, field in ((args.snapshot,3000000,'source_snapshot'),(args.forecast_plan,150000,'forecast_plan')):
                 if path:
                     if path.stat().st_size > limit:
@@ -87,8 +91,8 @@ def main():
                 if args.counterfactuals.stat().st_size>64000:
                     raise ValueError('Counterfactual JSON must be at most 64 KB')
                 extra['counterfactuals']=json.loads(args.counterfactuals.read_text(encoding='utf-8'))
-        elif args.review_notes or args.counterfactuals or args.draft or args.snapshot or args.forecast_plan:
-            raise ValueError('--review-notes, --counterfactuals, --draft, --snapshot and --forecast-plan apply only to full research')
+        elif args.review_notes or args.counterfactuals or args.draft or args.snapshot or args.forecast_plan or args.plan_samples:
+            raise ValueError('--review-notes, --counterfactuals, --draft, --snapshot, --forecast-plan and --plan-samples apply only to full research')
         with sec_contact_scope(args.sec_contact):
             folder = runner(args.ticker, os.environ.get('OPENROUTER_API_KEY', ''), profile=args.profile,
                             budget=args.budget, directory=args.output, evidence=evidence,

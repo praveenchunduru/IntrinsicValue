@@ -19,7 +19,7 @@ import shutil
 import time
 from urllib.request import Request, urlopen
 
-from . import base_rates, core, memo_style
+from . import base_rates, consensus, core, memo_style
 from .costs import cost_summary
 from .analytics import annual_metrics
 from .fundamentals import yahoo_financials
@@ -1778,7 +1778,7 @@ def _workflow_contract():
             'implementation':_digest({name:hashlib.sha256((root/name).read_bytes()).hexdigest()
                 for name in ('pipeline.py','prompt_context.py','quality.py','valuation.py','inputs.py','operating.py','rates.py','primary_debt.py','companyfacts.py',
                              'evidence_tables.py','research.py','base_rates.py','country_risk.py','cap_fade.py','roic.py',
-                             'macro.py')
+                             'macro.py','consensus.py')
                 if (root/name).is_file()})}
 
 
@@ -1867,7 +1867,7 @@ def _recover_supplied_evidence(folder,state,evidence):
 
 
 def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
-                              forecast_plan=None, draft=None, max_revisions=DEFAULT_MAX_REVISIONS):
+                              forecast_plan=None, draft=None, max_revisions=DEFAULT_MAX_REVISIONS, plan_samples=1):
     """Price known repeated context before the first potentially billed call.
 
     Future search excerpts, forecasts, derived valuation data and memo prose are
@@ -1880,14 +1880,17 @@ def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
     a finding concerns the forecast or an edit fails (forecast response, rewrite).
     """
     context = _evidence_context(state['sources'])
-    def priced(stage, model, prompt, tokens, web=False):
+    def priced(stage, model, prompt, tokens, web=False, cached_prefix=None):
         # Reasoning tokens are reserved on top of the output limit, as the router does.
         catalog=getattr(router,'catalog',{}) or {}
         if core.reasoning_request(catalog.get(model),model,core.reasoning_budget(stage)) is not None:
             tokens+=core.reasoning_budget(stage)
-        return {'stage':stage, 'model':model, 'known_prompt_utf8_bytes':len(prompt.encode()),
+        # A later plan sample resends a prefix the first one wrote: its prefix is priced at the cache-read price.
+        extra={'prefix':cached_prefix,'cached':True} if cached_prefix else {}
+        return {'stage':stage, 'model':model, 'known_prompt_utf8_bytes':len(prompt.encode()+(cached_prefix or '').encode()),
                 'max_completion_tokens':tokens, 'web_search':web,
-                'reservation_floor_usd':router.estimate(model,prompt,tokens,web=web)}
+                **({'prefix_reserved_at':'cache_read'} if cached_prefix else {}),
+                'reservation_floor_usd':router.estimate(model,prompt,tokens,web=web,**extra)}
     stages = []
     def add(*args, **kwargs):
         stages.append(priced(*args, **kwargs))
@@ -1901,6 +1904,10 @@ def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
     if not supplied_model:
         add('valuation_plan',strong,'Build an investment valuation plan.\n'+
             FORECAST_SCHEMA+UNDERWRITING_GUIDANCE+PLAN_SOURCE_RULE+'\nEvidence:\n'+context,12000)
+        # Later samples resend the evidence prefix the first one writes: reserved at the cache-read price.
+        for sample in range(2,plan_samples+1):
+            add(_plan_stage_name(sample),strong,'Build an investment valuation plan.\n'+FORECAST_SCHEMA+
+                UNDERWRITING_GUIDANCE+PLAN_SOURCE_RULE,12000,cached_prefix=_evidence_prefix(context))
     valuation = ''
     if state.get('valuation') is not None and state.get('plan'):
         valuation = _model_valuation_context(state['plan'],state['valuation'])
@@ -1934,15 +1941,20 @@ def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
                        'conditional_floor_usd':sum(row['reservation_floor_usd'] for row in conditional)})
     every = stages+[row for item in rounds for row in item['usual_stages']+item['conditional_stages']]
     suggested=max(DEFAULT_BUDGET,float(math.ceil(floor)))
-    return {'scope':'First draft, its fix call, one review and its finding check; revision rounds are priced separately '
-                    'and format/forecast repairs are excluded',
+    return {'scope':'First draft, its fix call, one review and its finding check'+
+                     (f', and {plan_samples} forecast plan samples, the later ones at the cache-read price' if plan_samples>1 else '')+
+                     '; revision rounds are priced separately and format/forecast repairs are excluded',
             'basis':'Uncached UTF-8 byte reservations at maximum catalog price tiers and configured output limits. '
                     'Only currently known context is included. Future search results, synthesis, forecasts, '
                     'computed valuation and memo text can increase reservations; this floor is not a completion guarantee or predicted bill.',
             'budget_usd':router.budget, 'known_context_reservation_floor_usd':floor,
             'suggested_total_allowance_usd':suggested if suggested<=100 else None,
             'max_revisions':max_revisions, 'passed':router.budget>=floor, 'stages':stages,
-            'revision_rounds':rounds,
+            'revision_rounds':rounds, 'plan_samples':plan_samples,
+            # The whole run priced together: the K plan samples (the later ones at the
+            # cache-read price), the first draft and review, and every revision round.
+            'usual_path_reservation_floor_usd':floor+sum(item['usual_floor_usd'] for item in rounds),
+            'worst_case_reservation_floor_usd':floor+sum(item['usual_floor_usd']+item['conditional_floor_usd'] for item in rounds),
             'largest_single_reservation_floor_usd':max((row['reservation_floor_usd'] for row in every),default=0.0),
             'revision_basis':'Each call needs its own reservation on top of what earlier calls actually cost; a round '
                              'adds the conditional stages only when a finding concerns the forecast or an edit fails.'}
@@ -3183,6 +3195,9 @@ def computed_summary(plan, result):
     if _finite_number(benchmark.get('value_to_price')):
         rows.append(['S&P 500, same conventions']+([] if headline else [''])+['',f'{benchmark["value_to_price"]:.2f}'])
     lines=lead+_table(header,rows)
+    combined=consensus.first_page_sentence(_consensus_record(result),style)
+    if combined:
+        lines+=['',combined]
     requirements=(result.get('price_requirements') or {}).get('rows') or []
     if requirements:
         body,percentile_key=[],None
@@ -4074,7 +4089,8 @@ def reader_view(memo, sources, plan, result, ticker=''):
     """
     detail,groups=_valuation_parts(plan,result)
     history,history_notes=_reported_parts(sources)
-    groups=groups+[('Reported history',history_notes),
+    groups=groups+[('Forecast samples',consensus.method_notes(_consensus_record(result),_style(plan,result))),
+                   ('Reported history',history_notes),
                    ('Review',['Software checks and model reviews do not establish investment truth or forecast accuracy.'])]
     return _label_unverified(_with_summary(memo,plan,result,sources,ticker).rstrip()+'\n'+'\n'.join(detail)+
                              '\n'+'\n'.join(history+_notes_lines(groups)),sources)
@@ -4115,10 +4131,244 @@ def _render(memo, sources, gaps, plan, result, state):
             '\n\n## Review status\n'+state.get('quality_status','in_progress')+'\n\n'+note+'\n')
 
 
+# ---------------------------------------------------------------- forecast samples
+#
+# Four plans on identical evidence and prompt at temperature 0 valued Microsoft from
+# 354 to 398 and Apple from 138 to 151 a share (2026-11-27): noise around one view.
+# The plan is requested several times in one cache session and the consensus of the
+# valid samples (consensus.py) is locked, checked and valued like any model plan.
+PLAN_SAMPLES = {'balanced': 3}
+MAX_PLAN_SAMPLES = 5
+
+
+def default_plan_samples(profile):
+    """Forecast plan samples a profile takes when none is chosen: three for balanced, else one."""
+    return PLAN_SAMPLES.get(profile, 1)
+
+
+def _plan_stage_name(sample, repair=None):
+    """valuation_plan, valuation_plan_repair, valuation_plan_repair_2..; sample k>1 adds _s<k> after valuation_plan."""
+    name = 'valuation_plan' + ('' if sample == 1 else f'_s{sample}')
+    return name if repair is None else name + '_repair' + ('' if repair == 0 else f'_{repair+1}')
+
+
+def _sample_of_stage(name):
+    """The plan sample a saved stage key belongs to, or None for a stage outside the plan samples."""
+    stage = name.split(':', 1)[0]
+    match = re.fullmatch(r'valuation_plan(?:_s([2-9]))?(?:_repair(?:_\d+)?)?', stage)
+    return (int(match.group(1)) if match.group(1) else 1) if match else None
+
+
+def _draft_plan(state, call, prompt, prefix, strong, sample, single):
+    """One forecast plan with the normal repair loop.
+
+    Returns {'status': 'valid', 'proposal', 'plan', 'changes', 'result', 'omitted'},
+    {'status': 'unavailable', 'plan'} or {'status': 'failed', 'reason'}. With
+    ``single`` (one sample requested) the repair reasons are kept in state as
+    before; with several they are not, so a resumed run resends identical prompts.
+    """
+    later = sample > 1
+    text = call(_plan_stage_name(sample), strong, prompt, tokens=12000, prefix=prefix, reserve_cached=later)
+    failures = []
+    for repair in range(PLAN_REPAIRS+1):
+        try:
+            # A valid plan behind a line of analysis was rejected live
+            # (2026-11-14) and cost a paid repair; accept exactly one
+            # complete fenced block, as the correction stage does.
+            plan, normalized = _response_json(text)
+            if normalized:
+                recovery = {'stage': _plan_stage_name(sample)+('' if repair == 0 else '_repair'), 'attempt': repair,
+                            'method': 'one_explicit_complete_json_fence'}
+                if recovery not in state.setdefault('response_normalizations', []):
+                    state['response_normalizations'].append(recovery)
+            if not isinstance(plan, dict):
+                raise ValueError('Valuation plan must be an object')
+            if plan.get('unavailable'):
+                return {'status': 'unavailable', 'plan': plan}
+            (locked, changes, result), omitted = _omit_invalid_optional_sections(
+                plan, lambda candidate: _lock_and_value(candidate, state))
+            return {'status': 'valid', 'proposal': plan, 'plan': locked, 'changes': changes, 'result': result,
+                    'omitted': omitted, 'repair_reasons': failures}
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            failures.append(str(exc))
+            if single:
+                state['plan_repair_reasons'] = list(failures)
+            if repair == PLAN_REPAIRS:
+                return {'status': 'failed', 'repair_reasons': failures,
+                        'reason': f'Valuation plan remains invalid after {PLAN_REPAIRS} repairs: '+str(exc)}
+            rejected = text
+            text = call(_plan_stage_name(sample, repair), strong, prompt+'\nRejected JSON:\n'+text+
+                        '\nRepair this precise validation failure without inventing actuals: '+str(exc)+
+                        ('\nEarlier attempts were rejected for these reasons; do not reintroduce them: '+
+                         ' | '.join(failures[:-1]) if failures[:-1] else '')+
+                        '\nReturn only the complete corrected JSON object, with no analysis before or after it.'+PLAN_FIELD_RULES,
+                        tokens=12000, prefix=prefix, reserve_cached=later)
+            if text.strip() == rejected.strip():
+                # A repair that returns the rejected plan unchanged will not
+                # pass on a further paid attempt (Microsoft replay, 2026-11-15).
+                failures.append('the repair returned the rejected plan unchanged')
+                if single:
+                    state['plan_repair_reasons'] = list(failures)
+                return {'status': 'failed', 'repair_reasons': failures,
+                        'reason': 'Valuation plan repair returned the rejected plan unchanged: '+str(exc)}
+
+
+def _discard_plan_stages(state, checkpoint):
+    # A saved response is replayed on resume. Keeping plans that cannot validate
+    # would stop every later attempt at the same point, so the rejected plans and
+    # their repairs are discarded; their recorded spending is retained.
+    for name in [name for name in state['stages'] if _sample_of_stage(name) is not None]:
+        state['stages'].pop(name)
+    checkpoint()
+
+
+def _consensus_summary(report):
+    """The part of the consensus report saved with the valuation."""
+    keys = ('method', 'sector_weight_method', 'requested_samples', 'sample_count', 'plan_used', 'representative_sample',
+            'structure_decision', 'consensus_values', 'sample_value_range', 'dropped', 'fallback',
+            'bases_from_other_samples', 'plan_fingerprint', 'notes')
+    summary = {key: copy.deepcopy(report[key]) for key in keys if key in report}
+    summary['samples'] = [{'sample': row['sample'], 'values': row.get('values'), 'in_consensus': row.get('in_consensus')}
+                          for row in report.get('samples', [])]
+    impact = (report.get('value_impact') or {}).get('groups') or []
+    summary['value_impact'] = [{key: row[key] for key in ('group', 'min_base_value', 'max_base_value', 'range')}
+                               for row in impact]
+    summary['basis'] = ('Each sample is the same plan request sent again in one cache session; the plan valued combines '
+                        'the valid samples input by input (plan-consensus.json). Nothing in it reads the market price.')
+    return summary
+
+
+def _attach_consensus(state, plan=None, result=None):
+    """Carry the forecast-sample record into the valuation of a model-written plan.
+
+    ``plan`` and ``result`` default to the plan and valuation in state. A plan whose
+    forecast inputs no longer match the combined plan (a forecast correction after
+    review) is marked edited, so its sample range is not shown as current.
+    """
+    report = state.get('plan_consensus')
+    plan = state.get('plan') if plan is None else plan
+    result = state.get('valuation') if result is None else result
+    if not report or result is None or not isinstance(plan, dict) or state.get('provided_forecast_digest'):
+        return
+    summary = _consensus_summary(report)
+    if report.get('plan_fingerprint') and consensus.fingerprint(plan) != report['plan_fingerprint']:
+        summary['edited_after_consensus'] = True
+        summary['current_values'] = {name: ((result.get('scenarios') or {}).get(name) or {}).get('per_share_value')
+                                     for name in SCENARIO_NAMES}
+    result['forecast_consensus'] = summary
+
+
+def _consensus_record(result):
+    """The forecast-sample record of a valuation, or None (single forecasts and runs saved before it)."""
+    record = (result or {}).get('forecast_consensus') if isinstance(result, dict) else None
+    return record if isinstance(record, dict) else None
+
+
+def _plan_samples_stage(folder, state, call, checkpoint, progress, prompt, prefix, strong, samples):
+    """Request the plan ``samples`` times on one prompt and adopt the consensus; one sample is today's stage."""
+    single = samples == 1
+    # The record of dropped samples applies only to this exact request.
+    request = _digest([prompt, prefix, strong])
+    saved = state.get('plan_sample_log') if isinstance(state.get('plan_sample_log'), dict) else {}
+    log = ({row['sample']: row for row in saved.get('samples', []) if isinstance(row, dict)}
+           if saved.get('request_sha256') == request else {})
+    valid, dropped = [], []
+    for sample in range(1, samples+1):
+        if log.get(sample, {}).get('status') == 'dropped':
+            # Recorded before a stop: kept dropped, so a resumed run pays for nothing new.
+            dropped.append({'sample': sample, 'reason': log[sample]['reason']})
+            continue
+        if not single:
+            progress(f'Forecast plan sample {sample} of {samples}')
+        try:
+            outcome = _draft_plan(state, call, prompt, prefix, strong, sample, single)
+        except core.IncompleteResponse as exc:
+            # A cut-off or filtered later sample is spent and dropped; the first stops the run as before.
+            if sample == 1:
+                raise
+            outcome = {'status': 'failed', 'reason': str(exc)[:600]}
+        if outcome['status'] == 'unavailable' and sample == 1:
+            state['valuation_missing'] = outcome['plan']
+            state['plan'] = outcome['plan']
+            return
+        if outcome['status'] == 'unavailable':
+            outcome = {'status': 'failed', 'reason': 'this sample returned unavailable while sample 1 returned a plan'}
+        if outcome['status'] == 'failed':
+            if single:
+                _discard_plan_stages(state, checkpoint)
+                raise RuntimeError(outcome['reason']+'. The rejected plan was discarded; run the same command again for '
+                                   'a fresh forecast')
+            dropped.append({'sample': sample, 'reason': outcome['reason'][:600]})
+            log[sample] = {'sample': sample, 'status': 'dropped', 'reason': outcome['reason'][:600],
+                           'repair_reasons': outcome.get('repair_reasons', [])}
+        else:
+            outcome['sample'] = sample
+            valid.append(outcome)
+            log[sample] = {'sample': sample, 'status': 'valid', 'repair_reasons': outcome['repair_reasons']}
+        if not single:
+            state['plan_sample_log'] = {'request_sha256': request, 'samples': [log[key] for key in sorted(log)]}
+            checkpoint()
+    # Sampling is over: the record of drops moves into the consensus report.
+    state.pop('plan_sample_log', None)
+    if not valid:
+        state['plan_repair_reasons'] = [row['reason'] for row in dropped]
+        _discard_plan_stages(state, checkpoint)
+        raise RuntimeError(f'All {samples} forecast plan samples remained invalid after their repairs: '+
+                           ' | '.join(f'sample {row["sample"]}: {row["reason"]}' for row in dropped)[:1500]+
+                           '. The rejected plans were discarded; run the same command again for fresh forecasts')
+    report = None
+    chosen = valid[0]
+    if not single:
+        held = _reported_expense_shares(valid[0]['plan'])
+        try:
+            candidate, report = consensus.consensus_plan([copy.deepcopy(item['proposal']) for item in valid],
+                                                         valuations=[item['result'] for item in valid], held_shares=held,
+                                                         numbers=[item['sample'] for item in valid])
+        except consensus.LOCK_ERRORS as exc:
+            # Samples that each passed but cannot be combined: the first valid sample, recorded.
+            candidate, report = consensus.consensus_plan([copy.deepcopy(valid[0]['proposal'])],
+                                                         valuations=[valid[0]['result']], numbers=[valid[0]['sample']])
+            report['notes'].append(f'The valid samples could not be combined ({str(exc)[:300]}); the plan is sample '
+                                   f'{valid[0]["sample"]}.')
+            valid = valid[:1]
+
+        def lock(plan):
+            outcome = _omit_invalid_optional_sections(plan, lambda item: _lock_and_value(item, state))
+            return outcome[0][2], outcome
+        if len(valid) == 1:
+            consensus.finish_report(report, chosen['result'], 'single_valid_sample')
+        else:
+            candidate, ((locked, changes, result), omitted) = consensus.lock_consensus(
+                candidate, report, lock, {item['sample']: item['proposal'] for item in valid})
+            chosen = {'proposal': candidate, 'plan': locked, 'changes': changes, 'result': result, 'omitted': omitted}
+        report.update(requested_samples=samples, dropped=dropped)
+        report['method_note'] = consensus.method_note(report, (chosen['plan'].get('reported_inputs') or {}).get('currency', ''))
+        report['consensus_proposal'] = candidate
+        report['plan_fingerprint'] = consensus.fingerprint(chosen['plan'])
+        if len(valid) > 1 and report.get('plan_used') == 'consensus':
+            # Ranked by value: each sample's driver group swapped into the plan valued.
+            report['value_impact'] = consensus.value_impact(
+                chosen['plan'], chosen['result'], [(item['sample'], item['plan'], item['result']) for item in valid])
+    state.setdefault('actual_input_corrections', []).extend(chosen['changes'])
+    _reset_plan_notes(state)
+    _record_omitted_sections(state, chosen['omitted'], 'forecast plan\'s')
+    state['plan'], state['valuation'] = chosen['plan'], chosen['result']
+    state['plan_conventions'] = PLAN_CONVENTIONS
+    if report is not None:
+        state['plan_consensus'] = report
+        core.save(folder/'plan-consensus.json', report)
+        _attach_consensus(state)
+    save_valuation(folder, chosen['plan'], chosen['result'])
+
+
 def run(ticker, key, *, profile='balanced', budget=DEFAULT_BUDGET, directory='research-output', evidence='',
         easy_model=None, strong_model=None, progress=lambda message: None, max_revisions=DEFAULT_MAX_REVISIONS, review_notes='', extra_sources=None, counterfactuals=None, draft=None, review_model=None,
-        source_snapshot=None, forecast_plan=None):
+        source_snapshot=None, forecast_plan=None, plan_samples=None):
     ticker = core.symbol(ticker)
+    if plan_samples is None:
+        plan_samples = default_plan_samples(profile)
+    if isinstance(plan_samples, bool) or not isinstance(plan_samples, int) or not 1 <= plan_samples <= MAX_PLAN_SAMPLES:
+        raise ValueError(f'plan_samples must be an integer from 1 to {MAX_PLAN_SAMPLES}')
     if source_snapshot is not None:
         if (not isinstance(source_snapshot, list) or not 1 <= len(source_snapshot) <= 80 or
                 len(json.dumps(source_snapshot).encode()) > 3000000):
@@ -4157,6 +4407,9 @@ def run(ticker, key, *, profile='balanced', budget=DEFAULT_BUDGET, directory='re
     easy,strong=core.MODELS[profile]
     easy,strong=easy_model or easy,strong_model or strong
     identity_parts=[VERSION,ticker,profile,easy,strong,evidence,source_snapshot,datetime.now(timezone.utc).date().isoformat()]
+    if plan_samples!=default_plan_samples(profile):
+        # A non-default sample count is its own run; the default keeps existing run folders.
+        identity_parts.append(['plan_samples',plan_samples])
     identity=_digest(identity_parts)[:16]
     base=Path(directory)/ticker
     folder=base/('full-'+identity)
@@ -4181,11 +4434,13 @@ def run(ticker, key, *, profile='balanced', budget=DEFAULT_BUDGET, directory='re
             marker.setdefault('legacy_stage_system_sha256',_digest(core.SYSTEM))
         core.save(marker_path,marker)
         default_reviewer=_default_reviewer(profile,strong)
-        return _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,review_notes,extra_sources or [],counterfactuals,draft,review_model,source_snapshot,forecast_plan,default_reviewer=default_reviewer)
+        return _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,review_notes,extra_sources or [],counterfactuals,draft,review_model,source_snapshot,forecast_plan,default_reviewer=default_reviewer,plan_samples=plan_samples)
 
 
-def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,review_notes,extra_sources,counterfactuals,draft,review_model,source_snapshot=None,forecast_plan=None,default_reviewer=None):
+def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,review_notes,extra_sources,counterfactuals,draft,review_model,source_snapshot=None,forecast_plan=None,default_reviewer=None,plan_samples=1):
     default_reviewer=default_reviewer or strong
+    if isinstance(plan_samples,bool) or not isinstance(plan_samples,int) or not 1<=plan_samples<=MAX_PLAN_SAMPLES:
+        raise ValueError(f'plan_samples must be an integer from 1 to {MAX_PLAN_SAMPLES}')
     notes_reopened=False
     state_path=folder/'state.json'
     state=json.loads(state_path.read_text()) if state_path.exists() else {
@@ -4478,7 +4733,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         raise
     if not state['ledger']:
         preflight=_initial_budget_preflight(router,state,ticker=ticker,easy=easy,strong=strong,
-            reviewer=reviewer,forecast_plan=forecast_plan,draft=draft,max_revisions=max_revisions)
+            reviewer=reviewer,forecast_plan=forecast_plan,draft=draft,max_revisions=max_revisions,plan_samples=plan_samples)
         state['budget_preflight']=preflight
         core.save(folder/'budget-preflight.json',preflight)
         progress(f'Initial budget preflight: ${preflight["known_context_reservation_floor_usd"]:.2f} '
@@ -4501,7 +4756,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         if state.get('quality_status')=='budget_paused':
             state['quality_status']='in_progress'
         checkpoint()
-    def call(name,model,prompt,tokens=6000,web=False,prefix=None):
+    def call(name,model,prompt,tokens=6000,web=False,prefix=None,reserve_cached=False):
         thinking=core.reasoning_budget(name)
         cache=name+':'+_digest([prompt,model,tokens,web,core.SYSTEM]+([thinking] if thinking else [])+
                                (['prefix',_digest(prefix)] if prefix else []))[:12]
@@ -4516,6 +4771,9 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         progress(name+': '+model)
         try:
             extra={'prefix':prefix} if prefix else {}
+            if reserve_cached:
+                # Not part of the stage key: it changes the reservation, not the request.
+                extra['reserve_cached']=True
             try:
                 value=router.complete(name,model,prompt,max_tokens=tokens,web=web,**extra)
             except core.ReasoningExhausted:
@@ -4566,8 +4824,12 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             checkpoint()
         state['web_research_complete']=True
         checkpoint()
-    # The plan stage writes the cached evidence block; a saved plan keeps its block.
-    _freeze_evidence(state,refresh='plan' not in state)
+    # The plan stage writes the cached evidence block; a saved plan keeps its block. So
+    # does plan sampling interrupted between samples on unchanged sources: every sample
+    # sends the block frozen before sample 1.
+    frozen=(state.get('cached_evidence') or {}).get('source_ids')
+    sampling=bool(state.get('plan_sample_log')) and frozen==[source.get('id') for source in state['sources']]
+    _freeze_evidence(state,refresh='plan' not in state and not sampling)
     context,later=_evidence_blocks(state)
     def evidence_above():
         return EVIDENCE_ABOVE+(LATER_EVIDENCE+later if later else '')
@@ -4624,63 +4886,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 # A rerun after a discarded plan would otherwise resend the identical request.
                 ('\nAn earlier attempt at this plan was rejected for these reasons; avoid them: '+
                  ' | '.join(state['plan_repair_reasons']) if state.get('plan_repair_reasons') else ''))
-        text=call('valuation_plan',strong,prompt,tokens=12000,prefix=_evidence_prefix(context))
-        failures=[]
-        for repair in range(PLAN_REPAIRS+1):
-            try:
-                # A valid plan behind a line of analysis was rejected live
-                # (2026-11-14) and cost a paid repair; accept exactly one
-                # complete fenced block, as the correction stage does.
-                plan,normalized=_response_json(text)
-                if normalized:
-                    recovery={'stage':'valuation_plan'+('' if repair==0 else '_repair'),'attempt':repair,
-                              'method':'one_explicit_complete_json_fence'}
-                    if recovery not in state.setdefault('response_normalizations',[]):
-                        state['response_normalizations'].append(recovery)
-                if not isinstance(plan,dict):
-                    raise ValueError('Valuation plan must be an object')
-                if plan.get('unavailable'):
-                    state['valuation_missing']=plan
-                    state['plan']=plan
-                    break
-                (plan,changes,result),omitted=_omit_invalid_optional_sections(plan,lambda candidate:_lock_and_value(candidate,state))
-                state.setdefault('actual_input_corrections',[]).extend(changes)
-                _reset_plan_notes(state)
-                _record_omitted_sections(state,omitted,'forecast plan\'s')
-                state['plan'],state['valuation']=plan,result
-                state['plan_conventions']=PLAN_CONVENTIONS
-                save_valuation(folder,plan,result)
-                break
-            except (ValueError,KeyError,TypeError,AttributeError) as exc:
-                failures.append(str(exc))
-                state['plan_repair_reasons']=list(failures)
-                if repair==PLAN_REPAIRS:
-                    # A saved response is replayed on resume. Keeping a plan
-                    # that cannot validate would stop every later attempt at
-                    # the same point, so the rejected plan and its repairs are
-                    # discarded; their recorded spending is retained.
-                    for name in [name for name in state['stages'] if name.startswith('valuation_plan')]:
-                        state['stages'].pop(name)
-                    checkpoint()
-                    raise RuntimeError(f'Valuation plan remains invalid after {PLAN_REPAIRS} repairs: '+str(exc)+
-                                       '. The rejected plan was discarded; run the same command again for a fresh forecast') from None
-                rejected=text
-                text=call('valuation_plan_repair'+('' if repair==0 else f'_{repair+1}'),strong,prompt+'\nRejected JSON:\n'+text+
-                          '\nRepair this precise validation failure without inventing actuals: '+str(exc)+
-                          ('\nEarlier attempts were rejected for these reasons; do not reintroduce them: '+
-                           ' | '.join(failures[:-1]) if failures[:-1] else '')+
-                          '\nReturn only the complete corrected JSON object, with no analysis before or after it.'+PLAN_FIELD_RULES,tokens=12000,
-                          prefix=_evidence_prefix(context))
-                if text.strip()==rejected.strip():
-                    # A repair that returns the rejected plan unchanged will not
-                    # pass on a further paid attempt (Microsoft replay, 2026-11-15).
-                    failures.append('the repair returned the rejected plan unchanged')
-                    state['plan_repair_reasons']=list(failures)
-                    for name in [name for name in state['stages'] if name.startswith('valuation_plan')]:
-                        state['stages'].pop(name)
-                    checkpoint()
-                    raise RuntimeError('Valuation plan repair returned the rejected plan unchanged: '+str(exc)+
-                                       '. The rejected plan was discarded; run the same command again for a fresh forecast')
+        _plan_samples_stage(folder,state,call,checkpoint,progress,prompt,_evidence_prefix(context),strong,plan_samples)
         checkpoint()
     if not state['plan'].get('unavailable'):
         current=not state.get('provided_forecast_digest') and state.get('plan_conventions')==PLAN_CONVENTIONS
@@ -4691,6 +4897,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         if 'requested_counterfactuals' in state:
             state['plan']['counterfactuals']=copy.deepcopy(state['requested_counterfactuals'])
         state['valuation']=_evaluate(state['plan'])
+        _attach_consensus(state)
         save_valuation(folder,state['plan'],state['valuation'])
     plan,result=state['plan'],state.get('valuation')
     valuation_context=_model_valuation_context(plan,result)
@@ -4891,6 +5098,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 _reset_plan_notes(state)
                 _record_omitted_sections(state,omitted,f'review {iteration+1} correction\'s')
                 plan,result=locked,corrected
+                _attach_consensus(state,plan,result)
                 save_valuation(folder,plan,result)
                 state['valuation']=result
                 if apply:

@@ -303,6 +303,30 @@ def _cache_write_cap(pricing):
     return max(rates) if rates else None
 
 
+def _cache_read_cap(pricing):
+    """Highest declared cache-read price across tiers, or None when the model declares none."""
+    rates = []
+    for tier in [pricing, *(pricing.get('overrides') or [])] if isinstance(pricing, dict) else []:
+        try:
+            value = float(tier.get('input_cache_read')) if isinstance(tier, dict) and tier.get('input_cache_read') is not None else None
+        except (TypeError, ValueError):
+            value = None
+        if value is not None and math.isfinite(value) and value >= 0:
+            rates.append(value)
+    return max(rates) if rates else None
+
+
+# A later plan sample reserves its evidence prefix at the cache-read price only
+# when this session's ledger shows the same prefix written or read by the same
+# model within this window (Anthropic's marked prefixes live one hour).
+CACHE_READ_WINDOW_SECONDS = 50 * 60
+
+
+def prefix_digest(prefix):
+    """The ledger's ``cached_prefix_sha256``: the first 16 hex digits of the prefix's SHA-256."""
+    return hashlib.sha256(prefix.encode()).hexdigest()[:16]
+
+
 # Long shared prefixes (the evidence, and for the reviewer the valuation and
 # draft) are sent first and marked for caching. OpenRouter turns the Anthropic
 # marker into a GPT-5.6 or GPT-6 cache breakpoint; the TTL applies to Anthropic only.
@@ -334,19 +358,23 @@ class Router:
         for model in dict.fromkeys(models):
             self.estimate(model,'',0)
 
-    def estimate(self, model, prompt, max_tokens=3500, *, web=False, prefix=''):
+    def estimate(self, model, prompt, max_tokens=3500, *, web=False, prefix='', cached=False):
         """Return the unchanged uncached reservation without adding a charge.
 
         A partial prompt gives only a planning floor. Actual calls always price
         their complete prompt again, including all generated intermediate data.
         A cached prefix is reserved at the higher of the input and cache-write
-        prices, since the first request writes it.
+        prices, since the first request writes it; with ``cached`` (a prefix this
+        session already wrote) at the cache-read price where the model declares one.
         """
         if model not in self.catalog:
             raise ValueError(f'Model unavailable: {model}. Choose another profile or override the model.')
         catalog_model = self.catalog[model]
         pin, pout = _text_price_caps(catalog_model['pricing'])
-        if prefix:
+        read = _cache_read_cap(catalog_model['pricing']) if cached and cache_markers_supported(model) else None
+        if prefix and read is not None:
+            prefix_cost = len(prefix.encode()) * read
+        elif prefix:
             write = _cache_write_cap(catalog_model['pricing']) if cache_markers_supported(model) else None
             prefix_cost = len(prefix.encode()) * max(pin, write or 0)
         else:
@@ -358,12 +386,30 @@ class Router:
         return ((len((SYSTEM + prompt).encode()) + 4096 + web_context_bytes) * pin + prefix_cost +
                 max_tokens * pout + web_fee_reserve)
 
-    def complete(self, stage, model, prompt, max_tokens=3500, *, web=False, prefix=None):
+    def prefix_cached(self, model, prefix):
+        """Whether this session's ledger shows ``prefix`` written or read by ``model`` within the cache window."""
+        if not prefix or not cache_markers_supported(model):
+            return False
+        digest, session, now = prefix_digest(prefix), getattr(self, 'session', None), time.time()
+        for row in self.ledger:
+            details = (row.get('usage') or {}).get('prompt_tokens_details') or {}
+            touched = (details.get('cache_write_tokens') or 0) > 0 or (details.get('cached_tokens') or 0) > 0
+            stamp = row.get('completed_at')
+            if (row.get('model') == model and row.get('cached_prefix_sha256') == digest and row.get('status') == 'complete'
+                    and row.get('session') == session and touched and isinstance(stamp, (int, float))
+                    and 0 <= now - stamp <= CACHE_READ_WINDOW_SECONDS):
+                return True
+        return False
+
+    def complete(self, stage, model, prompt, max_tokens=3500, *, web=False, prefix=None, reserve_cached=False):
         reasoning = reasoning_request(self.catalog.get(model), model, reasoning_budget(stage))
         if reasoning is not None:
             # Reasoning tokens are billed as output and count against the limit.
             max_tokens += reasoning_budget(stage)
-        reserve = self.estimate(model, prompt, max_tokens, web=web, prefix=prefix or '')
+        # ``reserve_cached``: a repeated request (a later plan sample) whose prefix this
+        # session's ledger shows already cached is reserved at the cache-read price.
+        cached = bool(reserve_cached and self.prefix_cached(model, prefix))
+        reserve = self.estimate(model, prompt, max_tokens, web=web, prefix=prefix or '', cached=cached)
         catalog_model = self.catalog[model]
         pin, pout = _text_price_caps(catalog_model['pricing'])
         spent = sum(row['charged_or_reserved_usd'] for row in self.ledger)
@@ -374,6 +420,8 @@ class Router:
                'status': 'pending', 'web_search': web}
         if reasoning is not None:
             row['reasoning'] = dict(reasoning)
+        if cached:
+            row['reserved_at_cache_read'] = True
         self.ledger.append(row)
         self.checkpoint()  # Persist reservation before any potentially billed request.
         if prefix and cache_markers_supported(model):
@@ -383,8 +431,11 @@ class Router:
                       {'type': 'text', 'text': prefix, 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}}]
             content = prompt
             row['cached_prefix_utf8_bytes'] = len(prefix.encode())
-            # Equal digests across stages show the provider was sent identical cached bytes.
-            row['cached_prefix_sha256'] = hashlib.sha256(prefix.encode()).hexdigest()[:16]
+            # Equal digests across stages show the provider was sent identical cached bytes;
+            # prefix_cached() reads the same field to reserve a repeated request at the read price.
+            row['cached_prefix_sha256'] = prefix_digest(prefix)
+            if isinstance(getattr(self, 'session', None), str):
+                row['session'] = self.session
         else:
             system, content = SYSTEM, (prefix or '') + prompt
         payload = {
@@ -478,6 +529,7 @@ class Router:
                         'Run the same command again to retry this stage; completed stages are reused. '
                         'If it repeats, choose another model')
         row['status'] = 'complete'
+        row['completed_at'] = time.time()
         return content
 
 

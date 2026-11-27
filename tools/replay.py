@@ -4,17 +4,23 @@ Usage:
   python tools/replay.py SAVED_RUN_FOLDER OUTPUT_DIR [--from plan|draft] [--max-revisions N]
                          [--budget 20] [--profile balanced] [--strong-model ID] [--review-model ID]
   python tools/replay.py SAVED_RUN_FOLDER OUTPUT_DIR --plan-samples N [--budget 8] [--resume]
+  python tools/replay.py SAVED_RUN_FOLDER OUTPUT_DIR --plan-samples N --consensus-only
 
 --plan-samples N measures repeatability: the forecast plan is requested N times
 on the identical prompt, one request after another in one provider cache session,
 and each answer is locked, validated, repaired if needed and valued. No draft,
 review or web research runs. Results go to OUTPUT_DIR/TICKER/plan-samples/
-plan-samples.json, with a table and a driver decomposition printed at the end.
+plan-samples.json, with a table and a driver decomposition printed at the end,
+followed by the consensus of the valid samples (every subset of three, and all
+of them), locked and valued as a run does (tools/consensus_check.py).
+--consensus-only makes no request: it reports the consensus of the first N
+samples already saved under OUTPUT_DIR/TICKER/plan-samples/.
 
 The saved folder's sources (cut to those that existed when its first draft was
 written), archived documents and paid web-research answers are copied into a
 new folder. Everything from the chosen stage onward is recomputed with the
-current code and prompts: --from plan rebuilds the forecast plan, --from draft
+current code and prompts: --from plan rebuilds the forecast plan (as many plan
+samples as the profile takes by default, three for balanced), --from draft
 keeps the saved first plan, and --from review keeps the saved plan and current
 draft so only the free checks, their fix call and the review run. Primary documents are re-derived from their
 archives by the normal per-run refresh, so evidence-extraction changes apply.
@@ -24,7 +30,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import copy
 import hashlib
 import json
 import math
@@ -37,7 +42,11 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from investmentideas import core, pipeline  # noqa: E402
-from investmentideas.valuation import SCENARIOS, evaluate  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import consensus_check  # noqa: E402  (tools/, beside this script)
+from investmentideas.valuation import SCENARIOS  # noqa: E402
+# The driver swaps live in the package so the consensus report can use them too.
+from investmentideas.drivers import DRIVER_GROUPS, decompose, with_driver_group  # noqa: E402,F401
 
 
 def first_draft_cut(saved, folder, *, keep_all=False):
@@ -124,7 +133,6 @@ def scorecard(folder):
 # samples 2..N read the evidence prefix that sample 1 wrote to the cache.
 
 SAMPLING_STAGES = ('evidence_synthesis', 'valuation_plan')
-DRIVER_GROUPS = ('growth path', 'margin path', 'capital efficiency', 'tax', 'discount rate')
 FINAL = ('complete', 'unavailable', 'failed')
 
 
@@ -147,12 +155,12 @@ def _sampling_router(base, session, requests):
             # pipeline._run names the session after its folder; all samples share one.
             pass
 
-        def complete(self, stage, model, prompt, max_tokens=3500, *, web=False, prefix=None):
+        def complete(self, stage, model, prompt, max_tokens=3500, *, web=False, prefix=None, **options):
             if web or not stage.startswith(SAMPLING_STAGES):
                 raise PlanStageDone(stage)
             if stage.startswith('valuation_plan'):
                 requests.append({'stage': stage, 'sha256': _request_digest(prompt, prefix)})
-            return super().complete(stage, model, prompt, max_tokens, web=web, prefix=prefix)
+            return super().complete(stage, model, prompt, max_tokens, web=web, prefix=prefix, **options)
     return SamplingRouter
 
 
@@ -260,140 +268,6 @@ def plan_metrics(plan, result):
         'initial_discount_rate': (scenarios.get('base') or {}).get('initial_rate', base.get('wacc')),
         'terminal_discount_rate': (scenarios.get('base') or {}).get('terminal_rate', base.get('wacc')),
     }
-
-
-def _operating(trial, name):
-    model = trial.get('operating_model')
-    if not isinstance(model, dict):
-        return None, None
-    return model.get('earnings_mode'), (model.get('scenarios') or {}).get(name)
-
-
-def _swap_growth(trial, result, donor_result):
-    """The donor's total revenue path; the median's revenue mix and margin path are held."""
-    for name in SCENARIOS:
-        rows = _explicit_rows(result, name)
-        target = [row['revenue_growth'] for row in _explicit_rows(donor_result, name)]
-        if len(target) != len(rows):
-            raise ValueError('the forecast horizons differ')
-        scenario = trial['scenarios'][name]
-        mode, operating = _operating(trial, name)
-        if not isinstance(operating, dict):
-            scenario['growth_rates'] = target
-            continue
-        factors, cumulative = [], 1.0
-        for new, old in zip(target, (row['revenue_growth'] for row in rows)):
-            cumulative *= (1 + new) / (1 + old)
-            factors.append(((1 + new) / (1 + old), cumulative))
-        for component in (operating.get('components') or {}).values():
-            component['growth_rates'] = [(1 + growth) * factor - 1 for growth, (factor, _) in
-                                         zip(component['growth_rates'], factors)]
-        for line, values in (operating.get('expenses') or {}).items():
-            # Expenses are dollars: scaled with revenue so each line keeps its share.
-            operating['expenses'][line] = [value * level for value, (_, level) in zip(values, factors)]
-        scenario.pop('growth_rates', None)
-        if mode == 'gross_profit_less_expenses':
-            scenario.pop('ebit_margins', None)
-
-
-def _swap_margins(trial, result, donor_result):
-    """The donor's EBIT margin path on the median's revenue; gross margins kept, expense lines scaled."""
-    for name in SCENARIOS:
-        rows = _explicit_rows(result, name)
-        target = [row['ebit_margin'] for row in _explicit_rows(donor_result, name)]
-        if len(target) != len(rows):
-            raise ValueError('the forecast horizons differ')
-        scenario = trial['scenarios'][name]
-        mode, operating = _operating(trial, name)
-        if mode == 'gross_profit_less_expenses' and isinstance(operating, dict):
-            expenses = operating['expenses']
-            for year, (row, margin) in enumerate(zip(rows, target)):
-                total = sum(values[year] for values in expenses.values())
-                wanted = total + (row['ebit_margin'] - margin) * row['revenue']
-                if total <= 0 or wanted < 0:
-                    raise ValueError(f'year {year + 1} margin cannot be reached by scaling operating expenses')
-                for values in expenses.values():
-                    values[year] *= wanted / total
-            scenario.pop('ebit_margins', None)
-        else:
-            scenario['ebit_margins'] = target
-
-
-def _copy_fields(trial, donor_plan, fields):
-    for name in SCENARIOS:
-        scenario, donor = trial['scenarios'][name], donor_plan['scenarios'][name]
-        for field in fields:
-            if field in donor:
-                scenario[field] = copy.deepcopy(donor[field])
-            else:
-                scenario.pop(field, None)
-
-
-def _swap_discount(trial, donor_plan):
-    if ('discount_rate' in trial) != ('discount_rate' in donor_plan):
-        raise ValueError('only one of the plans has a sourced discount-rate build')
-    if 'discount_rate' in donor_plan:
-        trial['discount_rate'] = copy.deepcopy(donor_plan['discount_rate'])
-    _copy_fields(trial, donor_plan, ('wacc',))
-    for name in SCENARIOS:
-        scenario, donor = trial['scenarios'][name], donor_plan['scenarios'][name]
-        # The terminal return is pinned to the terminal discount rate, so it moves with it.
-        if scenario.get('terminal_roic_basis') == 'terminal_rate' and donor.get('terminal_roic_basis') == 'terminal_rate':
-            scenario['terminal_roic'] = donor['terminal_roic']
-
-
-def with_driver_group(plan, result, donor_plan, donor_result, group):
-    """A copy of ``plan`` with one driver group taken from the donor sample."""
-    trial = copy.deepcopy(plan)
-    # Named cases and monitoring rows do not change scenario values and could
-    # reject a swapped base path for reasons unrelated to the measurement.
-    trial.pop('counterfactuals', None)
-    trial.pop('monitoring', None)
-    if group == 'growth path':
-        _swap_growth(trial, result, donor_result)
-    elif group == 'margin path':
-        _swap_margins(trial, result, donor_result)
-    elif group == 'capital efficiency':
-        _copy_fields(trial, donor_plan, ('sales_to_capital', 'sales_to_capital_path'))
-    elif group == 'tax':
-        _copy_fields(trial, donor_plan, ('tax_rate', 'terminal_tax_rate'))
-    elif group == 'discount rate':
-        _swap_discount(trial, donor_plan)
-    else:
-        raise ValueError(f'unknown driver group {group}')
-    return trial
-
-
-def decompose(median, donors):
-    """Re-value the median sample with each other sample's drivers, one group at a time.
-
-    ``median`` and each donor are (sample number, locked plan, valuation). The range
-    of each group spans the median's own base value and every swapped value.
-    """
-    number, plan, result = median
-    own = result['scenarios']['base']['per_share_value']
-    groups = {}
-    for group in DRIVER_GROUPS:
-        rows = []
-        for donor_number, donor_plan, donor_result in donors:
-            try:
-                value = evaluate(with_driver_group(plan, result, donor_plan, donor_result, group))
-                rows.append({'donor_sample': donor_number, 'base_value': value['scenarios']['base']['per_share_value']})
-            except (ValueError, KeyError, TypeError, ZeroDivisionError, OverflowError) as exc:
-                rows.append({'donor_sample': donor_number, 'error': str(exc)[:300]})
-        values = [own] + [row['base_value'] for row in rows if 'base_value' in row]
-        spread = max(values) - min(values)
-        groups[group] = {'swaps': rows, 'min_base_value': min(values), 'max_base_value': max(values),
-                         'range': spread, 'range_fraction_of_median': spread / own if own else None}
-    largest = max(groups, key=lambda group: groups[group]['range']) if groups else None
-    return {'median_sample': number, 'median_sample_base_value': own, 'groups': groups,
-            'largest_group': largest,
-            'basis': 'Each row re-values the median sample with one driver group from another sample and every other '
-                     'input unchanged. Growth path: the donor\'s total revenue growth by year, with the median\'s '
-                     'component mix and expense shares held. Margin path: the donor\'s EBIT margin by year on the '
-                     'median\'s revenue (operating expenses scaled, gross margins kept). Capital efficiency: '
-                     'sales-to-capital. Tax: forecast and terminal tax rates. Discount rate: the rate build, with the '
-                     'terminal return that is pinned to the terminal rate. Groups interact, so the ranges do not add up.'}
 
 
 def summarize_sample(folder, outcome):
@@ -618,9 +492,27 @@ def sample_plans(saved_folder, output, *, samples, key, easy, strong, reviewer, 
         if stopped:
             break
     report = _report(root, saved_folder, samples, budget, models, stopped)
+    if report['summary'].get('samples_valued', 0) >= 2:
+        # The consensus of the valid samples, locked and valued as a run does; printed first.
+        report['consensus'] = consensus_check.check(root)
+        core.save(root / 'plan-samples.json', report)
+        progress(consensus_check.table(report['consensus']))
     progress(sampling_table(report))
     progress(f'plan samples: {root / "plan-samples.json"}')
     return report
+
+
+def consensus_only(saved_folder, output, *, samples, progress=print):
+    """The consensus of the first ``samples`` saved plan samples; no request is made."""
+    saved = json.loads((Path(saved_folder).resolve() / 'state.json').read_text())
+    root = Path(output).resolve() / saved['ticker'] / 'plan-samples'
+    if not root.is_dir():
+        raise ValueError(f'{root} has no saved plan samples; run --plan-samples first')
+    result = consensus_check.check(root, limit=samples)
+    core.save(root / 'plan-consensus-check.json', result)
+    progress(consensus_check.table(result))
+    progress(f'consensus check: {root / "plan-consensus-check.json"}')
+    return result
 
 
 def main():
@@ -636,7 +528,17 @@ def main():
     parser.add_argument('--resume', action='store_true', help='continue an existing replay folder (prior charges count)')
     parser.add_argument('--plan-samples', type=int, metavar='N',
                         help='request only the forecast plan N times on the identical prompt and compare the values')
+    parser.add_argument('--consensus-only', action='store_true',
+                        help='with --plan-samples N: report the consensus of the first N saved samples, with no request')
     args = parser.parse_args()
+    if args.consensus_only:
+        if args.plan_samples is None:
+            raise SystemExit('--consensus-only needs --plan-samples N')
+        try:
+            consensus_only(args.saved, args.output, samples=args.plan_samples)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from None
+        return
     key = os.environ.get('OPENROUTER_API_KEY', '').strip()
     if not key:
         raise SystemExit('Set OPENROUTER_API_KEY')
@@ -674,7 +576,8 @@ def main():
     try:
         with pipeline._lock(target):
             pipeline._run(target, saved['ticker'], key, easy, strong, args.budget, '', print, args.max_revisions, '', [],
-                          None, None, args.review_model, None, None, default_reviewer=reviewer)
+                          None, None, args.review_model, None, None, default_reviewer=reviewer,
+                          plan_samples=pipeline.default_plan_samples(args.profile))
     finally:
         print(scorecard(target))
 
