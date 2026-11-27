@@ -320,17 +320,18 @@ class ImpliedReturnTests(unittest.TestCase):
         self.assertEqual(bound['price_position'], 'above_highest_value')
         self.assertAlmostEqual(bound['rate_at_highest_value'], valuation.IMPLIED_RATE_FLOOR)
         self.assertLess(bound['highest_value'], 1e6)
-        summary = pipeline.computed_summary(value, result)
-        self.assertIn('no flat discount rate between 0.50% and 50% reconciles the price', summary)
-        self.assertIn(f'USD {bound["highest_value"]:,.2f}', summary)
-        self.assertIn('equivalent to one flat rate of', summary)
-        exhibit = '\n'.join(pipeline._market_consistency_exhibits(result, 'USD'))
-        self.assertIn('- Base: no flat discount rate between 0.50% and 50% reconciles the price', exhibit)
+        # Changed 2026-11-27 (memo redesign): the implied-return sentences moved to the valuation detail.
+        exhibit = pipeline.valuation_section(value, result)
+        self.assertIn('No flat discount rate between 0.50% and 50% reaches the price', exhibit)
+        from investmentideas import memo_style
+        self.assertIn(f'range is {memo_style.Style("USD").per_share(bound["highest_value"])}', exhibit)
+        self.assertIn('equal one flat rate of', exhibit)
+        self.assertIn('- Base: No flat discount rate between 0.50% and 50% reaches the price', exhibit)
 
     def test_a_solved_rate_keeps_the_summary_sentence(self):
         value = steady(glide_plan())
         result = evaluate(value)
-        self.assertIn('What the price implies: one flat discount rate of', pipeline.computed_summary(value, result))
+        self.assertIn('One flat discount rate of', pipeline.valuation_section(value, result))
 
 
 class SalesToCapitalPathTests(unittest.TestCase):
@@ -398,7 +399,7 @@ class SalesToCapitalPathTests(unittest.TestCase):
         self.assertEqual(row['house_sales_to_capital_path'], [2, 3, 4, 4, 4])
         self.assertIn('one ratio in every explicit year', row['label'])
         summary = pipeline.computed_summary(value, result)
-        self.assertIn('2.00 in year 1 to 4.00 in year 5', summary)
+        self.assertIn('| Sales-to-capital | 2.00 to 4.00 |', summary)
 
     def test_the_three_year_window_still_catches_a_jump_after_year_one(self):
         def checked(spec):
@@ -485,17 +486,18 @@ class ForecastReturnOnCapitalTests(unittest.TestCase):
         value = steady(constant_plan())
         value['invested_capital_reference'] = self.REFERENCE
         result = evaluate(value)
-        text = '\n'.join(pipeline._forecast_roic_lines(result, 'USD'))
+        from investmentideas import memo_style
+        text = '\n'.join(sum(pipeline._forecast_roic_parts(result, memo_style.Style('USD')), []))
         self.assertIn('### Forecast return on invested capital', text)
-        self.assertIn('| Measure | Year 1 | Year 2 | Year 3 | Year 4 | Year 5 | After the forecast |', text)
+        self.assertIn('| Measure | 1 | 2 | 3 | 4 | 5 | After |', text)
         base = result['forecast_return_on_capital']['scenarios']['base']
         self.assertIn(f'| Base ROIC | {base["years"][0]["return_on_invested_capital"]:.1%} |', text)
-        self.assertIn(f'| Base 3-year incremental ROIC | n/a | n/a | n/a | {base["years"][3]["incremental_return_3y"]:.1%}', text)
+        self.assertIn(f'| Base 3-year incremental | n/a | n/a | n/a | {base["years"][3]["incremental_return_3y"]:.1%}', text)
         self.assertIn('| 10.0% |', text)
         self.assertIn('including goodwill and acquired intangibles', text)
         self.assertIn("EBIT after the plan's tax rate", text)
         self.assertIn('### Forecast return on invested capital', pipeline.valuation_section(value, result))
-        self.assertEqual(pipeline._forecast_roic_lines(evaluate(constant_plan()), 'USD'), [])
+        self.assertEqual(pipeline._forecast_roic_parts(evaluate(constant_plan()), memo_style.Style('USD')), ([], []))
 
 
 if __name__ == '__main__':

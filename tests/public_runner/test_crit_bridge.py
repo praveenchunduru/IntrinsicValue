@@ -506,11 +506,11 @@ class PinAndMemoTests(unittest.TestCase):
         result = evaluate(locked)
         text = pipeline.valuation_section(locked, result)
         for label in ('Less net debt', 'Less finance leases', 'Less noncontrolling interests',
-                      'Less unfunded pension and postretirement obligations, before tax',
-                      'Plus non-operating investments', 'Plus dilutive increment', 'Diluted shares', 'Value per share'):
+                      'Less unfunded pension obligations, before tax',
+                      'Plus non-operating investments', 'Plus dilutive shares (M)', 'Diluted shares (M)', 'Value per share ($)'):
             self.assertIn('| ' + label, text)
         self.assertIn('equity-method investments', text)
-        self.assertNotIn('—', text.split('### Enterprise value to value per share')[1].split('###')[0])
+        self.assertNotIn('—', text.split('### From enterprise value to value per share')[1].split('###')[0])
 
     def test_assumption_references_for_the_new_fields_are_accepted(self):
         locked, _ = pin_reported_inputs(plan({'revenue': 1, 'net_debt': 0, 'other_equity_claims': 0, 'shares_outstanding': 1}),

@@ -131,8 +131,8 @@ class PinTests(unittest.TestCase):
         value, _, _ = pin(proposal(copy.deepcopy(BOTTOM_UP)))
         result = pipeline.evaluate(value)
         text = pipeline.valuation_section(value, result)
-        for expected in ('### Discount-rate path', '### What the price implies', 'Value under alternative conventions',
-                         'Beta cross-check', 'Valuation date 2026-03-31'):
+        for expected in ('### Discount rate', '### What the price implies', '### Value under other conventions',
+                         '### Beta cross-checks', 'discounted to the valuation date, 2026-03-31'):
             self.assertIn(expected, text)
         self.assertNotIn('upside', text.lower())
 

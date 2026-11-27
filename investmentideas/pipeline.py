@@ -19,7 +19,7 @@ import shutil
 import time
 from urllib.request import Request, urlopen
 
-from . import base_rates, core
+from . import base_rates, core, memo_style
 from .costs import cost_summary
 from .analytics import annual_metrics
 from .fundamentals import yahoo_financials
@@ -27,8 +27,8 @@ from .inputs import canonical_reported_inputs, operating_company_gate, pin_repor
 from .quality import (DIAGNOSTIC_SCOPE, HOUSE_ATTRIBUTION, RUBRIC, TRADING_TERMS, assessment_findings, claim_ledger,
                       inspect_memo, parse_json, parse_review, prereview_checks, prose_words, trace_pools, untraced_figures)
 from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_breakdown_facts, inline_facts, archive_focus_excerpts
-from .evidence_tables import (breakdown_tables, filing_supplement_for, historical_baseline, render_baseline, render_roic,
-                              render_breakdowns, render_quarterly)
+from .evidence_tables import (breakdown_markdown, breakdown_tables, filing_supplement_for, historical_baseline,
+                              quarterly_markdown, render_baseline, render_roic, render_breakdowns, render_quarterly)
 from .macro import gather_us_calibration
 from .roic import _consecutive as roic_consecutive
 from . import country_risk
@@ -46,36 +46,32 @@ VERSION = 'full-2'
 # review reserved about $5 (GPT-6.2 Sol, the default since 2026-11-26, about half), so a run with one revision needs about $15 of headroom
 # although it is expected to cost about $4.50 (Opus review, 2026-11-15).
 DEFAULT_BUDGET = 20.0
-SECTIONS = '''Write these sections, in this order, as prose around the computed valuation summary that
-Python places above your text (do not re-type its tables; refer to its rows by name):
-(1) Valuation conclusion (about 150 words). The summary above already states the values, what the
-price implies, which inputs alone can and cannot bring value to the price, and the convention step
-the value is most sensitive to; do not restate or reinterpret those figures, and do not assign the
-difference between value and price to causes beyond that computed account. Say in plain words what
-the house concludes and which evidence the conclusion rests on most, citing summary rows by name.
-A convention step is a row of the convention panel marked calculated, with no kind in brackets: the
-base value with one house convention changed. Horizon, rate-regime and country-risk rows are
-exhibits and sensitivity rows show scale; neither is a convention step, so name them as such.
-The index benchmark (the S&P 500 under the same conventions) is context for reading value / price
-under the house conventions. It is not a cause of the difference between value and price or an
-account of it: report it, if at all, as the index's own ratio.
-(2) Variant view (about 400 words): on the inputs that can close the difference, why the house
-forecast differs from what the price requires, with primary evidence. Answer the strongest sourced
-opposing case with operating evidence (demand, pricing, margins, capital needs). If the operating
-forecast is close to consensus, say so.
-(3) Business economics, industry and competition (about 450 words), from primary sources and the
-computed tables.
-(4) Management, capital allocation and financial history (about 450 words), from the reported
-history and breakdown tables; compare buybacks with house value using computed figures. Operating-lease
-cost is inside EBIT; finance-lease additions count as reinvestment; leases signed but not yet commenced are
-disclosed and not deducted. Do not call lease commitments capital expenditure.
-(5) Forecast and scenarios (about 500 words): how the base case (the headline, the expected path) and
-the bear and bull stress cases start from reported results and what drives each. Scenario drivers are house assumptions:
-say so, and cite a source only for the observed fact behind each. Outside estimates appear only as
-labelled unverified context.
+SECTIONS = '''Write these eight sections, in this order, starting with the heading "## 1. Valuation conclusion".
+Python writes the title and the first page above your text: the values, the table "What the price needs" and the
+table "Conventions that move the value most". It adds the valuation detail, reported history and method notes after
+your text. Do not re-type those tables or restate their figures; name a row only where the argument needs it.
+Each section opens with its conclusion.
+(1) Valuation conclusion (about 150 words). Say what the house concludes and which evidence the conclusion rests
+on most. Assign the difference between value and price no cause beyond the first page's account of which inputs
+alone can and cannot reach the price. A convention step is a row of the convention tables: the base value with one
+house convention changed. Horizon, rate-regime and country-risk rows are exhibits, and sensitivity rows show scale;
+name them as such. The S&P 500 row is context for reading value / price under the house conventions. Report it, if
+at all, as the index's own ratio; it explains no part of the company's difference.
+(2) Variant view (about 400 words): on the inputs that can close the difference, why the house forecast differs
+from what the price requires, with primary evidence. Answer the strongest sourced opposing case with operating
+evidence (demand, pricing, margins, capital needs). If the operating forecast is close to consensus, say so.
+(3) Business economics, industry and competition (about 450 words), from primary sources and the computed tables.
+(4) Management, capital allocation and financial history (about 450 words), from the reported history and
+breakdown tables; compare buybacks with house value using computed figures. Operating-lease cost is inside EBIT;
+finance-lease additions count as reinvestment; leases signed but not yet commenced are disclosed and not deducted.
+Lease commitments are not capital expenditure.
+(5) Forecast and scenarios (about 500 words): how the base case (the headline, the expected path) and the bear and
+bull stress cases start from reported results and what drives each. Scenario drivers are house assumptions: say
+so, and cite a source only for the observed fact behind each. Outside estimates appear only as labelled
+unverified context.
 (6) Observations that would change the value (about 300 words), from the computed monitoring cases.
 (7) Risks, including evidence that the valuation framework is wrong (about 300 words).
-(8) Evidence gaps and unresolved questions (about 200 words). Name each gap without restating a company
+(8) Evidence gaps and unresolved questions (about 200 words). Name each gap once, without restating a company
 figure that only an unverified excerpt supports.'''
 # Memo stages rewrite the full memo. A live revision overran a 14,000-token
 # limit as the memo grew, so the limit leaves room above the word budget.
@@ -2661,51 +2657,43 @@ def _validate_plan_sources(plan, sources):
                 raise ValueError('Net debt does not reconcile to the disclosed debt/cash bridge')
 
 
-def _computed_exhibits(result,currency):
-    """Present saved diagnostic outputs without repeating valuation arithmetic."""
-    diagnostics=result.get('computed_diagnostics',{})
-    clean=lambda value:str(value).replace('|','\\|').replace('\n',' ')
-    def multiple(value):
-        return f'{value["value"]:.2f}×' if value.get('value') is not None else clean(value.get('status','unavailable')).replace('_',' ')
-    def returns(value):
-        rates=value.get('annual_return_solutions',[])
-        return ', '.join(f'{rate:.2%}' for rate in rates) if rates else clean(value.get('status','unavailable')).replace('_',' ')
-    lines=[]
-    multiples=diagnostics.get('valuation_multiples')
-    if isinstance(multiples,dict):
-        lines += ['', '### Computed entry and exit multiples', '',
-            '| Scenario / earnings denominator | Market EV / first forecast year | DCF exit EV / final forecast year | Original exit return | Unchanged entry multiple exit return |',
-            '|---|---:|---:|---:|---:|']
-        for name,row in multiples.get('scenarios',{}).items():
-            original=result['scenarios'][name].get('fixed_exit_return_at_market_price',{})
-            for metric in ('ebit','nopat'):
-                lines.append(f'| {clean(name)} / {metric.upper()} | '
-                    f'{multiple(row["forecast_year1"]["market_ev_to_"+metric])} | '
-                    f'{multiple(row["original_dcf_exit"]["ev_to_final_forecast_"+metric])} | '
-                    f'{returns(original)} | {returns(row["unchanged_entry_multiple_exit_returns"][metric])} |')
-        stub=((result.get('discounting') or {}).get('timing') or {}).get('stub_years') or 0
-        timing=('at its discount time from the valuation date (the first year counts only its unexpired fraction and later flows '
-                'fall at year k minus the stub)' if stub else 'at integer model years')
-        lines += ['', 'Entry earnings use the first explicit forecast year, not trailing earnings; exit earnings use the final explicit year. '
-            'The return comparison holds operating cash flows, opening financing/claims and shares fixed and changes only the exit valuation. '
-            f'All annual FCFF is distributed under the debt/claims-settled diagnostic {timing}; this is not a common-share payout, '
-            'ongoing buyback or stock-price-return forecast. Multiple/return alternatives do not change the house DCF or its cases.']
-    repurchases=diagnostics.get('repurchase_tests')
-    if isinstance(repurchases,list) and repurchases:
-        lines += ['', '### Conditional repurchase economics', '',
-            '| Case / scope | Cash spent | Price / share | Shares retired | Headline value / remaining share | Change from original |',
-            '|---|---:|---:|---:|---:|---:|']
-        for row in repurchases:
-            refs=row['source_refs'] if isinstance(row['source_refs'],list) else [row['source_refs']]
-            citations=' '.join('['+ref.strip().strip('[]')+']' for ref in refs)
-            lines.append(f'| {clean(row["label"])} / {clean(row["interpretation"]).replace("_"," ")} {citations} | '
-                f'{currency} {row["amount"]/1e9:,.1f} billion | {currency} {row["price"]:,.2f} | {row["shares_repurchased"]/1e6:,.1f} million | '
-                f'{currency} {row["post_repurchase_weighted_per_share_value"]:,.2f} | '
-                f'{currency} {row["weighted_value_change"]["dollar_delta"]:+,.2f} |')
-        lines += ['', 'Each independent case spends the pinned selected nonoperating cash and retires shares once while keeping operating value fixed. '
-            'Historical-price tests compare with current underwriting, not historical fair value or an observed historical loss. '
-            'Forward illustrations are not repurchase forecasts; the same cash is not also counted as a dividend or future FCFF distribution.']
-    return lines
+# ---------------------------------------------------------------------------
+# The reader's memo. Python writes the title, the first page, the valuation
+# detail, the reported history, the method notes, the sources and the review
+# status; the model writes the eight prose sections between the first page and
+# the valuation detail. Every sentence here follows the owner's voice rules:
+# short declaratives, no "X, not Y", one statement of each caveat, compact
+# numbers with the currency named once (memo redesign, 2026-11-27).
+# ---------------------------------------------------------------------------
+FIRST_PAGE_HEADING = '## Summary'
+DETAIL_HEADING = '## Valuation detail'
+HISTORY_HEADING = '## Reported history'
+NOTES_HEADING = '## Method notes'
+
+
+def _clean_cell(value):
+    return str(value).replace('|','\\|').replace('\n',' ')
+
+
+def _table(header, rows, align=None):
+    """A Markdown table: first column left-aligned, the rest right-aligned unless ``align`` says otherwise."""
+    align=align or ['---']+['---:']*(len(header)-1)
+    return (['| '+' | '.join(header)+' |','|'+'|'.join(align)+'|']+
+            ['| '+' | '.join(_clean_cell(cell) for cell in row)+' |' for row in rows])
+
+
+def _cite(refs):
+    refs=[refs] if isinstance(refs,str) else refs if isinstance(refs,list) else []
+    ids=[ref.strip().strip('[]') for ref in refs if isinstance(ref,str) and re.fullmatch(r'\[?S\d+\]?',ref.strip())]
+    return ' '+' '.join(f'[{ref}]' for ref in dict.fromkeys(ids)) if ids else ''
+
+
+def _style(plan, result):
+    return memo_style.Style((result or {}).get('currency') or (plan or {}).get('currency'))
+
+
+def _finite_number(value):
+    return isinstance(value,(int,float)) and not isinstance(value,bool) and math.isfinite(value)
 
 
 def _base_headline(result):
@@ -2714,546 +2702,267 @@ def _base_headline(result):
     return all(abs(((scenarios.get(name) or {}).get('probability') or 0)-weight)<1e-9 for name,weight in DEFAULT_WEIGHTS.items())
 
 
-def _role(name, probability, headline):
-    if headline:
-        return 'headline' if name=='base' else 'stress case'
-    return f'{probability:.0%}'
+# Short reader labels for the convention-panel rows, keyed by row name. The saved
+# row labels carry their rationale; that rationale is stated once in the method notes.
+PANEL_LABELS = {
+    'constant_initial_rate': 'Current discount rate held in every year',
+    'damodaran_default_terminal_rate': 'Terminal rate at the risk-free rate plus the equity risk premium',
+    'terminal_growth_at_risk_free_rate': 'Terminal growth at the risk-free rate',
+    'tax_to_marginal_rate': 'Terminal tax at the marginal rate',
+    'terminal_return_equals_terminal_rate': 'Terminal return on new capital at the terminal rate',
+    'terminal_return_earlier_house_rule': 'Terminal return at the five-year median ROIC, at most 15%',
+    'terminal_return_rate_plus_4_points': 'Terminal return on new capital 4 points above the terminal rate',
+    'base_margin_held_at_reported_peak': 'EBIT margin capped at the reported five-year peak',
+    'terminal_return_15_percent': 'Terminal return on new capital of 15%',
+    'terminal_return_25_percent': 'Terminal return on new capital of 25%',
+    'terminal_reinvestment_continues_forecast': 'Terminal reinvestment at the forecast capital efficiency',
+    'terminal_rnd_expensed': 'R&D expensed in the continuing value',
+    'required_return_minus_1_point': 'Whole discount-rate path 1 point lower',
+    'required_return_plus_1_point': 'Whole discount-rate path 1 point higher',
+}
+PANEL_NOTES = {
+    'constant_initial_rate': 'The current-rate row holds the year-1 discount rate in every year and in the terminal value.',
+    'damodaran_default_terminal_rate': ('The risk-free-plus-premium row is the Damodaran spreadsheet default: the terminal '
+                                        'rate is the risk-free rate plus the equity risk premium at any leverage.'),
+    'tax_to_marginal_rate': ('The marginal-tax row is the Damodaran default. Applied to every firm, it values the index '
+                             'several percent below its price.'),
+    'terminal_return_rate_plus_4_points': 'The 4-point row gives new investment a lasting but modest excess return.',
+    'terminal_return_15_percent': ('15% is about the market\'s long-run return on new capital, which the implied equity '
+                                   'risk premium assumes. Damodaran used it as an override for durable advantages, as for '
+                                   'Apple in 2024.'),
+    'terminal_return_25_percent': 'The 25% row assumes new investment keeps earning well above the market forever.',
+    'terminal_reinvestment_continues_forecast': ('The forecast-capital-efficiency row keeps the forecast sales-to-capital '
+                                                 'after year 10, so reinvestment does not step up at the end of the forecast.'),
+    'terminal_rnd_expensed': ('The R&D-expensed row is the earlier house rule. It adds no net R&D investment back to '
+                              'NOPAT, so new R&D after the forecast earns below its cost.'),
+    'base_margin_held_at_reported_peak': 'The peak-margin row keeps the base-case EBIT margin at or below the best reported year.',
+}
 
 
-# Claim components in the order the bridge prints them.
-CLAIM_LABELS = (('noncontrolling_interests', 'Less noncontrolling interests'),
-                ('redeemable_noncontrolling_interests', 'Less redeemable noncontrolling interests'),
-                ('preferred_stock', 'Less preferred stock'),
-                ('defined_benefit_obligations', 'Less unfunded pension and postretirement obligations, before tax'))
-NONOPERATING_LABELS = {'long_term_investments': 'long-term investments', 'securities_noncurrent': 'noncurrent securities',
-                       'equity_method_investments': 'equity-method investments',
-                       'other_long_term_investments': 'other long-term investments',
-                       'equity_securities_nonmarketable': 'non-marketable equity securities',
-                       'equity_securities_marketable': 'marketable equity securities'}
+SKIPPED_NOTES = {
+    'terminal_growth_at_risk_free_rate': 'The terminal-growth row does not apply. House terminal growth already equals the '
+                                         'risk-free rate.',
+    'terminal_return_equals_terminal_rate': 'The steady-state row does not apply. The house terminal return already equals '
+                                            'the terminal rate.',
+    'terminal_return_earlier_house_rule': 'The earlier house rule, the five-year median ROIC computed from reported values '
+                                          'and capped at 15%, gives either the 15% row or the house value here.',
+}
+BETA_LABELS = {'regression_beta': 'Regression beta, relevered',
+               'blume_adjusted_regression_beta': 'Regression beta moved a third toward one'}
 
 
-def _equity_bridge_exhibit(plan, result, currency):
-    """Base-case enterprise value to value per share, each line with its source and basis."""
-    base=(result.get('scenarios') or {}).get('base') or {}
-    if not isinstance(base.get('enterprise_value'),(int,float)) or not isinstance(base.get('per_share_value'),(int,float)):
-        return []
-    def money(value):
-        return (f'{currency} 0' if not value else f'{currency} {value/1e9:,.1f} billion' if abs(value)>=1e9 else
-                f'{currency} {value/1e6:,.0f} million')
-    def cite(refs):
-        refs=[refs] if isinstance(refs,str) else refs if isinstance(refs,list) else []
-        ids=[ref.strip().strip('[]') for ref in refs if isinstance(ref,str) and re.fullmatch(r'\[?S\d+\]?',ref.strip())]
-        return ' '+' '.join(f'[{ref}]' for ref in dict.fromkeys(ids)) if ids else ''
-    refs=(plan or {}).get('source_refs') or {}
-    dates=(plan or {}).get('input_dates') or {}
-    claims=(plan or {}).get('other_claims_bridge') or {}
-    assets=(plan or {}).get('nonoperating_assets_bridge') or {}
-    shares=(plan or {}).get('share_count_bridge') or {}
-    day=((dates.get('net_debt') or {}).get('instant')) or 'the balance-sheet date'
-    rows=[('Enterprise value (present value of base-case free cash flow to the firm)',money(base['enterprise_value']),'computed'),
-          (('Plus net cash',money(-base['net_debt']),f'selected cash less debt on {day}'+cite(refs.get('net_debt')))
-           if isinstance(base.get('net_debt'),(int,float)) and base['net_debt']<0 else
-           ('Less net debt',money(base['net_debt']),f'debt less selected cash on {day}'+cite(refs.get('net_debt'))))]
-    components=claims.get('components') if isinstance(claims.get('components'),dict) else None
-    if components is not None:
-        lease=claims.get('finance_lease_claim',0) or 0
-        lease_refs=[fact.get('source_id') for fact in claims.get('source_facts') or [] if isinstance(fact,dict)]
-        rows.append(('Less finance leases',money(lease),
-                     'within net debt' if claims.get('finance_leases_included_in_net_debt') else
-                     'reported finance lease liabilities'+cite(lease_refs)
-                     if claims.get('reported_finance_lease_liabilities') is not None else 'assumed zero: none reported'))
-        for name,label in CLAIM_LABELS:
-            item=components.get(name)
-            if not isinstance(item,dict):
-                rows.append((label,money(0),'assumed zero: none reported'))
-                continue
-            if name=='preferred_stock' and item.get('carrying_value_not_deducted') is not None:
-                rows.append((label,money(0),f'carrying value {money(item["carrying_value_not_deducted"])} counted through '
-                                            'conversion shares in the dilutive increment'+cite(item.get('source_refs'))))
-            elif name=='defined_benefit_obligations':
-                text='recognized liabilities of underfunded plans'
-                if item.get('overfunded_plan_assets'):
-                    text+=f'; {money(item["overfunded_plan_assets"])} of overfunded plan assets not credited'
-                rows.append((label,money(item['value']),text+cite(item.get('source_refs'))))
-            else:
-                rows.append((label,money(item['value']),'carrying value'+cite(item.get('source_refs'))))
-    else:
-        rows.append(('Less other equity claims',money(base['other_equity_claims']),'finance leases and identified claims'+
-                     cite(refs.get('other_equity_claims'))))
-    added=assets.get('components') if isinstance(assets.get('components'),dict) else {}
-    if 'nonoperating_assets' in ((plan or {}).get('actuals') or {}):
-        names=('carrying value: '+', '.join(NONOPERATING_LABELS.get(name,name.replace('_',' ')) for name in added) if added else
-               'none outside the selected cash' if assets.get('not_added') else 'assumed zero: none reported')
-        rows.append(('Plus non-operating investments',money(base.get('nonoperating_assets',0)),
-                     names+cite(refs.get('nonoperating_assets'))))
-    rows.append(('Equity value',money(base['equity_value']),'computed'))
-    count=lambda value:f'{value/1e6:,.1f} million'
-    rows.append(('Shares outstanding',count(base['shares_outstanding']),
-                 f'on {(dates.get("shares_outstanding") or {}).get("instant","the reported date")}'+cite(refs.get('shares_outstanding'))))
-    if 'dilutive_shares' in ((plan or {}).get('actuals') or {}):
-        period=shares.get('period') or dates.get('dilutive_shares') or {}
-        basis=('diluted less basic weighted-average shares, fiscal year to '+str(period.get('end_date','')) if
-               shares.get('status')=='reported' else 'reported basic and diluted shares are equal' if
-               shares.get('status')=='reported_basic_equals_diluted' else 'assumed zero: no weighted-average shares reported')
-        rows.append(('Plus dilutive increment',count(base.get('dilutive_shares',0)),basis+cite(refs.get('dilutive_shares'))))
-        rows.append(('Diluted shares',count(base.get('diluted_shares',base['shares_outstanding'])),'computed'))
-    rows.append(('Value per share',f'{currency} {base["per_share_value"]:,.2f}','computed'))
-    lines=['','### Enterprise value to value per share (base case)','','| Line | Amount | Basis |','|---|---:|---|']
-    lines+=[f'| {label} | {amount} | {basis} |' for label,amount,basis in rows]
-    notes=[]
-    quoted=assets.get('reported_quoted_market_value_not_used')
-    if isinstance(quoted,dict) and isinstance(quoted.get('value'),(int,float)):
-        notes.append(f'The reported quoted market value of the listed equity-method stakes, {money(quoted["value"])}'
-                     f'{cite(quoted.get("source_refs"))}, is not used; the bridge carries investments at book value.')
-    if assets or components is not None:
-        notes.append('Claims and investments are carrying values on the balance-sheet date of net debt; pension obligations '
-                     'are before tax. A category with no reported concept is zero by assumption. Stock-based '
-                     'compensation stays an operating expense; the dilutive increment counts awards already granted.')
-    return lines+[part for note in notes for part in ('',note)]
+def _beta_label(row):
+    return BETA_LABELS.get(row.get('name')) or str(row.get('label') or '').split(',')[0]
 
 
-def _scale_exhibit(plan, result, currency):
-    """Year-10 scale against today, so a reader can judge the size the forecast implies.
-
-    A memo audit (2026-11-15) found no memo discussed a base-case year-10 EBIT of
-    USD 574 billion or a terminal enterprise value near USD 10 trillion.
-    """
-    base=(result.get('scenarios') or {}).get('base') or {}
-    flows=base.get('cashflows') or []
-    revenue=((plan or {}).get('actuals') or {}).get('revenue')
-    if not flows or not isinstance(revenue,(int,float)) or revenue<=0:
-        return []
-    last=flows[-1]
-    market=((result.get('computed_diagnostics') or {}).get('valuation_multiples') or {}).get('market') or {}
-    def billions(value):
-        return f'{currency} {value/1e9:,.1f} billion'
-    text=(f'Base case, final forecast year {last.get("year")}: revenue {billions(last["revenue"])} '
-          f'({last["revenue"]/revenue:,.1f} times the last reported {billions(revenue)}), EBIT {billions(last["ebit"])} '
-          f'({last["ebit_margin"]:.1%} margin) and free cash flow to the firm {billions(last["fcff"])}.')
-    terminal=base.get('terminal_enterprise_value')
-    if isinstance(terminal,(int,float)):
-        text+=f' Terminal enterprise value at that year: {billions(terminal)}'
-        enterprise=market.get('enterprise_value')
-        if isinstance(enterprise,(int,float)) and enterprise>0:
-            text+=f', {terminal/enterprise:,.1f} times today\'s market enterprise value of {billions(enterprise)}'
-        text+='.'
-    return ['', '### Scale check', '', text]
-
-
-def reported_tables_section(sources):
-    """The reported history and breakdown tables, printed by Python for the reader.
-
-    Writers re-typed these tables and introduced errors ("not shown" for a reported
-    56.6% segment margin, 2026-11-15); the reader now gets Python's copy.
-    """
-    lines=[]
-    for source in sources:
-        data=source.get('data') if isinstance(source.get('data'),dict) else {}
-        baseline=source.get('historical_baseline') or data.get('historical_baseline')
-        if baseline and baseline.get('rows'):
-            text=render_baseline(baseline,source.get('id'),include_roic=False).split('\n')
-            notes=text[text.index('Basis notes:'):] if 'Basis notes:' in text else []
-            text=text[:len(text)-len(notes)]
-            caption,header,rows=text[0],text[1].split(' | '),[row.split(' | ') for row in text[2:] if row.strip()]
-            lines+=['', caption, '', '| Measure | '+' | '.join(row[0] for row in rows)+' |',
-                    '|---|'+'---:|'*len(rows)]
-            for index,name in enumerate(header[1:],1):
-                lines.append(f'| {name} | '+' | '.join(row[index] if index<len(row) else 'n/a' for row in rows)+' |')
-            if notes:
-                lines+=['']+notes
-            quarterly=render_quarterly(baseline,source.get('id'),markdown=True)
-            if quarterly:
-                lines+=quarterly.split('\n')
-            returns=render_roic(baseline,source.get('id')).split('\n')
-            if len(returns)>2:
-                basis=returns.index('ROIC basis:') if 'ROIC basis:' in returns else len(returns)
-                caption,header,rows=returns[0],returns[1].split(' | '),[row.split(' | ') for row in returns[2:basis] if row.strip()]
-                lines+=['', caption, '', '| Measure | '+' | '.join(row[0] for row in rows)+' |', '|---|'+'---:|'*len(rows)]
-                for index,name in enumerate(header[1:],1):
-                    lines.append(f'| {name} | '+' | '.join(row[index] if index<len(row) else 'n/a' for row in rows)+' |')
-                lines+=['']+returns[basis:]
-        breakdowns=source.get('breakdown_tables') or data.get('breakdown_tables')
-        if breakdowns:
-            lines+=['', render_breakdowns(breakdowns,source.get('id'))]
-    return (['', '## Reported history and segments (computed by Python from filings)']+lines) if lines else []
-
-
-def valuation_section(plan, result):
-    if not result:
-        return '\n## Executable valuation\n\nNo value target is calculated: essential valuation inputs are unresolved.\n'
-    # Reader values use the calculated view; saved assumptions retain the editable
-    # component/rate inputs without introducing duplicate derived paths.
-    plan, _, _ = materialize(plan)
-    currency = result.get('currency', plan['currency'])
-    lines = ['\n## Executable valuation', '',
-             'The following values are recomputed by Python from the editable assumptions; forecasts are house assumptions.', '',
-             f'| Scenario | {"Role" if _base_headline(result) else "Probability"} | Discount rate | Terminal growth | Value per share | Value / price |',
-             '|---|---:|---:|---:|---:|---:|']
-    for name in ('bear','base','bull'):
-        scenario, inputs = result['scenarios'][name], plan['scenarios'][name]
-        rate = (f'{scenario["initial_rate"]:.2%} → {scenario["terminal_rate"]:.2%}' if 'terminal_rate' in scenario and
-                abs(scenario['initial_rate']-scenario['terminal_rate'])>1e-12 else f'{scenario.get("initial_rate", inputs.get("wacc", 0)):.2%}')
-        growth = scenario.get('terminal_growth', inputs.get('terminal_growth'))
-        ratio = f'{scenario["value_to_price"]:.2f}' if 'value_to_price' in scenario else 'n/a'
-        lines.append(f'| {name.title()} | {_role(name,inputs["probability"],_base_headline(result))} | {rate} | {growth:.2%} | {currency} {scenario["per_share_value"]:,.2f} | {ratio} |')
-    thin=[name for name in ('bear','base','bull') if 'terminal_rate' in result['scenarios'][name] and
-          result['scenarios'][name].get('terminal_spread') is not None and result['scenarios'][name]['terminal_spread']<.02]
-    if thin:
-        lines += ['', 'Terminal rate within two points of terminal growth in '+', '.join(thin)+': the value is fragile to '
-                      'small changes in either.']
-    lines += ['',('Headline (base case) intrinsic value per share' if _base_headline(result) else 'Weighted intrinsic value per share')+
-              f': {currency} {result["weighted_per_share_value"]:,.2f}'+
-              (f'; value / price {result["weighted_value_to_price"]:.2f}' if 'weighted_value_to_price' in result else ''),
-              '',f'Forecast basis: {plan["assumptions_label"]}',
-              '', 'Amounts use whole currency units and actual share counts. Net debt includes the selected cash deduction once. '
-                  'See assumptions.json, cashflows.csv and sensitivity.csv for the inputs and calculations.']
-    dates=plan.get('input_dates',{})
-    if not isinstance(dates,dict):
-        dates={}
-    measurements=[]
-    for field,label in [('net_debt','net debt'),('other_equity_claims','other claims'),
-                        ('nonoperating_assets','non-operating investments'),
-                        ('shares_outstanding','shares outstanding'),('dilutive_shares','dilutive increment (fiscal year to)'),
-                        ('market_price','regular-session quote')]:
-        if field in ('nonoperating_assets','dilutive_shares') and field not in dates:
-            continue
-        row=dates.get(field,{})
-        when=(row.get('instant') or row.get('observed_at') or row.get('end_date')) if isinstance(row,dict) else None
-        measurements.append(label+': '+str(when or 'not supplied'))
-    timing=(result.get('discounting') or {}).get('timing',{})
-    if timing.get('convention')=='stub_v1':
-        lines += ['', 'Measurement dates: '+ '; '.join(measurements)+'.', '',
-                  f'Valuation date {timing["valuation_date"]}: present value is discounted to this date, the first forecast '
-                  f'year counts only its unexpired {1-timing["stub_years"]:.0%}, and net debt stays at the '
-                  f'{timing["anchor_date"]} annual balance sheet.']
-    else:
-        lines += ['', 'Measurement dates: '+ '; '.join(measurements)+'. '
-                  'Balances are not rolled forward to the quote date; the annual cash-flow model has no stub-period adjustment.']
-    lines += _equity_bridge_exhibit(plan, result, currency)
-    lines += _continuity_exhibit(result)
-    lines += _scale_exhibit(plan, result, currency)
-    lines += base_rates.memo_lines(result.get('base_rates'), currency)
-    lines += _market_consistency_exhibits(result, currency)
-    cases=result.get('counterfactuals',{})
-    if cases:
-        lines += ['', '### Conditional counterfactuals', '',
-                  'These change specified base-case forecasts only. Reported actuals and the equity bridge stay fixed; '
-                  'the headline value does not change. These are computations, not forecasts.', '',
-                  '| Case | Value per share | Terminal value / enterprise value |',
-                  '|---|---:|---:|']
-        for name,case in cases.items():
-            fraction=case.get('terminal_value_fraction')
-            share=f'{fraction:.1%}' if isinstance(fraction,(int,float)) else 'undefined'
-            lines.append(f'| {name.replace("_"," ")} | {currency} {case["per_share_value"]:,.2f} | {share} |')
-        lines += ['', 'Exact forecast overrides and fixed-input bases are recorded in assumptions.json and valuation.json.']
-    operating=result.get('operating_forecasts')
-    if operating:
-        lines += ['', '### Calculated operating bridge, base case', '',
-                  'Whole currency units. GAAP expense paths retain rent and stock compensation; component margins are forward assumptions.', '',
-                  '| Forecast year | Revenue | Gross profit | Operating expenses | EBIT | EBIT margin |',
-                  '|---|---:|---:|---:|---:|---:|']
-        for row in operating['scenarios']['base']['cashflows']:
-            gross=f'{row["gross_profit"]:,.0f}' if row['gross_profit'] is not None else 'not modeled'
-            expenses=f'{row["operating_expenses"]:,.0f}' if row['operating_expenses'] is not None else 'not modeled'
-            lines.append(f'| {row["year"]} | {row["revenue"]:,.0f} | {gross} | {expenses} | {row["ebit"]:,.0f} | {row["ebit_margin"]:.2%} |')
-    lines += _forecast_roic_lines(result, currency)
-    calibration=result.get('discount_rate_calculation')
-    if calibration:
-        lines += ['', '### Dated required-return calculation', '',
-                  f'Applied WACC: {calibration["applied_wacc"]:.2%}; cost of equity: {calibration["cost_of_equity"]:.2%}; '
-                  f'relevered beta: {calibration["relevered_beta"]:.4f}; debt weight: {calibration["debt_weight"]:.2%}. '
-                  'These are calculations from the disclosed dated inputs and proxy choices, not observed issuer required returns.']
-    comparisons=result.get('calibration_comparisons',[])
-    if comparisons and any('terminal_growth' in row for row in comparisons):
-        def money(value):
-            return f'{value:,.2f}' if isinstance(value,(int,float)) else 'n/a'
-        lines += ['', '| Conditional rate method | Initial rate | Terminal rate | Terminal growth | Base value/share | Change from base | Value with house terminal growth |',
-                  '|---|---:|---:|---:|---:|---:|---:|']
-        for row in comparisons:
-            if row.get('per_share_value') is None:
-                lines.append(f'| {row["name"].replace("_"," ")} | {row["wacc"]:.2%} | n/a | n/a | not calculated | n/a | n/a |')
-            else:
-                lines.append(f'| {row["name"].replace("_"," ")} | {row["wacc"]:.2%} | {row["terminal_rate"]:.2%} | '
-                             f'{row["terminal_growth"]:.2%} | {money(row["per_share_value"])} | {row["value_change"]["dollar_delta"]:+,.2f} | '
-                             f'{money(row.get("per_share_value_at_house_terminal_growth", row["per_share_value"]))} |')
-        lines += ['', 'The named rate inputs change, and with them the whole rate path. Where terminal growth defaults to the '
-                      'risk-free rate it moves with the comparison\'s risk-free rate; the last column holds it at the house '
-                      'rate. Historical-fit endpoints are not valuation confidence intervals.']
-    elif comparisons:
-        lines += ['', '| Conditional rate method | WACC | Base value/share | Change from base |',
-                  '|---|---:|---:|---:|']
-        for row in comparisons:
-            if row.get('per_share_value') is None:
-                lines.append(f'| {row["name"].replace("_"," ")} | {row["wacc"]:.2%} | not calculated | n/a |')
-            else:
-                lines.append(f'| {row["name"].replace("_"," ")} | {row["wacc"]:.2%} | {row["per_share_value"]:,.2f} | {row["value_change"]["dollar_delta"]:+,.2f} |')
-        lines += ['', 'Only the named rate inputs change. Historical-fit endpoints are not valuation confidence intervals.']
-    monitoring=result.get('monitoring',[])
-    if monitoring:
-        lines += ['', '### Recomputed observation tests', '',
-                  'Deadlines and thresholds are house decision rules, not issuer guidance. A result is conditional on adopting its exact changed inputs; correlated cases are not additive.', '',
-                  '| Observation / review deadline | Threshold and conditional input change | Value/share / change from base |',
-                  '|---|---|---:|']
-        for row in monitoring:
-            clean=lambda value:str(value).replace('|','\\|').replace('\n',' ')
-            refs=', '.join(row['source_refs']) if isinstance(row['source_refs'],list) else row['source_refs']
-            lines.append(f'| {clean(row["name"])} / {row["review_by"]} | {clean(row["threshold"])} [{refs}] | '
-                         f'{row["conditional_per_share_value"]:,.2f} / {row["value_change"]["dollar_delta"]:+,.2f} |')
-    lines += _computed_exhibits(result,currency)
-    return '\n'.join(lines)+'\n'
-
-
-def _forecast_roic_lines(result, currency):
-    """Forecast ROIC and 3-year incremental ROIC per scenario, then the return on new capital after the forecast.
-
-    Mauboussin critique F3 (2026-11-26): forecast returns held near 100% for ten
-    years and fell to the terminal rate in one, with nothing in the memo showing it.
-    """
-    returns=result.get('forecast_return_on_capital')
-    if not returns or not returns.get('scenarios'):
-        return []
-    years=max(len(entry['years']) for entry in returns['scenarios'].values())
-    def pct(value):
-        return f'{value:.1%}' if isinstance(value,(int,float)) else 'n/m'
-    lines=['', '### Forecast return on invested capital (computed by Python)', '',
-           '| Measure | '+' | '.join(f'Year {year}' for year in range(1,years+1))+' | After the forecast |',
-           '|---|'+'---:|'*(years+1)]
-    for name in ('bear','base','bull'):
-        entry=returns['scenarios'].get(name)
-        if not entry:
-            continue
-        cells=[pct(row['return_on_invested_capital']) for row in entry['years']]
-        lines.append(f'| {name.title()} ROIC | '+' | '.join(cells)+' | |')
-        incremental=['n/a' if index<3 else pct(row['incremental_return_3y']) for index,row in enumerate(entry['years'])]
-        lines.append(f'| {name.title()} 3-year incremental ROIC | '+' | '.join(incremental)+
-                     f' | {pct(entry["return_on_new_capital_after_forecast"])} |')
-    refs=', '.join(returns.get('source_refs') or [])
-    rnd=any(entry.get('continuing_value_nopat_includes_rnd') for entry in returns['scenarios'].values())
-    opening=returns['opening_invested_capital']
-    amount=f'{opening/1e9:,.1f} billion' if abs(opening)>=1e8 else f'{opening:,.0f}'
-    lines += ['', f'Invested capital starts at {currency} {amount}, the '
-                  f'operating-approach invested capital computed from the reported balance sheet, including goodwill and acquired intangibles, at the fiscal year end '
-                  f'{returns.get("fiscal_year_end") or "of the last report"}'+(f' [{refs}]' if refs else '')+', and adds each '
-                  'year\'s net reinvestment. ROIC is NOPAT over average capital; 3-year incremental ROIC is the NOPAT change '
-                  'over three years over the capital that paid for that growth (the same three years\' capital change, because '
-                  'forecast reinvestment pays for the same year\'s growth; the history table lags capital a year), so it starts '
-                  'in year 4 (n/a before; n/m where capital fell). Forecast NOPAT is EBIT after the plan\'s tax rate, while the history '
-                  'table uses EBITA after the cash tax rate, so the definitions differ slightly. The last column is the return '
-                  'on new capital after the forecast, the terminal return'+
-                  (', earned on NOPAT and capital that include net R&D investment, which the forecast years expense' if rnd else '')+
-                  '. Display only; no check uses these figures.']
-    return lines
-
-
-def _terminal_growth_sentence(result, risk_free):
-    """State terminal growth as computed in each scenario, not as the default alone."""
-    scenarios=result.get('scenarios') or {}
-    default=[name for name,row in scenarios.items() if row.get('terminal_growth_source')=='risk_free_rate']
-    stated=[(name,row) for name,row in scenarios.items() if row.get('terminal_growth_source')!='risk_free_rate']
-    if not stated:
-        return (f'Terminal growth equals the {risk_free:.2%} risk-free rate in every scenario, the long-run growth the '
-                'equity risk premium assumes.')
-    parts=[f'{name} states {row["terminal_growth"]:.2%}'+
-           (f' ({str(row["terminal_growth_basis"]).strip().rstrip(".")})' if row.get('terminal_growth_basis') else '')
-           for name,row in stated if isinstance(row.get('terminal_growth'),(int,float))]
-    lead=(f'Terminal growth equals the {risk_free:.2%} risk-free rate, the long-run growth the equity risk premium assumes, in '
-          +', '.join(default)+'; ' if default else f'The {risk_free:.2%} risk-free rate is the terminal-growth default; ')
-    return lead+'; '.join(parts)+'.'
-
-
-def _continuity_exhibit(result):
-    continuity=result.get('forecast_continuity')
-    if not continuity:
-        return _reinvestment_lines(result)+_cost_path_lines(result)
-    refs=', '.join(continuity['source_refs'])
-    cells='; '.join(f'{name} {row["year_one_ebit_margin"]:.1%} ({row["change_percentage_points"]:+.1f} pt)'
-                    for name,row in continuity['scenarios'].items())
-    ytd=continuity.get('year_to_date')
-    lines=['', '### Year-1 margin against the last reported results', '',
-           f'Reported operating margin {continuity["reported_operating_margin"]:.1%} for the fiscal year ending '
-           f'{(continuity.get("period") or {}).get("end_date","")} [{refs}]'+
-           (f'; {ytd["operating_margin"]:.1%} for the year to date ending {(ytd.get("period") or {}).get("end_date","")} '
-            f'[{", ".join(ytd["source_refs"])}]' if ytd else '')+f'. Year-1 EBIT margin: {cells}.']
-    for name,row in continuity['scenarios'].items():
-        if row.get('stated_basis') and not row.get('within_band'):
-            lines.append(f'- {name.title()} year-1 step, stated basis: {row["stated_basis"]}')
-    return lines+_reinvestment_lines(result)+_cost_path_lines(result)
-
-
-def _reinvestment_text(check):
-    cells='; '.join(f'{name} {row["net_reinvestment"]/1e9:,.1f} billion'+
-                    (f' ({row["sales_to_capital"]:.2f})' if row.get('sales_to_capital') is not None else '')
-                    for name,row in check['scenarios'].items())
-    base=check.get('net_reinvestment')
-    status=check.get('net_reinvestment_status')
-    reported=(f'{base/1e9:,.1f} billion a year computed from reported lines' if isinstance(base,(int,float)) and base>0 else
-              'the reported results (capital expenditure or depreciation not reported for every year, so no floor)'
-              if status=='not_reported' else
-              'the reported results (net reinvestment in the last year not positive, so no floor)')
-    return (f'Net reinvestment over forecast years 1-{REINVESTMENT_WINDOW} against {reported} (fiscal year ending '
-            f'{check["fiscal_year_end"]}; {check["years"]}-year incremental sales-to-capital {check["incremental_sales_to_capital"]:.2f}'
-            f'{_rate_basis_text(check)}) [{", ".join(check["source_refs"])}]: {cells}.')
-
-
-def _cost_path_lines(result):
-    check=result.get('cost_path_continuity')
-    if not check or not check.get('scenarios'):
-        return []
-    cells='; '.join(f'{name} {row["final_ebit_margin"]:.1%} '+
-                    (f'(ceiling {row["ceiling"]:.1%})' if row.get('ceiling') is not None else '(no ceiling)')
-                    for name,row in check['scenarios'].items())
-    return ['', '### Final-year margin against the reported history', '',
-            f'Reported operating margins over {check["years"]} years: peak {check["max_operating_margin"]:.1%}, average '
-            f'{check["average_operating_margin"]:.1%} [{", ".join(check["source_refs"])}]'+_run_rate_text(check)+
-            f'. Final-year EBIT margin: {cells}. Ceilings: bear at most the average (the peak where the average is not positive); base and bull at '
-            'most the higher of the peak and the latest twelve-month margin, plus 5 points (less for low-margin '
-            'businesses, as in the year-1 check).']
-
-
-def _reinvestment_lines(result):
-    check=result.get('reinvestment_continuity')
-    if not check or not check.get('scenarios'):
-        return []
-    lines=['', '### Reinvestment against the last reported results', '', _reinvestment_text(check)+' '+check['basis']]
-    for name,row in check['scenarios'].items():
-        if row.get('stated_basis') and not row.get('within_band'):
-            lines.append(f'- {name.title()} reinvestment, stated basis: {row["stated_basis"]}')
-    return lines
-
-
-def _market_consistency_exhibits(result, currency):
-    """Computed exhibits for what the price implies and where the difference comes from."""
-    lines=[]
-    discounting=result.get('discounting') or {}
-    if discounting.get('convention')=='glide_to_market_v1':
-        path=', '.join(f'{rate:.2%}' for rate in discounting['base_rate_path'])
-        lines += ['', '### Discount-rate path', '',
-            f'Base case, years 1-{len(discounting["base_rate_path"])}: {path}; terminal {discounting["terminal_rate"]:.2%}. '
-            f'The terminal rate uses the market operating-asset beta {discounting["terminal_unlevered_beta"]:.2f} relevered at this '
-            f'firm\'s leverage ({discounting["terminal_relevered_beta"]:.2f}). Damodaran\'s spreadsheet default would be '
-            f'{discounting["damodaran_default_terminal_rate"]:.2%} (risk-free rate plus equity risk premium). '+
-            _terminal_growth_sentence(result,discounting["risk_free_rate"])]
-    implied=result.get('implied_return_at_price')
-    if implied:
-        lines += ['', '### What the price implies', '',
-            '| Scenario | Implied return at the price | Required return (flat equivalent) | Difference | Terminal spread at implied return |',
-            '|---|---:|---:|---:|---:|']
-        def cell(value, pattern):
-            return pattern.format(value) if isinstance(value,(int,float)) else 'not solved'
-        for name,row in implied['scenarios'].items():
-            spread=row.get('terminal_spread_at_implied_return')
-            flag=' (fragile)' if row.get('fragile') else ''
-            lines.append(f'| {name.title()} | {cell(row.get("implied_return"),"{:.2%}")} | {cell(row.get("required_return_flat_equivalent"),"{:.2%}")} | '
-                         f'{cell(row.get("gap_percentage_points"),"{:.2f} pt")} | {cell(spread,"{:.2%}")}{flag} |')
-        weighted=implied['probability_weighted_value']
-        lines.append(f'| {"Headline (base case)" if _base_headline(result) else "Probability-weighted value"} | {cell(weighted.get("implied_return"),"{:.2%}")} | '
-                     f'{cell(weighted.get("required_return_flat_equivalent"),"{:.2%}")} | {cell(weighted.get("gap_percentage_points"),"{:.2f} pt")} | |')
-        lines += ['', 'The implied return is the one discount rate, applied in every year and in the terminal value, at which value '
-                      'equals the price; the required return is the same calculation at the house value. This describes what the '
-                      'price implies, not a forecast of shareholder returns. A terminal spread under two points marks a fragile '
-                      'result, except where the terminal return follows the rate: the continuing value is then NOPAT over the '
-                      'rate, so rates from 0.50% are searched, below terminal growth.']
-        money=lambda value: f'{currency} {value:,.2f}'
-        headline_name='headline' if _base_headline(result) else 'weighted'
-        for name,row in [*implied['scenarios'].items(),(headline_name,weighted)]:
-            if not isinstance(row.get('implied_return'),(int,float)):
-                sentence=_implied_return_sentence(row,name,money)
-                if sentence:
-                    lines.append('- '+name.title()+': '+sentence.replace('What the price implies: ','',1))
-    panel=result.get('convention_panel')
-    if panel:
-        lines += ['', '### Value under alternative conventions (base case, one change at a time)', '',
-                  '| Alternative | Value per share | Change | Status |', '|---|---:|---:|---|']
-        kinds={'sensitivity':' (sensitivity)','horizon':' (horizon)','rate_regime':' (rate regime)',
-               'country_risk':' (country risk)'}
-        for row in panel['rows']:
-            value=f'{currency} {row["per_share_value"]:,.2f}' if row.get('per_share_value') is not None else 'n/a'
-            change=f'{row["dollar_delta"]:+,.2f}' if row.get('dollar_delta') is not None else 'n/a'
-            status=row['status'].replace('_',' ')+kinds.get(row.get('kind'),'')
-            lines.append(f'| {row["label"]} | {value} | {change} | {status} |')
-        if panel.get('largest_meaningful_step'):
-            lines += ['', f'Largest convention step: {panel["largest_meaningful_step"].replace("_"," ")}. Rows carry no probability and are never tuned to the price.']
-        exhibits=_largest_exhibits(panel,lambda value: f'{currency} {value:,.2f}')
-        if exhibits:
-            lines += ['', exhibits]
-        if panel.get('exhibit_basis') and any(row.get('kind') in ('horizon','rate_regime') for row in panel['rows']):
-            lines += ['', panel['exhibit_basis']]
-        if any(row.get('kind')=='country_risk' for row in panel['rows']):
-            lines += ['', 'The country risk row is an exhibit too: it adds the revenue-weighted country premium to the cost '
-                          'of equity, is not ranked with the convention rows and carries no probability.']
-        history=panel.get('rate_history') or {}
-        if isinstance(history.get('median_per_share_value'),(int,float)):
-            lines += ['', f'Across the {history["calculated"]} monthly pairs from {history["first"][:7]} to {history["last"][:7]} the '
-                          f'median base value is {currency} {history["median_per_share_value"]:,.2f}'+
-                          (f'; {len(history["not_calculated"])} months give no valid rate path' if history.get('not_calculated') else '')+'.']
-        notes=panel.get('exhibit_notes') or []
-        if notes:
-            lines += ['']+[f'- {note}' for note in notes]
-        note=country_risk.render_note(panel)
-        if note:
-            lines += ['', note]
-    checks=result.get('beta_cross_checks') or []
-    if checks:
-        lines += ['', '| Beta cross-check | Unlevered beta | Initial discount rate | Base value | Change |', '|---|---:|---:|---:|---:|']
-        for row in checks:
-            if row.get('status')=='calculated':
-                lines.append(f'| {row["label"]} | {row["unlevered_beta"]:.3f} | {row["wacc"]:.2%} | {currency} {row["per_share_value"]:,.2f} | '
-                             f'{row["value_change"]["dollar_delta"]:+,.2f} |')
-            else:
-                lines.append(f'| {row["label"]} | n/a | n/a | not calculated | n/a |')
-    return lines
-
-
-def _largest_exhibits(panel, money):
-    """One line naming the largest horizon row and the largest rate-regime row, labelled as exhibits, or ''."""
-    rows=[row for row in ((panel or {}).get('rows') or []) if row.get('status')=='calculated' and
-          isinstance(row.get('dollar_delta'),(int,float)) and isinstance(row.get('per_share_value'),(int,float))]
-    parts=[]
-    for kind,name in (('horizon','horizon'),('rate_regime','rate regime')):
-        candidates=[row for row in rows if row.get('kind')==kind]
-        if candidates:
-            row=max(candidates,key=lambda item:abs(item['dollar_delta']))
-            parts.append(f'{name}, {row["label"].split(" (")[0].split(":")[0]} {money(row["per_share_value"])} '
-                         f'({row["dollar_delta"]:+,.2f})')
-    if not parts:
-        return ''
-    return ('Largest exhibit rows (beside the convention panel, not convention steps and not ranked with them): '+
-            '; '.join(parts)+'.')
-
-
-def _implied_return_sentence(row, which, money):
-    """What one flat rate says about the price, including when no rate in the searched range gives it.
-
-    The summary sentence was dropped without explanation when no rate solved (Apple
-    restatement, Druckenmiller critique F5, 2026-11-26).
-    """
-    implied,required=row.get('implied_return'),row.get('required_return_flat_equivalent')
-    house=(f' The house cash flows at the house rate path are equivalent to one flat rate of {required:.2%}.'
-           if isinstance(required,(int,float)) else '')
-    if isinstance(implied,(int,float)) and isinstance(required,(int,float)):
-        return (f'What the price implies: one flat discount rate of {implied:.2%} equates the {which} value '
-                f'with the price; the house cash flows at the house rate path are equivalent to '
-                f'{required:.2%} (difference {row["gap_percentage_points"]:.2f} points).')
-    solutions=row.get('implied_return_solutions') or []
-    if len(solutions)>1:
-        return ('What the price implies: more than one flat discount rate equates the '+which+' value with the price ('+
-                ', '.join(f'{rate:.2%}' for rate in solutions)+'), so no single implied rate is reported.'+house)
-    bound=row.get('price_bound')
-    if isinstance(bound,dict):
-        low,high=bound['search_range']
-        if bound['price_position']=='above_highest_value':
-            return (f'What the price implies: no flat discount rate between {low:.2%} and {high:.0%} reconciles the price; the '
-                    f'highest {which} value any rate in that range gives is {money(bound["highest_value"])}, at '
-                    f'{bound["rate_at_highest_value"]:.2%}.'+house)
-        if bound['price_position']=='below_lowest_value':
-            return (f'What the price implies: no flat discount rate between {low:.2%} and {high:.0%} reconciles the price; the '
-                    f'lowest {which} value any rate in that range gives is {money(bound["lowest_value"])}, at '
-                    f'{bound["rate_at_lowest_value"]:.2%}.'+house)
+def _beta_note(row):
+    match=re.search(r'beta (\d+\.\d+) against (\w+)',str(row.get('label') or ''))
+    if row.get('name')=='regression_beta' and match:
+        return (f'The regression beta is the five-year weekly equity beta of {match.group(1)} against {match.group(2)}, '
+                'corrected for cash and relevered.')
+    if row.get('name')=='blume_adjusted_regression_beta':
+        return ('The adjusted beta is two thirds of the measured beta plus one third, the common adjustment for '
+                'estimation error.')
     return None
 
 
+def _panel_label(row):
+    name=row.get('name') or ''
+    if name in PANEL_LABELS:
+        return PANEL_LABELS[name]
+    match=re.fullmatch(r'competitive_advantage_period_(\d+)_years',name)
+    if match:
+        return f'Competitive advantage period of {match.group(1)} years'
+    if name=='competitive_advantage_period_industry_fade':
+        years=row.get('horizon_years')
+        return 'Industry fade rate'+(f', {years} years in all' if isinstance(years,int) else '')
+    match=re.fullmatch(r'treasury_rate_(minus|plus)_(\d+)_bp',name)
+    if match:
+        size=int(match.group(2))/100
+        rate=row.get('risk_free_rate')
+        return (f'Treasury rate {size:g} point{"s" if size!=1 else ""} {"lower" if match.group(1)=="minus" else "higher"}'+
+                (f', at {rate:.2%}' if _finite_number(rate) else ''))
+    if name in ('rate_history_lowest','rate_history_highest'):
+        when=str(row.get('observed_at') or '')[:7]
+        rate,premium=row.get('risk_free_rate'),row.get('equity_risk_premium')
+        text=('Lowest' if name.endswith('lowest') else 'Highest')+' month'+(f', {when}' if when else '')
+        if _finite_number(rate) and _finite_number(premium):
+            text+=f': Treasury {rate:.2%}, premium {premium:.2%}'
+        return text
+    if name=='country_risk_premium_revenue_weighted':
+        premium=row.get('weighted_country_risk_premium')
+        return ('Country risk premium'+(f' of {premium*100:.2f} points' if _finite_number(premium) else '')+
+                ' on the cost of equity')
+    label=str(row.get('label') or name.replace('_',' '))
+    return label.split(' (')[0].split(':')[0]
+
+
+def _panel_rows(rows, style):
+    out=[]
+    for row in rows:
+        if row.get('per_share_value') is not None:
+            value=memo_style.bare_per_share(row['per_share_value'])
+            change=(memo_style.bare_change(row['dollar_delta'],row['per_share_value']) if row.get('dollar_delta') is not None
+                    else 'n/a')
+        else:
+            value,change=row.get('status','not calculated').replace('_',' '),''
+        out.append([_panel_label(row),value,change])
+    return out
+
+
+def _top_conventions(result, count=3):
+    panel=[row for row in ((result.get('convention_panel') or {}).get('rows') or [])
+           if row.get('kind')=='convention' and row.get('status')=='calculated' and row.get('dollar_delta') is not None]
+    return sorted(panel,key=lambda row:-abs(row['dollar_delta']))[:count]
+
+
+REQUIREMENT_LABELS = {'revenue_growth': 'Revenue growth', 'ebit_margin': 'EBIT margin',
+                      'terminal_roic': 'Terminal return on new capital', 'sales_to_capital': 'Sales-to-capital',
+                      'terminal_growth': 'Terminal growth'}
+
+
+def _percentile_word(text):
+    return str(text).replace(' percentile','').replace('the ','')
+
+
+def _requirement_percentiles(result, row):
+    """(house, needed) base-rate percentile words for the revenue-growth row, or None."""
+    comparison=result.get('base_rates')
+    if row.get('input')!='revenue_growth' or not isinstance(comparison,dict) or comparison.get('status')!='computed':
+        return None
+    years=((row.get('house_path') or {}).get('years')) or 0
+    house_rows=(comparison.get('scenarios') or {}).get('base') or {}
+    needed_rows=(comparison.get('price_requirement') or {}).get('horizons') or {}
+    published=[int(key) for key in house_rows if int(key)<=years]
+    if not published:
+        return None
+    key=str(max(published))
+    house=house_rows.get(key,{}).get('description')
+    needed=needed_rows.get(key,{}).get('description') if row.get('status')=='solved' else None
+    return key,(_percentile_word(house) if house else None),(_percentile_word(needed) if needed else None)
+
+
+def _requirement_cells(row):
+    """(input label, house figure, needed figure) for one price-requirement row."""
+    label=REQUIREMENT_LABELS.get(row.get('input'),row.get('label','input'))
+    def level(value):
+        return memo_style.ratio(value) if row.get('input')=='sales_to_capital' else memo_style.pct(value)
+    if row.get('kind')=='shift':
+        path=row.get('house_path')
+        if isinstance(path,dict):
+            measure='compound' if path.get('measure')=='compound_annual_growth' else 'average'
+            label+=f', {path["years"]}-year {measure}'
+            house=memo_style.pct(path['over_forecast'])
+            needed_path=row.get('needed_path')
+            needed=(memo_style.pct(needed_path['over_forecast']) if row['status']=='solved' and isinstance(needed_path,dict)
+                    else None)
+        else:
+            label+=', every forecast year'
+            house=memo_style.pct(row.get('house'))
+            needed=memo_style.points(row['needed']) if row['status']=='solved' else None
+    else:
+        capital=row.get('house_sales_to_capital_path')
+        house=(f'{capital[0]:.2f} to {capital[-1]:.2f}' if capital else level(row.get('house')))
+        needed=level(row['needed']) if row['status']=='solved' else None
+    if needed is None:
+        needed='cannot reach the price alone' if row.get('status')=='not_reachable' else 'not calculated'
+    return label,house,needed
+
+
+def memo_title(plan, result, sources=(), ticker=''):
+    """'Apple Inc. (AAPL): intrinsic value, 2026-11-27'."""
+    name=''
+    for source in sources or ():
+        title=str((source or {}).get('title') or '') if isinstance(source,dict) else ''
+        if (source or {}).get('kind')=='sec_facts' and ':' in title:
+            name=title.split(':',1)[1].strip()
+            break
+    if name and name.upper()==name:
+        suffixes={'CO':'Co.','CORP':'Corp.','INC':'Inc.','LTD':'Ltd.','PLC':'plc','LLC':'LLC','NV':'N.V.','SA':'S.A.',
+                  'AG':'AG','SE':'SE','LP':'L.P.'}
+        name=' '.join(suffixes.get(word.strip('.,'),word.capitalize()) for word in name.split())
+    ticker=str(ticker or '').upper()
+    company=(f'{name} ({ticker})' if name and ticker else name or ticker or 'Company')
+    when=(result or {}).get('valuation_date') or (plan or {}).get('valuation_date')
+    return f'# {company}: intrinsic value'+(f', {when}' if when else '')
+
+
+def computed_summary(plan, result):
+    """The first page: one sentence, the scenario table and two short tables.
+
+    The model writes interpretation around it and never re-types it: a live first
+    draft (2026-11-14) mis-copied years, signs and ranges when it rebuilt these
+    tables itself. Method caveats live in the method notes.
+    """
+    if not result or not result.get('scenarios'):
+        return ''
+    style=_style(plan,result)
+    scenarios=result['scenarios']
+    headline=_base_headline(result)
+    dates=(plan or {}).get('input_dates',{}) if isinstance((plan or {}).get('input_dates'),dict) else {}
+    quoted=((dates.get('market_price') or {}).get('observed_at') or '')[:10]
+    price=result.get('market_price')
+    lead=['## Summary','',style.header()]
+    values={name:(scenarios.get(name) or {}).get('per_share_value') for name in ('bear','base','bull')}
+    if headline:
+        sentence=f'The base-case value is {style.per_share(values["base"])} a share'
+        ratio=(scenarios.get('base') or {}).get('value_to_price')
+    else:
+        sentence=f'The probability-weighted value is {style.per_share(result.get("weighted_per_share_value"))} a share'
+        ratio=result.get('weighted_value_to_price')
+    if _finite_number(price):
+        sentence+=(f' against a price of {style.price(price)}'+(f' on {quoted}' if quoted else '')+
+                   (f', a value / price of {ratio:.2f}' if _finite_number(ratio) else ''))
+    if headline:
+        sentence+=(f'; the bear and bull stress cases give {style.per_share(values["bear"])} and '
+                   f'{style.per_share(values["bull"])}.')
+    else:
+        sentence+=(f'; the bear, base and bull cases give {style.per_share(values["bear"])}, '
+                   f'{style.per_share(values["base"])} and {style.per_share(values["bull"])}.')
+    lead+=['',sentence,'']
+    header=['Scenario']+([] if headline else ['Probability'])+[f'Value per share ({style.unit("")})','Value / price']
+    rows=[]
+    for name in ('bear','base','bull'):
+        row=scenarios[name]
+        rows.append([name.title()]+([] if headline else [f'{row.get("probability",0):.0%}'])+
+                    [memo_style.bare_per_share(row['per_share_value']),
+                     f'{row["value_to_price"]:.2f}' if _finite_number(row.get('value_to_price')) else 'n/a'])
+    if not headline:
+        rows.append(['Weighted','100%',memo_style.bare_per_share(result.get('weighted_per_share_value')),
+                     f'{result["weighted_value_to_price"]:.2f}' if _finite_number(result.get('weighted_value_to_price')) else 'n/a'])
+    benchmark=result.get('index_benchmark') or {}
+    if _finite_number(benchmark.get('value_to_price')):
+        rows.append(['S&P 500, same conventions']+([] if headline else [''])+['',f'{benchmark["value_to_price"]:.2f}'])
+    lines=lead+_table(header,rows)
+    requirements=(result.get('price_requirements') or {}).get('rows') or []
+    if requirements:
+        body,percentile_key=[],None
+        for row in requirements:
+            label,house,needed=_requirement_cells(row)
+            ranks=_requirement_percentiles(result,row)
+            cell=''
+            if ranks:
+                percentile_key,house_rank,needed_rank=ranks
+                cell=', '.join(part for part in ((house_rank and f'house {house_rank}'),
+                                                 (needed_rank and f'needed {needed_rank}')) if part)
+            body.append([label,house,needed,cell])
+        header=['Input','House','Needed for value = price']
+        if any(row[3] for row in body):
+            header.append(f'Base-rate percentile, {percentile_key} years')
+        else:
+            body=[row[:3] for row in body]
+        lines+=['','**What the price needs.** Each row changes one base-case input and holds the rest.','']
+        lines+=_table(header,body,['---','---:','---']+(['---'] if len(header)>3 else []))
+    top=_top_conventions(result)
+    if top:
+        lines+=['','**Conventions that move the value most.** Each row changes one house convention in the base case.','']
+        lines+=_table(['Convention changed',f'Value per share ({style.unit("")})',f'Change ({style.unit("")})'],
+                      _panel_rows(top,style))
+    return '\n'.join(lines)+'\n'
+
+
 def _transition_step(result, money):
-    """The base case's cash-flow step from the last forecast year to the continuing value, in one sentence.
+    """The base case's cash-flow step from the last forecast year to the continuing value, in two sentences.
 
     Reviews of the live Apple and Coca-Cola memos (2026-11-27) asked for the step that
     explains the largest convention row: under the house steady state reinvestment rises
@@ -3266,198 +2975,876 @@ def _transition_step(result, money):
         return None
     last,terminal,percent=row.get('last_forecast_fcff'),row.get('terminal_fcff'),row.get('fcff_step_percent')
     share,roic=base.get('terminal_reinvestment_rate'),row.get('terminal_roic')
-    numbers=(last,terminal,percent,share,roic)
-    if not all(isinstance(x,(int,float)) and not isinstance(x,bool) and math.isfinite(x) for x in numbers):
+    if not all(_finite_number(x) for x in (last,terminal,percent,share,roic)):
         return None
-    return (f'Forecast-to-continuing-value step (base case): free cash flow is {money(last)} in the last forecast year '
-            f'and {money(terminal)} in the first continuing-value year ({percent:+.1f}%), because reinvestment becomes '
-            f'terminal growth over the {roic:.2%} return on new capital, {share:.0%} of NOPAT.')
+    return (f'Base-case free cash flow is {money(last)} in the last forecast year and {money(terminal)} in the first '
+            f'continuing-value year, a change of {percent:+.1f}%. Reinvestment rises to {share:.0%} of NOPAT, which is '
+            f'terminal growth divided by the {roic:.1%} return on new capital.')
 
 
-def computed_summary(plan, result):
-    """The valuation summary Python places at the top of every memo.
+def _implied_return_sentence(row, which, money):
+    """What one flat rate says about the price, including when no rate in the searched range gives it.
 
-    The model writes interpretation around it and never re-types it: a live first
-    draft (2026-11-14) mis-copied years, signs and ranges when it rebuilt these
-    tables itself.
+    The summary sentence was dropped without explanation when no rate solved (Apple
+    restatement, Druckenmiller critique F5, 2026-11-26).
     """
-    if not result or not result.get('scenarios'):
-        return ''
-    currency=result.get('currency') or (plan or {}).get('currency','')
+    implied,required=row.get('implied_return'),row.get('required_return_flat_equivalent')
+    house=(f' The house cash flows at the house rate path equal one flat rate of {required:.1%}.'
+           if _finite_number(required) else '')
+    if _finite_number(implied) and _finite_number(required):
+        gap=row['gap_percentage_points']
+        return (f'One flat discount rate of {implied:.1%} sets the {which} value equal to the price. The house cash flows '
+                f'at the house rate path equal one flat rate of {required:.1%}, {abs(gap):.1f} points '
+                f'{"higher" if gap>=0 else "lower"}.')
+    solutions=row.get('implied_return_solutions') or []
+    if len(solutions)>1:
+        return ('More than one flat discount rate sets the '+which+' value equal to the price: '+
+                ', '.join(f'{rate:.2%}' for rate in solutions)+'. No single implied rate is reported.'+house)
+    bound=row.get('price_bound')
+    if isinstance(bound,dict):
+        low,high=bound['search_range']
+        if bound['price_position']=='above_highest_value':
+            return (f'No flat discount rate between {low:.2%} and {high:.0%} reaches the price. The highest {which} value in '
+                    f'that range is {money(bound["highest_value"])}, at {bound["rate_at_highest_value"]:.2%}.'+house)
+        if bound['price_position']=='below_lowest_value':
+            return (f'No flat discount rate between {low:.2%} and {high:.0%} reaches the price. The lowest {which} value in '
+                    f'that range is {money(bound["lowest_value"])}, at {bound["rate_at_lowest_value"]:.2%}.'+house)
+    return None
+
+
+ASSUMPTION_REWRITES = (
+    (' are house forecasts, not reported facts or company guidance.', ' are house forecasts.'),
+    ('Omitted investment categories are not reported zeros. ', 'An omitted investment category counts as zero by assumption. '),
+    ('; an absent concept is not a reported zero, and undisclosed borrowings would lower equity value',
+     '. Undisclosed borrowings would lower equity value'),
+    ('Additional unidentified claims are assumed zero, not established absent.', 'Unidentified claims are assumed zero.'),
+    ('Terminal return on new capital equals the terminal discount rate (Mauboussin\'s steady state): the 10-year forecast '
+     'is the house horizon for excess returns, after which new investment earns its cost of capital, so growth beyond it '
+     'adds no value; rate alternatives keep this.',
+     'Terminal return on new capital equals the terminal discount rate, Mauboussin\'s steady state. The 10-year forecast '
+     'is the house horizon for excess returns. After year 10, new investment earns its cost of capital, so growth adds no value. '
+     'The rate alternatives keep this rule.'),
+)
+
+
+def _assumption_notes(label):
+    """The plan's basis statement as one note per sentence, in the memo's voice."""
+    text=' '.join(str(label or '').split())
+    for old,new in ASSUMPTION_REWRITES:
+        text=text.replace(old,new)
+    # The convention-panel sentence is replaced by the panel's own notes.
+    sentences=[part.strip() for part in re.split(r'(?<=[.])\s+(?=[A-Z])',text) if part.strip()]
+    # The panel, the headline and the stub are stated by their own notes.
+    return [sentence for sentence in sentences if not sentence.startswith(
+        ('The convention panel shows','The base case is the headline value','Present value is dated at the valuation date'))]
+
+
+# Claim components in the order the bridge prints them.
+CLAIM_LABELS = (('noncontrolling_interests', 'Less noncontrolling interests'),
+                ('redeemable_noncontrolling_interests', 'Less redeemable noncontrolling interests'),
+                ('preferred_stock', 'Less preferred stock'),
+                ('defined_benefit_obligations', 'Less unfunded pension obligations, before tax'))
+NONOPERATING_LABELS = {'long_term_investments': 'long-term investments', 'securities_noncurrent': 'noncurrent securities',
+                       'equity_method_investments': 'equity-method investments',
+                       'other_long_term_investments': 'other long-term investments',
+                       'equity_securities_nonmarketable': 'non-marketable equity securities',
+                       'equity_securities_marketable': 'marketable equity securities'}
+
+
+def _equity_bridge_parts(plan, result, style):
+    """Base-case enterprise value to value per share, each line with its source and basis: (lines, notes)."""
+    base=(result.get('scenarios') or {}).get('base') or {}
+    if not _finite_number(base.get('enterprise_value')) or not _finite_number(base.get('per_share_value')):
+        return [],[]
+    refs=(plan or {}).get('source_refs') or {}
+    dates=(plan or {}).get('input_dates') or {}
+    claims=(plan or {}).get('other_claims_bridge') or {}
+    assets=(plan or {}).get('nonoperating_assets_bridge') or {}
+    shares=(plan or {}).get('share_count_bridge') or {}
+    day=((dates.get('net_debt') or {}).get('instant')) or 'the balance-sheet date'
+    unit,scale,decimals=memo_style.table_scale([base['enterprise_value'],base.get('equity_value')])
     def money(value):
-        return f'{currency} {value:,.2f}'
-    headline=_base_headline(result)
-    lines=['## Valuation summary (computed by Python)','',
-           f'| Scenario | {"Role" if headline else "Probability"} | Value per share | Value / price |','|---|---:|---:|---:|']
+        return memo_style.scaled(value or 0,scale,decimals)
+    rows=[['Enterprise value',money(base['enterprise_value']),'present value of base-case free cash flow']]
+    if _finite_number(base.get('net_debt')) and base['net_debt']<0:
+        rows.append(['Plus net cash',money(-base['net_debt']),f'cash less debt on {day}'+_cite(refs.get('net_debt'))])
+    else:
+        rows.append(['Less net debt',money(base.get('net_debt')),f'debt less cash on {day}'+_cite(refs.get('net_debt'))])
+    components=claims.get('components') if isinstance(claims.get('components'),dict) else None
+    notes=[]
+    if components is not None:
+        lease=claims.get('finance_lease_claim',0) or 0
+        lease_refs=[fact.get('source_id') for fact in claims.get('source_facts') or [] if isinstance(fact,dict)]
+        rows.append(['Less finance leases',money(lease),
+                     'within net debt' if claims.get('finance_leases_included_in_net_debt') else
+                     'reported finance lease liabilities'+_cite(lease_refs)
+                     if claims.get('reported_finance_lease_liabilities') is not None else 'none reported'])
+        for name,label in CLAIM_LABELS:
+            item=components.get(name)
+            if not isinstance(item,dict):
+                rows.append([label,money(0),'none reported'])
+                continue
+            if name=='preferred_stock' and item.get('carrying_value_not_deducted') is not None:
+                rows.append([label,money(0),'counted through conversion shares'+_cite(item.get('source_refs'))])
+                notes.append(f'Preferred stock with a carrying value of {style.amount(item["carrying_value_not_deducted"])} '
+                             'is counted through conversion shares in the dilutive increment.')
+            elif name=='defined_benefit_obligations':
+                rows.append([label,money(item['value']),'underfunded plans'+_cite(item.get('source_refs'))])
+                if item.get('overfunded_plan_assets'):
+                    notes.append(f'Overfunded plan assets of {style.amount(item["overfunded_plan_assets"])} are not credited.')
+            else:
+                rows.append([label,money(item['value']),'carrying value'+_cite(item.get('source_refs'))])
+    else:
+        rows.append(['Less other equity claims',money(base.get('other_equity_claims')),
+                     'finance leases and identified claims'+_cite(refs.get('other_equity_claims'))])
+    added=assets.get('components') if isinstance(assets.get('components'),dict) else {}
+    if 'nonoperating_assets' in ((plan or {}).get('actuals') or {}):
+        names=(', '.join(NONOPERATING_LABELS.get(name,name.replace('_',' ')) for name in added) if added else
+               'none outside the selected cash' if assets.get('not_added') else 'none reported')
+        rows.append(['Plus non-operating investments',money(base.get('nonoperating_assets',0)),
+                     names+_cite(refs.get('nonoperating_assets'))])
+    rows.append(['Equity value',money(base['equity_value']),''])
+    def count(value):
+        return f'{(value or 0)/1e6:,.1f}'
+    rows.append(['Shares outstanding (M)',count(base['shares_outstanding']),
+                 f'on {(dates.get("shares_outstanding") or {}).get("instant","the reported date")}'+
+                 _cite(refs.get('shares_outstanding'))])
+    if 'dilutive_shares' in ((plan or {}).get('actuals') or {}):
+        period=shares.get('period') or dates.get('dilutive_shares') or {}
+        basis=('diluted less basic weighted-average shares, fiscal year to '+str(period.get('end_date','')) if
+               shares.get('status')=='reported' else 'reported basic and diluted shares are equal' if
+               shares.get('status')=='reported_basic_equals_diluted' else 'none reported')
+        rows.append(['Plus dilutive shares (M)',count(base.get('dilutive_shares',0)),basis+_cite(refs.get('dilutive_shares'))])
+        rows.append(['Diluted shares (M)',count(base.get('diluted_shares',base['shares_outstanding'])),''])
+    rows.append([f'Value per share ({style.unit("")})',memo_style.bare_per_share(base['per_share_value']),''])
+    lines=['','### From enterprise value to value per share','',f'Base case, {style.unit(unit)} unless the line says otherwise.','']
+    lines+=_table(['Line',style.unit(unit),'Basis'],rows,['---','---:','---'])
+    quoted=assets.get('reported_quoted_market_value_not_used')
+    if isinstance(quoted,dict) and _finite_number(quoted.get('value')):
+        notes.append(f'The bridge carries the listed equity-method stakes at book value. Their reported quoted market '
+                     f'value is {style.amount(quoted["value"])}{_cite(quoted.get("source_refs"))}.')
+    if assets or components is not None:
+        notes.append('Claims and investments are carrying values on the balance-sheet date of net debt. A category with '
+                     'no reported concept is zero by assumption.')
+        notes.append('Stock-based compensation stays an operating expense. The dilutive shares count awards already granted.')
+    return lines,notes
+
+
+
+
+def _forecast_parts(result, style):
+    """The base-case forecast in the table's scale: (lines, notes)."""
+    operating=((result.get('operating_forecasts') or {}).get('scenarios') or {}).get('base') or {}
+    base_flows=((result.get('scenarios') or {}).get('base') or {}).get('cashflows') or []
+    flows=[row for row in (operating.get('cashflows') or base_flows) if row.get('phase','explicit')=='explicit']
+    if not flows:
+        return [],[]
+    unit,scale,decimals=memo_style.table_scale([row.get('revenue') for row in flows])
+    by_year={row.get('year'):row for row in base_flows}
+    has_operating=any(row.get('gross_profit') is not None for row in flows)
+    u=style.unit(unit)
+    header=['Year',f'Revenue ({u})','Growth']+([f'Gross profit ({u})',f'Operating expenses ({u})'] if has_operating else [])
+    header+=[f'EBIT ({u})','EBIT margin',f'Net reinvestment ({u})',f'FCFF ({u})']
+    rows=[]
+    for row in flows:
+        flow=by_year.get(row.get('year')) or row
+        cells=[str(row['year']),memo_style.scaled(row['revenue'],scale,decimals),memo_style.pct(flow.get('revenue_growth'))]
+        if has_operating:
+            cells+=[memo_style.scaled(row[key],scale,decimals) if row.get(key) is not None else 'not modeled'
+                    for key in ('gross_profit','operating_expenses')]
+        cells+=[memo_style.scaled(row['ebit'],scale,decimals),memo_style.pct(row.get('ebit_margin')),
+                memo_style.scaled(flow.get('net_reinvestment'),scale,decimals),memo_style.scaled(flow.get('fcff'),scale,decimals)]
+        rows.append(cells)
+    notes=[]
+    if has_operating:
+        notes.append('Component margins in the operating forecast are forward assumptions.')
+    return ['','### Forecast, base case','']+_table(header,rows),notes
+
+
+def _forecast_roic_parts(result, style):
+    """Forecast ROIC and 3-year incremental ROIC per scenario, then the return on new capital after the forecast.
+
+    Mauboussin critique F3 (2026-11-26): forecast returns held near 100% for ten
+    years and fell to the terminal rate in one, with nothing in the memo showing it.
+    """
+    returns=result.get('forecast_return_on_capital')
+    if not returns or not returns.get('scenarios'):
+        return [],[]
+    years=max(len(entry['years']) for entry in returns['scenarios'].values())
+    def pct(value):
+        return memo_style.pct(value) if _finite_number(value) else 'n/m'
+    header=['Measure']+[str(year) for year in range(1,years+1)]+['After']
+    rows=[]
     for name in ('bear','base','bull'):
-        row=result['scenarios'][name]
-        ratio=f'{row["value_to_price"]:.2f}' if 'value_to_price' in row else 'n/a'
-        lines.append(f'| {name.title()} | {_role(name,row["probability"],headline)} | {money(row["per_share_value"])} | {ratio} |')
-    if not headline:
-        weighted=result['weighted_per_share_value']
-        lines.append(f'| Weighted | 100% | {money(weighted)} | '+
-                     (f'{result["weighted_value_to_price"]:.2f} |' if 'weighted_value_to_price' in result else 'n/a |'))
-    # The index under the same conventions, so the ratio is read against it and not
-    # only against 1.00 (the house pairing values the index itself below its price).
-    benchmark=result.get('index_benchmark') or {}
-    if isinstance(benchmark.get('value_to_price'),(int,float)):
-        lines.append(f'| S&P 500 under the same conventions | index benchmark | n/a | {benchmark["value_to_price"]:.2f} |')
-    if headline:
-        lines+=['','The base case is the headline value: the expected path. Bear and bull are stress cases without probabilities.']
-    dates=(plan or {}).get('input_dates',{}) if isinstance((plan or {}).get('input_dates'),dict) else {}
-    quoted=((dates.get('market_price') or {}).get('observed_at') or '')[:10]
-    if result.get('market_price') is not None:
-        lines+=['',f'Price {money(result["market_price"])}'+(f', observed {quoted}' if quoted else '')+
-                (f'; valuation date {result["valuation_date"]}.' if result.get('valuation_date') else '.')]
-    if isinstance(benchmark.get('value_to_price'),(int,float)):
-        lines+=['',f'Index benchmark: a stylized S&P 500 at the {benchmark["observed_at"]} Treasury rate of '
-                   f'{benchmark["risk_free_rate"]:.2%} and implied premium of {benchmark["equity_risk_premium"]:.2%} is worth '
-                   f'{benchmark["value_to_price"]:.2f} of its price under these conventions: new capital earns '
-                   f'{benchmark["market_return_on_new_capital"]:.0%} for {benchmark["excess_return_years"]} years and then its '
-                   f'cost, where the premium assumes {benchmark["market_return_on_new_capital"]:.0%} forever. It is a steady '
-                   'state, not a reproduction of Damodaran\'s cash flows: those add five years of consensus growth and need '
-                   'the index\'s earnings and return on equity, which his monthly workbook does not carry.']
-    implied=(result.get('implied_return_at_price') or {}).get('probability_weighted_value') or {}
-    sentence=_implied_return_sentence(implied,'headline' if headline else 'weighted',money)
-    if sentence:
-        lines+=['',sentence]
+        entry=returns['scenarios'].get(name)
+        if not entry:
+            continue
+        rows.append([f'{name.title()} ROIC']+[pct(row['return_on_invested_capital']) for row in entry['years']]+[''])
+        rows.append([f'{name.title()} 3-year incremental']+
+                    ['n/a' if index<3 else pct(row['incremental_return_3y']) for index,row in enumerate(entry['years'])]+
+                    [pct(entry.get('return_on_new_capital_after_forecast'))])
+    opening=returns.get('opening_invested_capital')
+    refs=_cite(returns.get('source_refs'))
+    rnd=any(entry.get('continuing_value_nopat_includes_rnd') for entry in returns['scenarios'].values())
+    lines=['','### Forecast return on invested capital','',
+           f'Invested capital starts at {style.amount(opening)} at the fiscal year end '
+           f'{returns.get("fiscal_year_end") or "of the last report"}{refs} and adds each year\'s net reinvestment. '
+           'Columns are forecast years.','']+_table(header,rows)
+    notes=['Forecast invested capital is the operating-approach capital computed from the reported balance sheet, '
+           'including goodwill and acquired intangibles.',
+           'Forecast ROIC is NOPAT over average capital. The 3-year incremental ROIC is the NOPAT change over three years '
+           'divided by the capital change over the same three years, because forecast reinvestment pays for the same '
+           'year\'s growth. It starts in year 4; n/m marks years where capital fell.',
+           'Forecast NOPAT is EBIT after the plan\'s tax rate. The history table uses EBITA after the cash tax rate.',
+           'The After column is the return on new capital after the forecast, the terminal return.'+
+           (' It is earned on NOPAT and capital that include net R&D investment, which the forecast years expense.' if rnd else ''),
+           'The forecast ROIC table is for display; no check uses it.']
+    return lines,notes
+
+
+def _terminal_growth_sentence(result, risk_free):
+    """State terminal growth as computed in each scenario."""
+    scenarios=result.get('scenarios') or {}
+    default=[name for name,row in scenarios.items() if row.get('terminal_growth_source')=='risk_free_rate']
+    stated=[(name,row) for name,row in scenarios.items() if row.get('terminal_growth_source')!='risk_free_rate']
+    if not stated:
+        return f'Terminal growth equals the {risk_free:.2%} risk-free rate in every scenario.'
+    parts=[f'{name} uses {row["terminal_growth"]:.2%}'+
+           (f' because {str(row["terminal_growth_basis"]).strip().rstrip(".")}' if row.get('terminal_growth_basis') else '')
+           for name,row in stated if _finite_number(row.get('terminal_growth'))]
+    lead=(f'Terminal growth equals the {risk_free:.2%} risk-free rate in '+', '.join(default)+'. ' if default else
+          f'The {risk_free:.2%} risk-free rate is the terminal-growth default. ')
+    text='; '.join(parts)
+    return lead+text[:1].upper()+text[1:]+'.' if parts else lead.strip()
+
+
+def _discount_parts(result, style):
+    """The rate path, the dated rate inputs and the rate-method comparisons: (lines, notes)."""
+    lines,notes=[],[]
+    discounting=result.get('discounting') or {}
+    if discounting.get('convention')=='glide_to_market_v1':
+        path=discounting['base_rate_path']
+        lines+=['','### Discount rate','']+_table(['Base case']+[str(year) for year in range(1,len(path)+1)]+['Terminal'],
+                                                 [['Discount rate']+[memo_style.pct(rate) for rate in path]+
+                                                  [memo_style.pct(discounting['terminal_rate'])]])
+        lines+=['',f'The terminal rate uses the market operating-asset beta of {discounting["terminal_unlevered_beta"]:.2f}, '
+                   f'relevered at this firm\'s leverage to {discounting["terminal_relevered_beta"]:.2f}. Damodaran\'s '
+                   f'spreadsheet default, the risk-free rate plus the equity risk premium, would be '
+                   f'{discounting["damodaran_default_terminal_rate"]:.2%}. '+
+                   _terminal_growth_sentence(result,discounting['risk_free_rate'])]
+    calibration=result.get('discount_rate_calculation')
+    if calibration:
+        if not lines:
+            lines+=['','### Discount rate']
+        lines+=['','Dated rate inputs, year 1:','']+_table(
+            ['Applied WACC','Cost of equity','Relevered beta','Debt weight'],
+            [[memo_style.pct(calibration.get('applied_wacc'),2),memo_style.pct(calibration.get('cost_of_equity'),2),
+              memo_style.ratio(calibration.get('relevered_beta')),memo_style.pct(calibration.get('debt_weight'),2)]])
+        notes.append('The rate inputs are calculations from dated market inputs and proxy choices. They are not observed '
+                     'issuer required returns.')
+    comparisons=result.get('calibration_comparisons') or []
+    if comparisons:
+        with_growth=any('terminal_growth' in row for row in comparisons)
+        header=['Rate method','Initial rate']+(['Terminal rate','Terminal growth'] if with_growth else [])+[
+            f'Base value ({style.unit("")})',f'Change ({style.unit("")})']+(
+            [f'Value at house terminal growth ({style.unit("")})'] if with_growth else [])
+        rows=[]
+        for row in comparisons:
+            name=str(row.get('name','')).replace('_',' ')
+            if row.get('per_share_value') is None:
+                rows.append([name,memo_style.pct(row.get('wacc'),2)]+(['n/a','n/a'] if with_growth else [])+
+                            ['not calculated','']+(['n/a'] if with_growth else []))
+                continue
+            rows.append([name,memo_style.pct(row.get('wacc'),2)]+
+                        ([memo_style.pct(row.get('terminal_rate'),2),memo_style.pct(row.get('terminal_growth'),2)] if with_growth else [])+
+                        [memo_style.bare_per_share(row['per_share_value']),
+                         memo_style.bare_change(row['value_change']['dollar_delta'],row['per_share_value'])]+
+                        ([memo_style.bare_per_share(row.get('per_share_value_at_house_terminal_growth',row['per_share_value']))]
+                         if with_growth else []))
+        lines+=['','Other rate methods change the named rate inputs and with them the whole rate path.','']+_table(header,rows)
+        if with_growth:
+            notes.append('In the rate-method table, terminal growth that defaults to the risk-free rate moves with the '
+                         'method\'s risk-free rate. The last column holds it at the house rate.')
+        notes.append('Historical-fit rate endpoints are not valuation confidence intervals.')
+    return lines,notes
+
+
+def _implied_parts(result, style):
+    """What the price implies, and the full price-requirement rows: (lines, notes)."""
+    lines,notes=[],[]
+    implied=result.get('implied_return_at_price')
+    headline=_base_headline(result)
+    if implied:
+        rows=[]
+        def cell(value,decimals=1):
+            return memo_style.pct(value,decimals) if _finite_number(value) else 'not solved'
+        for name,row in implied['scenarios'].items():
+            gap=row.get('gap_percentage_points')
+            rows.append([name.title(),cell(row.get('implied_return')),cell(row.get('required_return_flat_equivalent')),
+                         f'{gap:.1f}' if _finite_number(gap) else 'not solved',
+                         cell(row.get('terminal_spread_at_implied_return'))+(' (fragile)' if row.get('fragile') else '')])
+        lines+=['','### What the price implies','']+_table(
+            ['Scenario','Implied return','Required return','Difference (points)','Terminal spread at the implied return'],rows)
+        weighted=implied.get('probability_weighted_value') or {}
+        sentence=_implied_return_sentence(weighted,'headline' if headline else 'weighted',style.per_share)
+        if sentence:
+            lines+=['',sentence]
+        for name,row in implied['scenarios'].items():
+            if not _finite_number(row.get('implied_return')):
+                text=_implied_return_sentence(row,name,style.per_share)
+                if text:
+                    lines.append('- '+name.title()+': '+text)
+        notes+=['The implied return is the one discount rate, used in every year and in the terminal value, at which value '
+                'equals the price. The required return is the same flat rate at the house value. Neither is a forecast of '
+                'shareholder returns.',
+                'A terminal spread under two points marks a fragile result. Where the terminal return follows the rate, '
+                'the continuing value is NOPAT over the rate, so the search starts at 0.50%, below terminal growth.']
     requirements=(result.get('price_requirements') or {}).get('rows') or []
     if requirements:
-        lines+=['','What the price requires (base case, one input at a time, all others fixed; rows are alternatives):','',
-                '| Input | House | Needed for value = price |','|---|---:|---|']
-        def over(path):
-            if not isinstance(path,dict):
-                return ''
-            measure='a year compounded' if path.get('measure')=='compound_annual_growth' else 'average'
-            return f'{path["over_forecast"]:.1%} {measure} over {path["years"]} years'
-        def shifted(delta,path,note=''):
-            text=f'{delta*100:+.1f} points in every explicit year'
-            return text+(f': {path["year1"]:.1%} in year 1, {over(path)}{note}' if isinstance(path,dict) else '')
-        def base_rate(row,which,path):
-            # Where the compound growth falls in the published base rate for this size of company.
-            if row['input']!='revenue_growth' or not isinstance(path,dict):
-                return ''
-            return base_rates.summary_note(result.get('base_rates'),which,path.get('years'))
-        def capital_path(row):
-            path=row.get('house_sales_to_capital_path')
-            return f'{path[0]:.2f} in year 1 to {path[-1]:.2f} in year {len(path)}' if path else f'{row["house"]:.2f}'
+        rows=[]
         for row in requirements:
-            house=(f'{row["house"]:.1%} in year 1'+(f', {over(row.get("house_path"))}'+base_rate(row,'house',row.get('house_path'))
-                                                    if row.get('house_path') else '')
-                   if row['kind']=='shift' else
-                   capital_path(row) if row['input']=='sales_to_capital' else f'{row["house"]:.2%}')
-            if row['status']=='solved':
-                needed=(shifted(row['needed'],row.get('needed_path'),base_rate(row,'needed',row.get('needed_path')))
-                        if row['kind']=='shift' else
-                        f'{row["needed"]:.2f}' if row['input']=='sales_to_capital' else f'{row["needed"]:.2%}')
-            elif row['status']=='not_reachable':
-                limit=(shifted(row['at'],row.get('at_path'),base_rate(row,'needed',row.get('at_path'))) if row['kind']=='shift' else
-                       f'{row["at"]:.2f}' if row['input']=='sales_to_capital' else f'{row["at"]:.2%}')
-                needed=(f'not reachable; the closest is {money(row["closest_value"])} at {limit}, still '
-                        f'{"above" if row["direction"]=="above" else "below"} the price')
+            label=REQUIREMENT_LABELS.get(row.get('input'),row.get('label','input'))
+            level=memo_style.ratio if row.get('input')=='sales_to_capital' else memo_style.pct
+            if row.get('kind')=='shift':
+                house=f'{memo_style.pct(row.get("house"))} in year 1'
+                move=row.get('needed') if row['status']=='solved' else row.get('at')
+                shifted=memo_style.points(move) if _finite_number(move) else 'n/a'
+                path=row.get('needed_path') if row['status']=='solved' else row.get('at_path')
+                change=f'{shifted} a year'+(f', {memo_style.pct(path["year1"])} in year 1' if isinstance(path,dict) else '')
             else:
-                needed='not calculated'
-            lines.append(f'| {row["label"]} | {house} | {needed} |')
-        # Which inputs can close the gap is stated by Python: live drafts named
-        # one cause in the conclusion and another in the variant view, and both
-        # reviews called it a major defect (2026-11-14, 2026-11-15).
-        names={'revenue_growth':'revenue growth','ebit_margin':'EBIT margin','terminal_roic':'terminal return on new capital',
-               'sales_to_capital':'sales-to-capital','terminal_growth':'terminal growth'}
-        def move(row):
-            if row['kind']=='shift':
-                return f'{row["needed"]*100:+.1f} points in every explicit year'
-            if row['input']=='sales_to_capital':
-                if row.get('house_sales_to_capital_path'):
-                    return f'one ratio of {row["needed"]:.2f} in every year in place of {capital_path(row)}'
-                return f'{capital_path(row)} to {row["needed"]:.2f}'
-            return f'{row["house"]:.2%} to {row["needed"]:.2%}'
-        closes=[row for row in requirements if row['status']=='solved']
-        cannot=[row for row in requirements if row['status']=='not_reachable']
-        attribution=('Inputs that alone can bring the base value to the price: '+
-                     ('; '.join(f'{names.get(row["input"],row["label"])} ({move(row)})' for row in closes) or 'none')+'.')
-        if cannot:
-            attribution+=(' Inputs that cannot, within the values the engine accepts: '+
-                          ', '.join(names.get(row['input'],row['label']) for row in cannot)+'.')
-        attribution+=(' These are alternatives; the inputs interact.' if len(closes)!=1 else
-                      ' Only this input alone can close the difference.')
-        lines+=['',attribution]
-    panel=[row for row in ((result.get('convention_panel') or {}).get('rows') or [])
-           if row.get('kind')=='convention' and row.get('status')=='calculated' and row.get('dollar_delta') is not None]
-    if panel:
-        panel=sorted(panel,key=lambda row:-abs(row['dollar_delta']))[:3]
-        lines+=['','Largest convention steps (base case, one change at a time; never added together): '+
-                '; '.join(f'{row["label"].split(" (")[0].split(":")[0]} {money(row["per_share_value"])} ({row["dollar_delta"]:+,.2f})'
-                          for row in panel)+'.']
-    exhibits=_largest_exhibits(result.get('convention_panel'),money)
-    if exhibits:
-        lines+=['',exhibits]
-    step=_transition_step(result,money)
-    if step:
-        lines+=['',step]
-    continuity=result.get('forecast_continuity')
-    if continuity:
-        lines+=['',f'Year-1 EBIT margin against the reported {continuity["reported_operating_margin"]:.1%}: '+
-                '; '.join(f'{name} {row["year_one_ebit_margin"]:.1%}' for name,row in continuity['scenarios'].items())+'.']
-    check=result.get('reinvestment_continuity')
-    if check and check.get('scenarios'):
-        lines+=['',_reinvestment_text(check)]
-    return '\n'.join(lines)+'\n'
+                capital=row.get('house_sales_to_capital_path')
+                house=f'{capital[0]:.2f} to {capital[-1]:.2f}' if capital else level(row.get('house'))
+                change=level(row['needed'] if row['status']=='solved' else row.get('at'))
+            if row['status']=='solved':
+                outcome='reaches the price'
+            elif row['status']=='not_reachable':
+                outcome=(f'closest {style.per_share(row.get("closest_value"))}, '
+                         f'{"above" if row.get("direction")=="above" else "below"} the price')
+            else:
+                outcome,change='not calculated',''
+            rows.append([label,house,change,outcome])
+        lines+=['','The full price requirement follows. Each row is an alternative, and the inputs interact.','']+_table(
+            ['Input','House','Needed, or the limit searched','Result'],rows,['---','---','---','---'])
+        notes.append('Price-requirement rows change one base-case input at a time with every other input fixed. Shifts '
+                     'apply in every explicit forecast year. A row that cannot reach the price shows the value at the '
+                     'edge of the range the engine accepts.')
+    return lines,notes
 
 
-def _with_summary(memo, plan, result):
-    """Place the computed summary after the memo's title line."""
+def _panel_parts(result, style):
+    """The convention panel, the horizon and rate-regime exhibits, country risk and beta checks: (lines, notes)."""
+    panel=result.get('convention_panel') or {}
+    rows=panel.get('rows') or []
+    lines,notes=[],[]
+    u=style.unit('')
+    def header(first):
+        return [first,f'Value per share ({u})',f'Change ({u})']
+    conventions=[row for row in rows if row.get('kind')=='convention' and row.get('status')!='not_applicable']
+    if conventions:
+        lines+=['','### Value under other conventions','',
+                f'Base case, one convention changed at a time. The house value is {style.per_share(panel.get("baseline_per_share_value") or ((result.get("scenarios") or {}).get("base") or {}).get("per_share_value"))}.','']
+        lines+=_table(header('Convention changed'),_panel_rows(conventions,style))
+        step=_transition_step(result,style.amount)
+        if step:
+            lines+=['',step]
+        notes+=['Convention rows are alternatives a careful analyst could defend. Each changes one convention from the '
+                'house case with every other input fixed. They carry no probability, are not forecasts and are never '
+                'tuned to the price, and they are never added together.']
+        notes+=[PANEL_NOTES[row['name']] for row in conventions if row.get('name') in PANEL_NOTES]
+    skipped=[row for row in rows if row.get('kind')=='convention' and row.get('status')=='not_applicable']
+    for row in skipped:
+        reason=str(row.get('reason') or '').strip().rstrip('.')
+        notes.append(SKIPPED_NOTES.get(row.get('name')) or
+                     f'The row "{_panel_label(row)}" does not apply.'+(f' {reason}.' if reason else ''))
+    horizons=[row for row in rows if row.get('kind')=='horizon']
+    if horizons:
+        lines+=['','### Other horizons','']+_table(header('Horizon'),_panel_rows(horizons,style))
+        notes.append('Horizon rows change only how long the forecast-end margin and capital efficiency last before new '
+                     'capital earns the terminal rate (Mauboussin and Callahan, "Competitive Advantage Period", April 2026). '
+                     'The 5-year row runs plan years 1-5 and then steady-state years. Longer rows hold the year-10 margin '
+                     'and capital efficiency while growth moves in equal steps to terminal growth; the rate path is unchanged.')
+        fade=next((row.get('fade') for row in horizons if isinstance(row.get('fade'),dict)),None)
+        sectors=(fade or {}).get('sectors') or []
+        if sectors:
+            notes.append('The industry fade row uses the fade rates in Mauboussin\'s Exhibit 25: '+', '.join(
+                f'{item.get("industry_group")} {item.get("fade_rate"):.2f}'+
+                (f' at {item["weight"]:.0%} of revenue' if len(sectors)>1 and _finite_number(item.get('weight')) else '')
+                for item in sectors if _finite_number(item.get('fade_rate')))+'.')
+    regimes=[row for row in rows if row.get('kind') in ('sensitivity','rate_regime')]
+    if regimes:
+        lines+=['','### Rate regimes','']+_table(header('Rate case'),_panel_rows(regimes,style))
+        history=panel.get('rate_history') or {}
+        if _finite_number(history.get('median_per_share_value')):
+            lines+=['',f'The median base value across the {history["calculated"]} monthly Treasury rate and premium pairs '
+                       f'from {history["first"][:7]} to {history["last"][:7]} is {style.per_share(history["median_per_share_value"])}.'+
+                       (f' {len(history["not_calculated"])} months give no valid rate path.' if history.get('not_calculated') else '')]
+        notes.append('Sensitivity rows shift the whole discount-rate path and show scale only.')
+        notes.append('Treasury-rate rows hold the cash flows fixed and move the Treasury rate, with the debt cost moving by '
+                     'the same amount and the premium held. Month rows use another month\'s Treasury rate and premium. '
+                     'Where terminal growth equals the risk-free rate it moves with it.')
+    extra=[note for note in panel.get('exhibit_notes') or [] if note]
+    notes+=extra
+    country=[row for row in rows if row.get('kind')=='country_risk']
+    table,country_notes=country_risk.render_parts(panel)
+    if country or table:
+        lines+=['','### Country risk','']
+        if country:
+            lines+=_table(header('Adjustment'),_panel_rows(country,style))
+        if table:
+            lines+=['']+table
+        notes+=country_notes
+    checks=result.get('beta_cross_checks') or []
+    if checks:
+        body=[]
+        for row in checks:
+            if row.get('status')=='calculated':
+                body.append([_beta_label(row),memo_style.ratio(row.get('unlevered_beta')),memo_style.pct(row.get('wacc'),2),
+                             memo_style.bare_per_share(row['per_share_value']),
+                             memo_style.bare_change(row['value_change']['dollar_delta'],row['per_share_value'])])
+            else:
+                body.append([_beta_label(row),'n/a','n/a','not calculated',''])
+            note=_beta_note(row)
+            if note:
+                notes.append(note)
+        lines+=['','### Beta cross-checks','']+_table(['Beta','Unlevered beta','Initial discount rate',
+                                                       f'Base value ({u})',f'Change ({u})'],body)
+    return lines,notes
+
+
+def _monitoring_parts(result, style):
+    lines,notes=[],[]
+    u=style.unit('')
+    monitoring=result.get('monitoring') or []
+    if monitoring:
+        rows=[]
+        for row in monitoring:
+            rows.append([str(row['name']).replace('_',' '),row.get('review_by',''),
+                         f'{row["threshold"]}'+_cite(row.get('source_refs')),
+                         memo_style.bare_per_share(row['conditional_per_share_value']),
+                         memo_style.bare_change(row['value_change']['dollar_delta'],row['conditional_per_share_value'])])
+        lines+=['','### Monitoring tests','']+_table(['Observation','Review by','Threshold',f'Value per share ({u})',
+                                                     f'Change ({u})'],rows,['---','---','---','---:','---:'])
+        notes.append('Monitoring deadlines and thresholds are house decision rules. A result holds only with its exact '
+                     'changed inputs, and correlated cases do not add.')
+    cases=result.get('counterfactuals') or {}
+    if cases:
+        rows=[[str(name).replace('_',' '),memo_style.bare_per_share(case.get('per_share_value')),
+               memo_style.pct(case.get('terminal_value_fraction')) if _finite_number(case.get('terminal_value_fraction')) else 'undefined']
+              for name,case in cases.items()]
+        lines+=['','### Counterfactual cases','']+_table(['Case',f'Value per share ({u})','Terminal value share of EV'],rows)
+        notes.append('Counterfactual cases change named base-case forecasts only. Reported actuals, the equity bridge and '
+                     'the headline value stay fixed. The overrides are in assumptions.json and valuation.json.')
+    return lines,notes
+
+
+def _multiples_parts(result, style):
+    """Entry and exit multiples and the repurchase tests: (lines, notes)."""
+    diagnostics=result.get('computed_diagnostics',{})
+    lines,notes=[],[]
+    def multiple(value):
+        return memo_style.multiple(value.get('value')) if value.get('value') is not None else str(value.get('status','unavailable')).replace('_',' ')
+    def returns(value):
+        rates=value.get('annual_return_solutions',[])
+        return ', '.join(memo_style.pct(rate) for rate in rates) if rates else str(value.get('status','unavailable')).replace('_',' ')
+    multiples=diagnostics.get('valuation_multiples')
+    if isinstance(multiples,dict):
+        rows=[]
+        for name,row in multiples.get('scenarios',{}).items():
+            original=result['scenarios'][name].get('fixed_exit_return_at_market_price',{})
+            for metric in ('ebit','nopat'):
+                rows.append([name.title(),metric.upper(),multiple(row['forecast_year1']['market_ev_to_'+metric]),
+                             multiple(row['original_dcf_exit']['ev_to_final_forecast_'+metric]),returns(original),
+                             returns(row['unchanged_entry_multiple_exit_returns'][metric])])
+        lines+=['','### Entry and exit multiples','']+_table(
+            ['Scenario','Earnings','Market EV / year 1','DCF exit EV / year 10','Return at the DCF exit',
+             'Return at the entry multiple'],rows,['---','---','---:','---:','---:','---:'])
+        stub=((result.get('discounting') or {}).get('timing') or {}).get('stub_years') or 0
+        notes+=['Entry earnings are the first forecast year and exit earnings the final forecast year.',
+                'The return columns hold operating cash flows, opening claims and shares fixed and change only the exit '
+                'value. Each year\'s FCFF is treated as distributed'+(' at its discount time from the valuation date'
+                if stub else ' at whole model years')+'. This is a diagnostic. It forecasts neither payouts nor the share price.']
+    repurchases=diagnostics.get('repurchase_tests')
+    if isinstance(repurchases,list) and repurchases:
+        rows=[]
+        unit,scale,decimals=memo_style.table_scale([row.get('amount') for row in repurchases])
+        for row in repurchases:
+            refs=row['source_refs'] if isinstance(row['source_refs'],list) else [row['source_refs']]
+            rows.append([f'{row["label"]}'+_cite(refs),str(row.get('interpretation','')).replace('_',' '),
+                         memo_style.scaled(row['amount'],scale,decimals),f'{row["price"]:,.2f}',f'{row["shares_repurchased"]/1e6:,.1f}',
+                         memo_style.bare_per_share(row['post_repurchase_weighted_per_share_value']),
+                         memo_style.bare_change(row['weighted_value_change']['dollar_delta'],
+                                                row['post_repurchase_weighted_per_share_value'])])
+        u=style.unit('')
+        lines+=['','### Repurchases','']+_table(
+            ['Case','Scope',f'Cash ({style.unit(unit)})',f'Price ({u})','Shares retired (M)',
+             f'Value per remaining share ({u})',f'Change ({u})'],rows,['---','---','---:','---:','---:','---:','---:'])
+        notes.append('Each repurchase case spends the selected nonoperating cash once and retires shares while operating '
+                     'value stays fixed. A historical-price test compares with current underwriting. Forward cases '
+                     'illustrate; they do not forecast buybacks.')
+    return lines,notes
+
+
+def _continuity_parts(result, style):
+    """The forecast against the last reported results, as one table: (lines, notes)."""
+    names=('bear','base','bull')
+    continuity=result.get('forecast_continuity') or {}
+    reinvestment=result.get('reinvestment_continuity') or {}
+    cost=result.get('cost_path_continuity') or {}
+    rows,refs,notes,extra=[],[],[],[]
+    if continuity.get('scenarios'):
+        refs+=continuity.get('source_refs') or []
+        ytd=continuity.get('year_to_date')
+        reported=memo_style.pct(continuity['reported_operating_margin'])
+        if ytd:
+            reported+=f'; {memo_style.pct(ytd["operating_margin"])} year to date'
+            refs+=ytd.get('source_refs') or []
+        rows.append(['Year-1 EBIT margin',reported]+[memo_style.pct((continuity['scenarios'].get(name) or {}).get('year_one_ebit_margin'))
+                                                     for name in names])
+        for name,row in continuity['scenarios'].items():
+            if row.get('stated_basis') and not row.get('within_band'):
+                extra.append(f'- {name.title()} year-1 margin basis: {row["stated_basis"]}')
+    if cost.get('scenarios'):
+        refs+=cost.get('source_refs') or []
+        rows.append(['Final-year EBIT margin',f'peak {memo_style.pct(cost["max_operating_margin"])}, average '
+                                              f'{memo_style.pct(cost["average_operating_margin"])}']+
+                    [memo_style.pct((cost['scenarios'].get(name) or {}).get('final_ebit_margin')) for name in names])
+        rows.append(['Final-year margin ceiling','']+
+                    [memo_style.pct((cost['scenarios'].get(name) or {}).get('ceiling')) if
+                     (cost['scenarios'].get(name) or {}).get('ceiling') is not None else 'none' for name in names])
+        latest=cost.get('latest_run_rate') if isinstance(cost.get('latest_run_rate'),dict) else None
+        if latest:
+            kind='twelve months' if latest.get('basis')=='trailing_twelve_months' else 'year to date'
+            notes.append(f'The reported operating margin for the {kind} to {(latest.get("period") or {}).get("end_date")} '
+                         f'is {memo_style.pct(latest["operating_margin"])}{_cite(latest.get("source_refs"))}.')
+        notes.append(f'Final-year margin ceilings use the reported operating margins of the last {cost.get("years")} years. '
+                     'The bear ceiling is the average, or the peak where the average is not positive. The base and bull '
+                     'ceiling is the higher of the peak and the latest twelve-month margin, plus 5 points, less for '
+                     'low-margin businesses.')
+    if reinvestment.get('scenarios'):
+        refs+=reinvestment.get('source_refs') or []
+        unit,scale,decimals=memo_style.table_scale([row.get('net_reinvestment') for row in reinvestment['scenarios'].values()])
+        base=reinvestment.get('net_reinvestment')
+        status=reinvestment.get('net_reinvestment_status')
+        reported=(f'{memo_style.scaled(base,scale,decimals)} a year' if _finite_number(base) and base>0 else
+                  'not reported every year' if status=='not_reported' else 'not positive')
+        years=reinvestment.get('years') or REINVESTMENT_WINDOW
+        rows.append([f'Net reinvestment, years 1-{REINVESTMENT_WINDOW} ({style.unit(unit)})',reported]+
+                    [memo_style.scaled((reinvestment['scenarios'].get(name) or {}).get('net_reinvestment'),scale,decimals)
+                     for name in names])
+        rows.append([f'Sales-to-capital, years 1-{REINVESTMENT_WINDOW}',
+                     f'{memo_style.ratio(reinvestment.get("incremental_sales_to_capital"))}, {years}-year incremental']+
+                    [memo_style.ratio((reinvestment['scenarios'].get(name) or {}).get('sales_to_capital')) for name in names])
+        for name,row in reinvestment['scenarios'].items():
+            if row.get('stated_basis') and not row.get('within_band'):
+                extra.append(f'- {name.title()} reinvestment basis: {row["stated_basis"]}')
+        basis=_rate_basis_text(reinvestment).strip()
+        if basis:
+            notes.append(f'The reported incremental sales-to-capital is measured {basis}.')
+        if not (_finite_number(base) and base>0):
+            notes.append('The reinvestment floor uses the last year of net reinvestment where it is positive. Here it is '
+                         + ('not reported for every year' if status=='not_reported' else 'not positive') + ', so there is no floor.')
+        notes.append('Incremental sales-to-capital is the revenue increase over the last 3 fiscal years divided by the '
+                     'investment in those years. Net reinvestment is capital expenditure less depreciation and amortization, '
+                     'plus cash acquisitions and finance-lease additions where reported. The change in invested capital '
+                     'follows Mauboussin and Callahan and includes working capital and operating leases. Goodwill and '
+                     'acquired intangibles count only up to the cash paid for acquisitions. The lower rate is the reference.')
+    if not rows:
+        return [],[]
+    when=(continuity.get('period') or {}).get('end_date') or reinvestment.get('fiscal_year_end') or cost.get('fiscal_year_end')
+    lines=['','### Forecast against reported results','',
+           f'Reported figures are for the fiscal year ending {when}{_cite(list(dict.fromkeys(refs)))}.','']
+    lines+=_table(['Check','Reported','Bear','Base','Bull'],rows)
+    if extra:
+        lines+=['']+extra
+    return lines,notes
+
+
+def _scale_parts(plan, result, style):
+    """Year-10 scale against today, so a reader can judge the size the forecast implies.
+
+    A memo audit (2026-11-15) found no memo discussed a base-case year-10 EBIT of
+    USD 574 billion or a terminal enterprise value near USD 10 trillion.
+    """
+    base=(result.get('scenarios') or {}).get('base') or {}
+    flows=base.get('cashflows') or []
+    revenue=((plan or {}).get('actuals') or {}).get('revenue')
+    if not flows or not _finite_number(revenue) or revenue<=0:
+        return [],[]
+    last=flows[-1]
+    market=((result.get('computed_diagnostics') or {}).get('valuation_multiples') or {}).get('market') or {}
+    text=(f'In year {last.get("year")} of the base case, revenue is {style.amount(last["revenue"])}, '
+          f'{last["revenue"]/revenue:,.1f} times the last reported {style.amount(revenue)}. EBIT is '
+          f'{style.amount(last["ebit"])} at a {memo_style.pct(last["ebit_margin"])} margin, and free cash flow to the firm '
+          f'is {style.amount(last["fcff"])}.')
+    terminal=base.get('terminal_enterprise_value')
+    if _finite_number(terminal):
+        text+=f' The terminal enterprise value at that year is {style.amount(terminal)}'
+        enterprise=market.get('enterprise_value')
+        if _finite_number(enterprise) and enterprise>0:
+            text+=f', {terminal/enterprise:,.1f} times today\'s market enterprise value of {style.amount(enterprise)}'
+        text+='.'
+    return ['','### Scale check','',text],[]
+
+
+def _valuation_parts(plan, result):
+    """The valuation detail section and its method notes: (lines, notes)."""
+    if not result:
+        return ['',DETAIL_HEADING,'','No value is calculated because essential valuation inputs are unresolved.'],[]
+    # Reader values use the calculated view; saved assumptions retain the editable
+    # component/rate inputs without introducing duplicate derived paths.
+    plan,_,_=materialize(plan)
+    style=_style(plan,result)
+    lines=['',DETAIL_HEADING]
+    notes=['Tables and the first page are computed by code from the editable assumptions in assumptions.json; '
+           'cashflows.csv and sensitivity.csv hold the calculations. The prose is written by one model and reviewed by another.',
+           'Amounts are whole currency units and actual share counts before display rounding.']
+    if _base_headline(result):
+        notes.append('The base case is the headline value and the expected path. Bear and bull are stress cases without '
+                     'probabilities.')
+    thin=[name for name in ('bear','base','bull') if 'terminal_rate' in result['scenarios'][name] and
+          result['scenarios'][name].get('terminal_spread') is not None and result['scenarios'][name]['terminal_spread']<.02]
+    if thin:
+        notes.append('The terminal rate is within two points of terminal growth in '+', '.join(thin)+
+                     '. The value there is fragile to small changes in either.')
+    notes+=_assumption_notes(plan.get('assumptions_label'))
+    timing=(result.get('discounting') or {}).get('timing',{})
+    dates=plan.get('input_dates',{}) if isinstance(plan.get('input_dates'),dict) else {}
+    measured=[]
+    for field,label in [('net_debt','net debt'),('other_equity_claims','other claims'),
+                        ('nonoperating_assets','non-operating investments'),('shares_outstanding','shares outstanding'),
+                        ('dilutive_shares','dilutive shares, fiscal year to'),('market_price','quote')]:
+        if field in ('nonoperating_assets','dilutive_shares') and field not in dates:
+            continue
+        row=dates.get(field,{})
+        when=(row.get('instant') or row.get('observed_at') or row.get('end_date')) if isinstance(row,dict) else None
+        measured.append(f'{label} '+(str(when)[:10] if when else 'not supplied'))
+    notes.append('Measurement dates: '+'; '.join(measured)+'.')
+    if timing.get('convention')=='stub_v1':
+        notes.append(f'Present value is discounted to the valuation date, {timing["valuation_date"]}. The first forecast '
+                     f'year counts only its unexpired {1-timing["stub_years"]:.0%}, and net debt stays at the '
+                     f'{timing["anchor_date"]} annual balance sheet.')
+    else:
+        notes.append('Balances are not rolled forward to the quote date, and the annual model has no stub period.')
+    benchmark=result.get('index_benchmark') or {}
+    if _finite_number(benchmark.get('value_to_price')):
+        notes.append(f'The S&P 500 row is a stylized index at the {benchmark["observed_at"]} Treasury rate of '
+                     f'{benchmark["risk_free_rate"]:.2%} and implied premium of {benchmark["equity_risk_premium"]:.2%}. '
+                     f'New capital earns {benchmark["market_return_on_new_capital"]:.0%} for '
+                     f'{benchmark["excess_return_years"]} years and then its cost; the premium assumes '
+                     f'{benchmark["market_return_on_new_capital"]:.0%} forever. It is a steady state. Damodaran\'s own '
+                     'calculation adds five years of consensus growth, which needs index earnings and return on equity '
+                     'his monthly workbook does not carry.')
+    groups=[('Valuation basis',notes)]
+    for part,group in ((_equity_bridge_parts(plan,result,style),'Valuation basis'),
+                       (_forecast_parts(result,style),'Valuation basis'),
+                       (_forecast_roic_parts(result,style),'Forecast returns on capital'),
+                       (_discount_parts(result,style),'Discount rate and price'),
+                       (_implied_parts(result,style),'Discount rate and price'),
+                       (_panel_parts(result,style),'Conventions and exhibits'),
+                       (base_rates.memo_exhibit(result.get('base_rates'),style),'Base rates, tests and diagnostics'),
+                       (_monitoring_parts(result,style),'Base rates, tests and diagnostics'),
+                       (_multiples_parts(result,style),'Base rates, tests and diagnostics'),
+                       (_continuity_parts(result,style),'Forecast against reported results'),
+                       (_scale_parts(plan,result,style),'Valuation basis')):
+        lines+=part[0]
+        groups.append((group,part[1]))
+    return lines,groups
+
+
+def _notes_lines(groups, heading=NOTES_HEADING):
+    """Method notes under bold group labels, each note stated once."""
+    seen,order,by_group=set(),[],{}
+    for group,notes in groups:
+        for note in notes:
+            text=' '.join(str(note).split())
+            if text and text not in seen:
+                seen.add(text)
+                if group not in by_group:
+                    order.append(group)
+                    by_group[group]=[]
+                by_group[group].append('- '+text)
+    out=[]
+    for group in order:
+        out+=['',f'**{group}**','']+by_group[group]
+    return (['',heading]+out) if out else []
+
+
+def valuation_section(plan, result):
+    """The valuation detail with its method notes, as the reviewer and the fix call see it."""
+    lines,groups=_valuation_parts(plan,result)
+    return '\n'.join(lines+_notes_lines(groups,'### Notes on the valuation'))+'\n'
+
+
+# Plain-text history labels and the memo's labels, with units in the label.
+HISTORY_LABELS = {
+    'revenue': 'Revenue ({B})', 'growth': 'Revenue growth', 'gross margin': 'Gross margin',
+    'operating margin': 'Operating margin', 'operating income growth': 'Operating income growth',
+    'R&D/rev': 'R&D / revenue', 'SG&A/rev': 'SG&A / revenue', 'effective tax': 'Effective tax rate',
+    'capex/rev': 'Capex / revenue', 'D&A/rev': 'D&A / revenue', 'depreciation only/rev': 'Depreciation / revenue',
+    'SBC/rev': 'SBC / revenue', 'buybacks (cash)': 'Buybacks, cash ({B})', 'avg buyback price': 'Average buyback price ({U})',
+    'dividends': 'Dividends ({B})', 'diluted EPS': 'Diluted EPS ({U})', 'EPS growth': 'EPS growth',
+    'shares outstanding at FY end (millions)': 'Shares outstanding, year end (M)',
+    'change in shares outstanding (millions)': 'Change in shares outstanding (M)',
+    'shares repurchased (millions)': 'Shares repurchased (M)', 'acquisitions (cash)': 'Acquisitions, cash ({B})',
+    'finance-lease additions': 'Finance-lease additions ({B})',
+    'NOPAT': 'NOPAT ({B})', 'NOPAT margin': 'NOPAT margin', 'invested capital (year end)': 'Invested capital, year end ({B})',
+    'average invested capital': 'Average invested capital ({B})', 'capital turnover': 'Capital turnover',
+    'ROIC excluding goodwill and acquired intangibles': 'ROIC without goodwill and acquired intangibles',
+    '3-year incremental ROIC': '3-year incremental ROIC', 'NOPAT tax rate': 'NOPAT tax rate',
+    'ROIC with intangibles capitalized': 'ROIC with intangibles capitalized',
+    'Revenue': 'Revenue ({B})', 'Growth on the year-earlier quarter': 'Growth on the year-earlier quarter',
+    'Operating margin': 'Operating margin', 'Inventory at quarter end': 'Inventory, quarter end ({B})',
+    'Deferred revenue at quarter end': 'Deferred revenue, quarter end ({B})'}
+CELL_NOTES = {'n/m (capital change under a tenth of capital)': 'n/m', 'n/m (capital fell or unchanged)': 'n/m',
+              'n/m (capital at or below zero)': 'n/m'}
+
+
+def _history_table(names, columns, style, notes):
+    """A transposed Markdown table: one row per measure, one column per period. Rows with no data are dropped."""
+    lines=['| Measure | '+' | '.join(columns[0])+' |','|---|'+'---:|'*len(columns[0])]
+    empty=[]
+    for index,name in enumerate(names,1):
+        cells=[row[index] if index<len(row) else 'n/a' for row in columns[1]]
+        for cell in cells:
+            if cell in CELL_NOTES:
+                notes.append({'n/m (capital change under a tenth of capital)':
+                              'Incremental ROIC is n/m where capital rose by less than a tenth of capital.',
+                              'n/m (capital fell or unchanged)': 'Incremental ROIC is n/m where capital fell or was unchanged.',
+                              'n/m (capital at or below zero)': 'ROIC is n/m where invested capital is at or below zero.'}[cell])
+        cells=[CELL_NOTES.get(cell,cell) for cell in cells]
+        label=HISTORY_LABELS.get(name.strip(),name.strip()[:1].upper()+name.strip()[1:])
+        label=label.replace('{B}',style.unit('B')).replace('{U}',style.unit(''))
+        if all(cell=='n/a' for cell in cells):
+            empty.append(label.split(' (')[0].lower())
+            continue
+        lines.append(f'| {label} | '+' | '.join(cells)+' |')
+    if empty:
+        notes.append('Not reported in any year shown: '+', '.join(empty)+'.')
+    return lines
+
+
+def _billions_in_text(text, style):
+    """'0.6 billion' in a shared basis note becomes '$600M' in the memo."""
+    return re.sub(r'(?<![\w.])(\d[\d,]*(?:\.\d+)?) billion\b',
+                  lambda match: style.amount(float(match.group(1).replace(',',''))*1e9),text)
+
+
+def _reported_parts(sources):
+    """The reported history and breakdown tables, and their basis notes: (lines, notes).
+
+    Writers re-typed these tables and introduced errors ("not shown" for a reported
+    56.6% segment margin, 2026-11-15); the reader gets Python's copy.
+    """
+    lines,notes=[],[]
+    currency='USD'
+    for source in sources:
+        data=source.get('data') if isinstance(source.get('data'),dict) else {}
+        baseline=source.get('historical_baseline') or data.get('historical_baseline')
+        if baseline and baseline.get('rows'):
+            currency=(baseline['rows'][-1] or {}).get('currency') or currency
+            break
+    for source in sources:
+        data=source.get('data') if isinstance(source.get('data'),dict) else {}
+        baseline=source.get('historical_baseline') or data.get('historical_baseline')
+        ref=_cite(source.get('id'))
+        if baseline and baseline.get('rows'):
+            style=memo_style.Style((baseline['rows'][-1] or {}).get('currency'))
+            text=render_baseline(baseline,source.get('id'),include_roic=False).split('\n')
+            basis=text[text.index('Basis notes:'):] if 'Basis notes:' in text else []
+            text=text[:len(text)-len(basis)]
+            header,rows=text[1].split(' | '),[row.split(' | ') for row in text[2:] if row.strip()]
+            lines+=['','### Annual results','',f'Fiscal years ending on the dates shown{ref}. Ratios are computed from '
+                    'reported values; n/a means not reported on a comparable basis.','']
+            lines+=_history_table(header[1:],([row[0] for row in rows],rows),style,notes)
+            notes+=[_billions_in_text(note[2:].rstrip('.'),style)+'.' for note in basis[1:] if note.startswith('- ')]
+            quarterly,quarterly_notes=quarterly_markdown(baseline,source.get('id'))
+            if quarterly:
+                lines+=['','### Quarters','']+quarterly
+                notes+=quarterly_notes
+            returns=render_roic(baseline,source.get('id')).split('\n')
+            if len(returns)>2:
+                cut=returns.index('ROIC basis:') if 'ROIC basis:' in returns else len(returns)
+                header,rows=returns[1].split(' | '),[row.split(' | ') for row in returns[2:cut] if row.strip()]
+                lines+=['','### Return on invested capital','',
+                        f'Mauboussin and Callahan method (Counterpoint Global, October 2022), computed from reported values{ref}.','']
+                lines+=_history_table(header[1:],([row[0] for row in rows],rows),style,notes)
+                notes+=[note[2:] for note in returns[cut+1:] if note.startswith('- ')]
+        breakdowns=source.get('breakdown_tables') or data.get('breakdown_tables')
+        if breakdowns:
+            table,table_notes=breakdown_markdown(breakdowns,source.get('id'),currency)
+            lines+=table
+            notes+=table_notes
+    return ((['',HISTORY_HEADING]+lines) if lines else []),notes
+
+
+def reported_tables_section(sources):
+    """The reported history with its basis notes, as the reviewer sees it (a list of lines)."""
+    lines,notes=_reported_parts(sources)
+    return lines+_notes_lines([('Reported history',notes)],'### Notes on the reported history') if lines else []
+
+
+def _strip_model_frame(memo):
+    """The model's prose sections only: no title, preamble or copy of a computed block."""
+    memo=re.sub(r'(?ms)^## (?:Valuation summary \(computed by Python\)|Summary)\n.*?(?=^#|\Z)','',memo or '')
+    lines=memo.strip('\n').split('\n')
+    # The model's own title line goes; a level-1 numbered section heading stays.
+    if lines and re.match(r'# (?!\**\s*\d)',lines[0]):
+        lines=lines[1:]
+    first=next((index for index,line in enumerate(lines) if re.match(r'#{1,6} ',line)),None)
+    if first is not None:
+        lines=lines[first:]
+    return '\n'.join(lines).strip('\n')
+
+
+def _with_summary(memo, plan, result, sources=(), ticker=''):
+    """The title, the computed first page, then the model's prose sections."""
     summary=computed_summary(plan,result)
-    # Only Python writes this block: drop any copy in the model's text first.
-    # The summary has no headings, so a copy ends at the next heading of any level;
-    # stopping only at levels 1-2 would delete a memo written with ### sections.
-    memo=re.sub(r'(?ms)^## Valuation summary \(computed by Python\)\n.*?(?=^#|\Z)','',memo)
-    if not summary:
-        return memo
-    lines=memo.lstrip().split('\n')
-    if lines and lines[0].startswith('# '):
-        head,rest=[lines[0]],lines[1:]
-        while rest and (not rest[0].strip() or rest[0].startswith('**') or rest[0].strip()=='---'):
-            head.append(rest.pop(0))
-        return '\n'.join(head).rstrip()+'\n\n'+summary+'\n'+'\n'.join(rest)
-    return summary+'\n'+memo
+    prose=_strip_model_frame(memo)
+    title=memo_title(plan,result,sources,ticker) if (sources or ticker) else None
+    if title is None:
+        first=(memo or '').lstrip().split('\n',1)[0]
+        title=first if first.startswith('# ') else memo_title(plan,result)
+    return title+'\n\n'+(summary+'\n' if summary else '')+prose+'\n'
 
 
 def _render(memo, sources, gaps, plan, result, state):
-    # The register carries the same tier label as the memo text.
-    refs = '\n'.join(f'- [{s["id"]}{" unverified" if s.get("source_tier") in UNVERIFIED_TIERS else ""}] '
-                     f'{s["title"]}, {s.get("url") or "supplied text"}; '
-                     f'retrieved {s.get("retrieved_at","not recorded")}' for s in sources)
-    unresolved = [f for r in state.get('review_history',[]) for f in r.get('findings',[])]
+    """The reader's memo: title, first page, prose, valuation detail, reported history, method notes, sources, review."""
+    refs='\n'.join(f'- [{s["id"]}{" unverified" if s.get("source_tier") in UNVERIFIED_TIERS else ""}] '
+                   f'{s["title"]}, {s.get("url") or "supplied text"}; '
+                   f'retrieved {s.get("retrieved_at","not recorded")}' for s in sources)
+    unresolved=[f for r in state.get('review_history',[]) for f in r.get('findings',[])]
     # Only the latest revision's unresolved findings apply; prior findings remain
     # in review files for traceability rather than being silently deleted.
     if state.get('review_history'):
-        unresolved = state['review_history'][-1].get('findings',[])
-    note = '\n'.join(f'- {f["severity"]}: {f["issue"]}' for f in unresolved)
+        unresolved=state['review_history'][-1].get('findings',[])
+    note='\n'.join(f'- {f["severity"]}: {f["issue"]}' for f in unresolved)
     if not note:
-        note = ('No currently recorded material finding. This is a model assessment, not certification.'
-                if state.get('complete') else 'Review is incomplete; unresolved issues have not been determined.')
-    latest = state['review_history'][-1] if state.get('review_history') else {}
-    refuted = (latest.get('finding_check') or {}).get('refuted') or []
+        note=('No material finding is recorded. A model review is an assessment and certifies nothing.'
+              if state.get('complete') else 'Review is incomplete; unresolved issues are not yet determined.')
+    latest=state['review_history'][-1] if state.get('review_history') else {}
+    refuted=(latest.get('finding_check') or {}).get('refuted') or []
     if refuted:
-        note += ('\n\nRaised by the reviewer and not upheld on a second check:\n' +
-                 '\n'.join(f'- {f["severity"]}: {f["issue"]} Check: {f["check_reason"]}' for f in refuted))
-    weakness = latest.get('central_weakness')
-    if isinstance(weakness, dict):
-        note += (f"\n\nReviewer's central weakness: {weakness['claim']} Computed effect: {weakness['computed_effect']}. "
-                 f"Memo handles it: {weakness['memo_handles_it']}. Difference between value and price explained: "
-                 f"{latest.get('gap_explained','not stated')}.")
+        note+=('\n\nRaised by the reviewer and not upheld on a second check:\n'+
+               '\n'.join(f'- {f["severity"]}: {f["issue"]} Check: {f["check_reason"]}' for f in refuted))
+    weakness=latest.get('central_weakness')
+    if isinstance(weakness,dict):
+        note+=(f"\n\nReviewer's central weakness: {weakness['claim']}\n\nComputed effect: "
+               f"{weakness['computed_effect'].rstrip('.')}.\n\nThe memo handles it: {weakness['memo_handles_it']}. "
+               f"The memo explains the difference between value and price: {latest.get('gap_explained','not stated')}.")
     if latest.get('review_model'):
-        same = latest.get('review_model') == latest.get('author_model')
-        note += (f"\n\nReview model: {latest['review_model']}" +
-                 (f"; author model: {latest['author_model']}" if latest.get('author_model') else '') +
-                 ('. The same model wrote and reviewed this memo.' if same else '.'))
-    body = _label_unverified(_with_summary(memo,plan,result).rstrip() + '\n' + valuation_section(plan,result) +
-                             '\n'.join(reported_tables_section(sources)), sources)
-    return (body + '\n## Source register\n'+refs+
-            '\n\n## Evidence limitations\n'+ ('\n'.join('- '+g for g in gaps) or 'No retrieval gap recorded; source completeness still requires review.')+
-            '\n\n## Review status\n'+state.get('quality_status','in_progress')+
-            '\n\n'+note+
-            '\n\nSoftware checks and model reviews do not establish investment truth or forecast accuracy.\n')
+        same=latest.get('review_model')==latest.get('author_model')
+        note+=(f"\n\nReview model: {latest['review_model']}"+
+               (f"; author model: {latest['author_model']}" if latest.get('author_model') else '')+
+               ('. The same model wrote and reviewed this memo.' if same else '.'))
+    detail,groups=_valuation_parts(plan,result)
+    history,history_notes=_reported_parts(sources)
+    groups=groups+[('Reported history',history_notes),
+                   ('Review',['Software checks and model reviews do not establish investment truth or forecast accuracy.'])]
+    body=_label_unverified(_with_summary(memo,plan,result,sources,state.get('ticker','')).rstrip()+'\n'+'\n'.join(detail)+
+                           '\n'+'\n'.join(history+_notes_lines(groups)),sources)
+    limits=('\n\nRetrieval gaps:\n'+'\n'.join('- '+g for g in gaps)) if gaps else '\n\nNo retrieval gap is recorded.'
+    return (body+'\n\n## Sources\n'+refs+limits+
+            '\n\n## Review status\n'+state.get('quality_status','in_progress')+'\n\n'+note+'\n')
 
 
 def run(ticker, key, *, profile='balanced', budget=DEFAULT_BUDGET, directory='research-output', evidence='',

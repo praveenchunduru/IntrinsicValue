@@ -446,12 +446,13 @@ class PanelRowTests(unittest.TestCase):
         row = self.row(result)
         self.assertIn('already reflects US companies\' foreign revenue', row['label'])
         self.assertIn('overstates the adjustment against the market benchmark', row['label'])
-        text = '\n'.join(pipeline._market_consistency_exhibits(result, 'USD'))
-        self.assertIn(row['label'], text)
-        # Changed 2026-11-27: the note cites its figures as computed from the sources.
-        self.assertIn('Country risk row, computed from [S4] [S40] [S41]: shares of revenue by geography for the fiscal '
-                      'year ending 2025-12-31 and Damodaran\'s country and regional premiums', text)
-        self.assertIn('- Europe: 40.0% of revenue, +1.88 points; Western Europe', text)
+        text = pipeline.valuation_section(glide_plan(calculated()), result)
+        # Changed 2026-11-27 (memo redesign): a short row label, the exposures as a table, the caveat as a note.
+        self.assertIn('| Country risk premium of ', text)
+        self.assertIn('overstates the adjustment against the market benchmark', text)
+        self.assertIn('Revenue shares by geography for the fiscal year ending 2025-12-31 [S4], with Damodaran\'s country '
+                      'and regional premiums over the US premium [S40] [S41].', text)
+        self.assertIn('| Europe | 40.0% | +1.88 | Western Europe', text)
         self.assertIn('every discount rate rises by', text)
         self.assertNotIn('\u2014', country_risk.render_note(result['convention_panel']) + row['label'])
         summary = pipeline.computed_summary(glide_plan(calculated()), result)
@@ -463,8 +464,8 @@ class PanelRowTests(unittest.TestCase):
         result = valuation.evaluate(glide_plan(reference))
         self.assertIsNone(self.row(result))
         self.assertEqual(result['convention_panel']['country_risk_note'], reference['reason'])
-        self.assertIn('Country risk row not shown: The filings report no revenue by geography',
-                      '\n'.join(pipeline._market_consistency_exhibits(result, 'USD')))
+        self.assertIn('No country risk row is shown. The filings report no revenue by geography',
+                      pipeline.valuation_section(glide_plan(reference), result))
         from tests.public_runner.test_market_consistency import plan
         constant = plan(glide=False, timing=False)
         constant.pop('discount_rate')

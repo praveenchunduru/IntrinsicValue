@@ -242,27 +242,31 @@ class Rendering(unittest.TestCase):
         section = pipeline.valuation_section(value, result)
         self.assertIn('### Revenue growth against base rates', section)
         exhibit = section[section.index('### Revenue growth against base rates'):]
-        self.assertRegex(exhibit, r'\| Base \| 6\.0% \(3\.9% real\), \d+(st|nd|rd|th) percentile \|')
-        self.assertIn('| Price requirement: base growth +', exhibit)
+        # Changed 2026-11-27 (memo redesign): cells are growth and percentile; real growth is in the notes.
+        self.assertRegex(exhibit, r'\| Base \| 6\.0% \(\d+(st|nd|rd|th)\) \|')
+        self.assertIn('| Growth the price needs (+', exhibit)
+        self.assertIn('restated after inflation at 2.0% a year', exhibit)
         self.assertIn('"The Base Rate Book: Integrating the Past to Better Anticipate the Future"', exhibit)
         self.assertIn('Exhibit 4, p25, with bin counts from its appendix, p32', exhibit)
-        self.assertIn('no margin percentile is shown', exhibit)
+        self.assertIn('the memo shows no margin percentile', exhibit)
         summary = pipeline.computed_summary(value, result)
-        growth = next(line for line in summary.split('\n') if line.startswith('| Revenue growth in every explicit'))
-        self.assertEqual(len(re.findall(r' of the 10-year base rate\)', growth)), 2)
-        margin = next(line for line in summary.split('\n') if line.startswith('| EBIT margin in every explicit'))
-        self.assertNotIn('base rate', margin)
+        self.assertIn('| Base-rate percentile, 10 years |', summary)
+        growth = next(line for line in summary.split('\n') if line.startswith('| Revenue growth, 10-year compound'))
+        self.assertRegex(growth, r'house \d+(st|nd|rd|th), needed \d+(st|nd|rd|th) \|$')
+        margin = next(line for line in summary.split('\n') if line.startswith('| EBIT margin, 10-year average'))
+        self.assertNotIn('house', margin)
 
     def test_mixed_sources_cite_each_table_and_its_method(self):
         comparison = pipeline._evaluate(usd_plan(revenue=3e9))['base_rates']
         self.assertEqual(sorted(comparison['sources']), ['bbr2026b', 'brb2016'])
         lines = '\n'.join(base_rates.memo_lines(comparison))
-        self.assertIn('- 3 and 10 years: starting sales USD 2-3 billion in 2015 dollars', lines)
-        self.assertIn('- 5 years: starting sales USD 2-5 billion in 2025 dollars', lines)
+        self.assertIn('- Base rates for 3 and 10 years: starting sales $2-3B in 2015 dollars', lines)
+        self.assertIn('- Base rates for 5 years: starting sales $2-5B in 2025 dollars', lines)
         self.assertIn('normal approximation', lines)
         self.assertIn('"Bayes and Base Rates 2.0: How History Can Guide Our Assessment of the Future"', lines)
         self.assertIn('Exhibit 1, p3.', lines)
-        self.assertIn('6.9% and 11.1%, nominal (19,264 observations)', lines)
+        self.assertIn('| 6.9%, 11.1% |', lines)
+        self.assertIn('19,264 at 5 years', lines)
         # Nominal growth is compared as it stands: 6% against a 6.9% mean.
         five = comparison['scenarios']['base']['5']
         self.assertAlmostEqual(five['compared_growth'], five['compound_growth'])

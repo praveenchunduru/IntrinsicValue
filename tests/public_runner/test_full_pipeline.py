@@ -463,7 +463,7 @@ class FullPipelineTests(unittest.TestCase):
             self.assertEqual(len(FakeRouter.calls),8)
             self.assertTrue((folder/'sources_raw'/'S2.html').exists())
             self.assertTrue((folder/'cashflows.csv').exists())
-            self.assertIn('Headline (base case) intrinsic value per share',(folder/'memo.md').read_text())
+            self.assertIn('The base-case value is $',(folder/'memo.md').read_text())
             self.assertEqual(pipeline.run('AAPL','secret-synthetic-key',directory=directory),folder)
             self.assertEqual(len(FakeRouter.calls),8)
             for p in folder.rglob('*'):
@@ -505,10 +505,12 @@ class FullPipelineTests(unittest.TestCase):
             folder=next(Path(directory).glob('AAPL/full-*'))
             state=json.loads((folder/'state.json').read_text())
             visible=(folder/'memo.md').read_text()
-            for line in state['current_memo'].strip().splitlines():
+            # Changed 2026-11-27 (memo redesign): Python writes the title; every other line of the prose is kept.
+            for line in state['current_memo'].strip().splitlines()[1:]:
                 self.assertIn(line,visible)
-            self.assertIn('## Valuation summary (computed by Python)',visible)
-            self.assertIn('Headline (base case) intrinsic value per share',visible)
+            self.assertTrue(visible.startswith('# AAPL: intrinsic value'))
+            self.assertIn('## Summary',visible)
+            self.assertIn('The base-case value is $',visible)
             self.assertIn('needs_review',visible)
             self.assertIn('Review is incomplete',visible)
             self.assertFalse(state['complete'])
@@ -547,7 +549,8 @@ class FullPipelineTests(unittest.TestCase):
             self.assertFalse(state['complete'])
             self.assertEqual(state['quality_status'],'needs_review')
             self.assertIn('needs_review',(folder/'memo.md').read_text())
-            self.assertIn(f"{state['valuation']['weighted_per_share_value']:,.2f}",(folder/'memo.md').read_text())
+            from investmentideas import memo_style
+            self.assertIn(memo_style.Style('USD').per_share(state['valuation']['weighted_per_share_value']),(folder/'memo.md').read_text())
             frozen=(folder/'revisions'/'memo-0.md').read_text()
             count=len(FakeRouter.calls);FakeRouter.fail_revision=False
             pipeline.run('AAPL','synthetic',directory=directory)
@@ -678,7 +681,7 @@ class FullPipelineTests(unittest.TestCase):
             value=json.loads((folder/'valuation.json').read_text())
             self.assertEqual(value['weighted_per_share_value'],initial)
             self.assertIn('growth_10pct',value['counterfactuals'])
-            self.assertIn('Conditional counterfactuals',(folder/'memo.md').read_text())
+            self.assertIn('### Counterfactual cases',(folder/'memo.md').read_text())
             self.assertEqual(json.loads((folder/'assumptions.json').read_text())['counterfactuals'],cases)
             count=len(FakeRouter.calls)
             pipeline.run('AAPL','synthetic',directory=directory,counterfactuals=cases)
@@ -803,7 +806,7 @@ class FullPipelineTests(unittest.TestCase):
             folder=pipeline.run('AAPL','synthetic',directory=directory)
             self.assertFalse((folder/'valuation.json').exists())
             self.assertTrue((folder/'revisions'/'model-before-1'/'valuation.json').exists())
-            self.assertIn('No value target is calculated',(folder/'memo.md').read_text())
+            self.assertIn('No value is calculated',(folder/'memo.md').read_text())
 
     def test_new_notes_at_revision_limit_require_explicit_higher_limit(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -981,16 +984,16 @@ class ComputedMemoExhibitTests(unittest.TestCase):
         text=pipeline.valuation_section(proposal,result)
         # Independent flat-cashflow fixture: market EV 1.92bn / EBIT .2bn,
         # original exit EV1.5bn / EBIT .2bn; unchanged-multiple yield .15/1.92.
-        self.assertIn('9.60×',text)
-        self.assertIn('7.50×',text)
-        self.assertIn('7.81%',text)
+        self.assertIn('9.6×',text)
+        self.assertIn('7.5×',text)
+        self.assertIn('7.8%',text)
         # Valuation research only: an entry threshold is never rendered, even if a plan carries one.
         self.assertNotIn('USD 11.85',text)
         self.assertNotIn('entry threshold',text.lower())
-        self.assertIn('USD 15.58',text)  # Remaining1.48bn / remaining95m shares.
-        self.assertIn('5.0 million',text)
-        self.assertIn('first explicit forecast year',text)
-        self.assertIn('not historical fair value',text)
+        self.assertIn('| 15.6 |',text)  # Remaining1.48bn / remaining95m shares.
+        self.assertIn('| 5.0 |',text)
+        self.assertIn('Entry earnings are the first forecast year',text)
+        self.assertIn('A historical-price test compares with current underwriting',text)
 
     def test_assumptions_label_follows_canonical_lease_allocation_and_selected_asset_policy(self):
         from tests.public_runner.test_inputs import sources as primary_sources, fact

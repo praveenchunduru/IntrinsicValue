@@ -114,8 +114,8 @@ class TransitionStepTests(unittest.TestCase):
                   'scenarios': {'base': {'terminal_reinvestment_rate': 0.565}}}
         text = pipeline._transition_step(result, money)
         self.assertIn('USD 15.8 billion in the last forecast year and USD 7.8 billion', text)
-        self.assertIn('(-50.6%)', text)
-        self.assertIn('8.74% return on new capital', text)
+        self.assertIn('a change of -50.6%', text)
+        self.assertIn('8.7% return on new capital', text)
         self.assertIsNone(pipeline._transition_step({'scenarios': {}}, money))
 
     def test_outside_ratings_are_ruled_out_in_the_writing_standard(self):
