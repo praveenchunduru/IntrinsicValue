@@ -22,7 +22,7 @@ def main():
     parser.add_argument('--easy-model', help='Override extraction model with an OpenRouter model ID')
     parser.add_argument('--review-model',help='Explicit review-model override, saved with the current run; it is not checked against the author model')
     parser.add_argument('--strong-model', help='Override the forecast and writing model with an OpenRouter model ID; the default reviewer stays a different model')
-    parser.add_argument('--max-revisions',type=int,default=2,help='Revision rounds after the first review, 0–8 (default: 2); each round edits the prose and rewrites it only when needed')
+    parser.add_argument('--max-revisions',type=int,default=3,help='Revision rounds after the first review, 0–8 (default: 3); each round edits the prose and rewrites it only when the forecast changed')
     parser.add_argument('--plan-samples',type=int,choices=range(1,6),metavar='N',
                         help='Forecast plans written from the same evidence, 1–5; the plan valued combines them input by input '
                              '(default: 3 for the balanced profile, 1 otherwise; 1 is a single forecast)')

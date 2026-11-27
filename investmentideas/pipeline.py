@@ -47,10 +47,11 @@ VERSION = 'full-2'
 # review reserved about $5 (GPT-6.2 Sol, the default since 2026-11-26, about half), so a run with one revision needs about $15 of headroom
 # although it is expected to cost about $4.50 (Opus review, 2026-11-15).
 DEFAULT_BUDGET = 20.0
-# Revision rounds after the first review. A round is normally exact edits to the
-# prose; it rewrites the memo only when the plan changed or an edit for a blocker
-# or major did not apply. The loop stops as soon as no blocker or major survives.
-DEFAULT_MAX_REVISIONS = 2
+# Revision rounds after the first review. A round is exact edits to the prose, with
+# one retry for edits that did not apply; it rewrites the memo only when the forecast
+# inputs changed. The loop stops as soon as no blocker or major survives, or when only
+# computed text remains. Live reviews raise about ten findings a pass (KO, 2026-11-27).
+DEFAULT_MAX_REVISIONS = 3
 SECTIONS = '''Write these eight sections, in this order, starting with the heading "## 1. Valuation conclusion".
 Python writes the title and the first page above your text: the values, the table "What the price needs" and the
 table "Conventions that move the value most". It adds the valuation detail, reported history and method notes after
@@ -361,8 +362,13 @@ def _in_prose(finding, memo):
 
 
 def _finding_key(finding):
-    """(rule, quoted text): a finding's identity across reviews, whose IDs are renumbered."""
-    return (finding.get('rule'),finding.get('current_excerpt') or '')
+    """(rule, quoted text): a finding's identity across reviews, whose IDs are renumbered.
+
+    The quote is compared without a leading list marker or surrounding space: the KO
+    reviews (2026-11-27) quoted one method note with and without its "- ".
+    """
+    excerpt=re.sub(r'^\s*(?:[-*]\s+)?','',str(finding.get('current_excerpt') or '')).strip()
+    return (finding.get('rule'),excerpt)
 
 
 def _forecast_findings(findings, memo, python_ids=(), answered=()):
@@ -509,7 +515,7 @@ def _restore_python_fields(proposal, plan, view, conventions=True):
 
 
 def _edit_required(findings, memo, python_ids=()):
-    """IDs of the blockers and majors that need an applied edit; without one the round rewrites the memo.
+    """IDs of the blockers and majors that need an applied edit; without one after the retry they carry to the next review.
 
     A reviewer finding that quotes text outside the writer's prose is exempt:
     no edit to the prose can change that text, and a rewrite cannot either.
@@ -567,7 +573,10 @@ def _edit_response(text):
 # Rules about figures: only a finding under one of these may change a figure in the
 # prose. Python's figure checks count too. An edit for a wording finding that moved a
 # valued figure still applied (review, 2026-11-27).
-FIGURE_RULES = frozenset({'B1','B3','M1','M3'})
+# M4 and M5 are corrected with the computed or reported figure itself: the live
+# GOOGL and KO edits for M5 findings (2026-11-27) were rejected here, all with
+# figures that traced to the filings, and the round fell back to a rewrite.
+FIGURE_RULES = frozenset({'B1','B3','M1','M3','M4','M5'})
 FIGURE_CHECK_IDS = frozenset({'number-untraced','number-unverified-only','cite-primary-source','comparison-direction',
                               'valuation-value-mismatch','valuation-model-missing'})
 _SCENARIO_WORD = re.compile(r'\b(bear|base|bull|weighted)\b', re.I)
@@ -634,6 +643,18 @@ def _scope_breach(quote, replacement, finding, values):
             return (f'replacement writes {display} for a valued figure; the computed '
                     +(f'{names[-1]} value is {values[names[-1]]:.2f}' if names and names[-1] in values else 'value its sentence names is not that'))
     return None
+
+
+def _unapplied_reason(identifier, records, text, edits):
+    """Why no edit for a finding applied: the guard's or anchor's reason, or that none was returned."""
+    reasons=[record.get('reason') for record in records if record.get('finding')==identifier and not record.get('applied')]
+    if reasons:
+        return '; '.join(dict.fromkeys(reason for reason in reasons if reason))
+    if not text:
+        return 'the edit response was incomplete'
+    if edits is None:
+        return 'no edits object could be read from the response'
+    return 'no edit was returned for this finding'
 
 
 def _apply_finding_edits(memo, edits, finding_ids, pools, dollars=True, values=None):
@@ -2164,7 +2185,8 @@ def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
                         context+'\nValuation:\n'+valuation+'\nDraft:\n'+memo,12000),
                  priced(f'finding_check_{number}',reviewer,FINDING_CHECK+'\nEvidence:\n'+context+'\nValuation:\n'+valuation+
                         '\nDraft:\n'+memo,FINDING_CHECK_TOKENS)]
-        conditional = [priced(f'model_response_{number}',strong,'Address these review findings.\n'+FORECAST_SCHEMA+
+        conditional = [priced(f'prose_edits_{number}_retry',strong,EDIT_INSTRUCTIONS+'\nEvidence:\n'+context+'\nMemo:\n'+memo,EDIT_TOKENS),
+                       priced(f'model_response_{number}',strong,'Address these review findings.\n'+FORECAST_SCHEMA+
                               UNDERWRITING_GUIDANCE+'\nEvidence:\n'+context+'\nMemo:\n'+memo,12000),
                        priced(f'revise_{number}',strong,'Revise the complete memo.\nEvidence:\n'+context+'\nValuation:\n'+
                               valuation+'\nMemo:\n'+memo,MEMO_TOKENS)]
@@ -2192,7 +2214,8 @@ def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
             'worst_case_reservation_floor_usd':floor+sum(item['usual_floor_usd']+item['conditional_floor_usd'] for item in rounds),
             'largest_single_reservation_floor_usd':max((row['reservation_floor_usd'] for row in every),default=0.0),
             'revision_basis':'Each call needs its own reservation on top of what earlier calls actually cost; a round '
-                             'adds the conditional stages only when a finding concerns the forecast or an edit fails.'}
+                             'adds the conditional stages only when an edit fails (one retry) or a finding concerns the forecast (the response, '
+                             'and a rewrite only when the forecast inputs change).'}
 
 
 def _fetch_calibration_bytes(url):
@@ -5528,7 +5551,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         checkpoint()
 
     def edit_round(iteration,memo,combined,adjudication,required,manifest):
-        """Answer the findings with exact edits to the prose; rewrite only when an edit for a required finding fails."""
+        """Answer the findings with exact edits to the prose, with one retry for required findings left unanswered."""
         number=iteration+1
         material={f.get('id') for f in combined if isinstance(f,dict) and f.get('severity') in {'blocker','major'}}
         shown=[{key:f[key] for key in ('id','severity','rule','issue','current_excerpt','fix','source_refs') if f.get(key) is not None}
@@ -5569,32 +5592,58 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             save_pending(iteration,memo,combined,adjudication,'edits',manifest,required)
             return edit_round(iteration,memo,combined,adjudication,required,manifest)
         computed=(result,plan,_computed_tables(state['sources']))+_rounded_inputs(plan,result)
-        edited,records=_apply_finding_edits(memo,edits or [],{f.get('id'):f for f in combined if isinstance(f,dict)},
-                                            trace_pools(state['sources'],computed),_dollar_filer(plan,result),
-                                            _valued_figures(result))
-        edited=_label_unverified(edited,state['sources'])
+        pools=trace_pools(state['sources'],computed)
+        by_id={f.get('id'):f for f in combined if isinstance(f,dict)}
+        def apply(current,proposed):
+            out,records=_apply_finding_edits(current,proposed or [],by_id,pools,_dollar_filer(plan,result),_valued_figures(result))
+            return _label_unverified(out,state['sources']),records
+        edited,records=apply(memo,edits)
         answered={item['finding'] for item in records if item['applied']}
         missing=[identifier for identifier in required if identifier not in answered]
+        retry_records=[]
+        if missing:
+            # One retry for just the findings whose edit did not apply, each told why. A
+            # rewrite after two live rounds (GOOGL, KO, 2026-11-27) brought new findings;
+            # an edit that still fails is carried to the next review instead.
+            reasons={identifier:_unapplied_reason(identifier,records,text,edits) for identifier in missing}
+            retry=(EDIT_INSTRUCTIONS+'\n'+EVIDENCE_TIER_RULE+'\n'+RUBRIC+
+                   '\nThe edits below were not applied. Answer only these findings, and avoid the stated reason.\n'+
+                   'Findings and reasons:\n'+json.dumps([dict({key:by_id[i][key] for key in
+                       ('id','severity','rule','issue','current_excerpt','fix','source_refs') if by_id[i].get(key) is not None},
+                       not_applied=reasons[i]) for i in missing])+
+                   '\nCOMPUTED SUMMARY:\n'+computed_summary(plan,result)+evidence_above()+
+                   '\nComputed exhibits:\n'+valuation_section(plan,result)+
+                   '\nMemo:\n'+edited)
+            try:
+                retry_text=call(f'prose_edits_{number}_retry',strong,retry,tokens=EDIT_TOKENS,prefix=_evidence_prefix(context))
+            except core.IncompleteResponse as exc:
+                retry_text=''
+                progress(f'Prose edit retry not applied: {exc}'.split(', so it')[0])
+            retry_edits,_=_edit_response(retry_text)
+            retry_edits=[edit for edit in retry_edits or [] if isinstance(edit,dict) and edit.get('finding') in missing]
+            edited,retry_records=apply(edited,retry_edits)
+            answered|={item['finding'] for item in retry_records if item['applied']}
+            missing=[identifier for identifier in required if identifier not in answered]
         after=prereview_checks(_with_summary(edited,plan,result,state['sources'],ticker),state['sources'],computed) if result else []
         log={'iteration':iteration,'round':number,'edits':records,'forecast':flags,'required':list(required),
-             'unanswered':missing,'free_checks_after':[issue['id'] for issue in after],
-             'outcome':'rewrite' if missing else 'edited'}
+             'retry':retry_records,'unanswered':missing,'free_checks_after':[issue['id'] for issue in after],
+             'outcome':'carried' if missing else 'edited'}
+        if missing:
+            log['unanswered_reasons']={i:_unapplied_reason(i,records+retry_records,'x',[]) for i in missing}
         if not text:
             log['note']='the edit response was incomplete and was not used'
         elif edits is None:
             log['note']='no complete edits object could be parsed from the response'
         core.save(reviews/f'edits-{number}.json',log)
-        if missing:
-            save_pending(iteration,memo,combined,adjudication,'rewrite',manifest)
-            note_round(number,revision='rewrite',edits_applied=len(answered),
-                       rewrite_reason='no edit applied for '+', '.join(missing[:10]))
-            finish_revision(iteration,memo,combined,adjudication)
-            return
+        # Without a forecast change there is no rewrite: findings still unanswered go to the
+        # next review as unresolved prose and use up rounds as any other finding does.
         state['current_memo']=edited
         state['iteration']=number
         state.pop('pending_revision',None)
-        note_round(number,revision='edits',edits_applied=sum(1 for item in records if item['applied']),
-                   edits_rejected=sum(1 for item in records if not item['applied']))
+        every=records+retry_records
+        note_round(number,revision='edits',edits_applied=sum(1 for item in every if item['applied']),
+                   edits_rejected=sum(1 for item in every if not item['applied']),
+                   **({'carried_unanswered':missing} if missing else {}))
 
     while _revisions_used(state)<=max_revisions:
         iteration=state['iteration']

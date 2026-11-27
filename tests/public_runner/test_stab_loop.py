@@ -65,6 +65,9 @@ class LoopTransport(FullContractTransport):
                 answer = {'edits': [{'finding': 'F1', 'quote': self.excerpt,
                                      'replacement': self.excerpt + ' The dated monitoring condition is a house judgment.'}],
                           'forecast': [{'finding': 'F9', 'reason': 'Only the note generator can change the method note'}]}
+            elif self.edit == 'miss_once':  # the first call misses its anchor, the retry anchors
+                self.edit = 'anchor'
+                answer = {'edits': [{'finding': 'F1', 'quote': 'Text that is not in the memo.', 'replacement': 'x'}]}
             elif self.edit == 'miss':
                 answer = {'edits': [{'finding': 'F1', 'quote': 'Text that is not in the memo.', 'replacement': 'x'}]}
             else:
@@ -354,18 +357,42 @@ class LoopFlowTests(unittest.TestCase):
         self.assertEqual(state['revision_rounds'][-1]['revision'], 'edits')
         self.assertTrue(state['complete'])
 
-    def test_an_edit_that_does_not_anchor_falls_back_to_the_rewrite(self):
-        fixture = LoopTransport(reviews=[['prose']], edit='miss')
+    def test_an_unapplied_edit_gets_one_retry_told_why(self):
+        fixture = LoopTransport(reviews=[['prose']], edit='miss_once')
         with tempfile.TemporaryDirectory() as directory:
             folder, state = run_loop(directory, fixture)
             log = json.loads((folder / 'reviews' / 'edits-1.json').read_text())
         sequence = stages(state)
-        self.assertNotIn('model_response_1', sequence)
-        self.assertLess(sequence.index('prose_edits_1'), sequence.index('revise_1'))
+        self.assertEqual(sequence[sequence.index('targeted_research_1'):],
+                         ['targeted_research_1', 'prose_edits_1', 'prose_edits_1_retry', 'review_1'])
+        self.assertNotIn('revise_1', sequence)
+        retry = [p for p in fixture.requests if instructions(p).startswith('Answer the review findings')][-1]
+        self.assertIn('quote found 0 times in the prose', instructions(retry))  # the retry states why
+        self.assertEqual(log['outcome'], 'edited')
+        self.assertTrue(log['retry'][0]['applied'])
+        self.assertTrue(state['complete'])
+
+    def test_an_edit_that_never_applies_is_carried_not_rewritten(self):
+        fixture = LoopTransport(reviews=[['prose'], ['prose'], ['prose'], ['prose']], edit='miss')
+        with tempfile.TemporaryDirectory() as directory:
+            folder, state = run_loop(directory, fixture)
+            log = json.loads((folder / 'reviews' / 'edits-1.json').read_text())
+        sequence = stages(state)
+        self.assertFalse(any(stage.startswith(('revise_', 'model_response_')) for stage in sequence))
+        self.assertEqual(log['outcome'], 'carried')
         self.assertEqual(log['unanswered'], ['F1'])
-        self.assertIn('no edit applied for F1', state['revision_rounds'][-1]['rewrite_reason'])
-        rewrite = next(p for p in fixture.requests if instructions(p).startswith('Revise the complete memo'))
-        self.assertIn('No forecast response was requested', instructions(rewrite))
+        self.assertIn('0 times', log['unanswered_reasons']['F1'])
+        self.assertEqual(state['revision_rounds'][0]['carried_unanswered'], ['F1'])
+        # It uses up the rounds as unresolved prose and the loop ends.
+        self.assertEqual(state['iteration'], pipeline.DEFAULT_MAX_REVISIONS)
+        self.assertEqual(state['quality_status'], 'unresolved_findings')
+        self.assertEqual(sum(stage.startswith('prose_edits_') and stage.endswith('_retry') for stage in sequence), 3)
+
+    def test_the_retry_reasons_name_the_guard_and_a_missing_edit(self):
+        records = [{'finding': 'F2', 'applied': False, 'reason': 'replacement drops citations the finding does not name: S2'}]
+        self.assertIn('drops citations', pipeline._unapplied_reason('F2', records, '{}', []))
+        self.assertEqual(pipeline._unapplied_reason('F5', records, '{}', []), 'no edit was returned for this finding')
+        self.assertEqual(pipeline._unapplied_reason('F5', [], '', None), 'the edit response was incomplete')
 
     def test_a_forecast_flag_from_the_edit_call_reopens_the_forecast(self):
         fixture = LoopTransport(reviews=[['prose']], edit='forecast')
@@ -486,14 +513,14 @@ class LoopFlowTests(unittest.TestCase):
         self.assertEqual(len(set(reviewer)), 2)
         self.assertEqual(pipeline._inputs_fingerprint(state['plan']), state['revision_rounds'][0]['inputs_fingerprint'])
 
-    def test_the_loop_stops_after_two_rounds_with_findings_open(self):
-        fixture = LoopTransport(reviews=[['prose'], ['prose'], ['prose']])
+    def test_the_loop_stops_after_three_rounds_with_findings_open(self):
+        fixture = LoopTransport(reviews=[['prose'], ['prose'], ['prose'], ['prose']])
         with tempfile.TemporaryDirectory() as directory:
             _, state = run_loop(directory, fixture)
-        self.assertEqual(state['iteration'], 2)
+        self.assertEqual(state['iteration'], 3)
         self.assertEqual(state['quality_status'], 'unresolved_findings')
         self.assertFalse(state['complete'])
-        self.assertNotIn('targeted_research_3', stages(state))
+        self.assertNotIn('targeted_research_4', stages(state))
 
     def test_an_interrupted_edit_round_resumes_without_a_new_review(self):
         fixture = LoopTransport(reviews=[['prose']], edit='fail_once')
@@ -510,10 +537,10 @@ class LoopFlowTests(unittest.TestCase):
 
 
 class StoredRunTests(unittest.TestCase):
-    def test_defaults_are_two_rounds(self):
-        self.assertEqual(pipeline.DEFAULT_MAX_REVISIONS, 2)
-        self.assertEqual(inspect.signature(pipeline.run).parameters['max_revisions'].default, 2)
-        self.assertIn("'--max-revisions',type=int,default=2", inspect.getsource(cli))
+    def test_defaults_are_three_rounds(self):
+        self.assertEqual(pipeline.DEFAULT_MAX_REVISIONS, 3)
+        self.assertEqual(inspect.signature(pipeline.run).parameters['max_revisions'].default, 3)
+        self.assertIn("'--max-revisions',type=int,default=3", inspect.getsource(cli))
 
     def test_a_run_stopped_by_the_old_default_continues_with_the_new_one(self):
         fixture = LoopTransport(reviews=[['prose'], ['prose']])
@@ -544,7 +571,8 @@ class StoredRunTests(unittest.TestCase):
                         instructions(payload).startswith('Revise the complete memo')):
                     raise RuntimeError('Synthetic rewrite interruption')
                 return super().transport(url, key=key, payload=payload, timeout=timeout)
-        fixture = Interrupted(reviews=[['prose']], edit='miss')
+        # A corrected forecast is the one path that still rewrites the memo.
+        fixture = Interrupted(reviews=[['prose']], edit='forecast')
         with tempfile.TemporaryDirectory() as directory:
             with fixture.installed(), self.assertRaisesRegex(RuntimeError, 'rewrite interruption'):
                 pipeline.run('AAPL', 'synthetic-key', directory=directory)
@@ -631,26 +659,29 @@ class ResumedPlanTests(unittest.TestCase):
 
 
 class BudgetTests(unittest.TestCase):
-    def test_preflight_prices_two_revision_rounds(self):
+    def test_preflight_prices_three_revision_rounds(self):
         fixture = LoopTransport(reviews=[])
         with tempfile.TemporaryDirectory() as directory:
             folder, _ = run_loop(directory, fixture)
             preflight = json.loads((folder / 'budget-preflight.json').read_text())
-        self.assertEqual(preflight['max_revisions'], 2)
-        self.assertEqual([item['round'] for item in preflight['revision_rounds']], [1, 2])
+        self.assertEqual(preflight['max_revisions'], 3)
+        self.assertEqual([item['round'] for item in preflight['revision_rounds']], [1, 2, 3])
         usual = [row['stage'] for row in preflight['revision_rounds'][0]['usual_stages']]
         self.assertEqual(usual, ['targeted_research_1', 'prose_edits_1', 'draft_check_fix_1', 'review_1', 'finding_check_1'])
         self.assertEqual([row['stage'] for row in preflight['revision_rounds'][0]['conditional_stages']],
-                         ['model_response_1', 'revise_1'])
+                         ['prose_edits_1_retry', 'model_response_1', 'revise_1'])
         self.assertGreater(preflight['largest_single_reservation_floor_usd'], 0)
 
-    def test_the_default_allowance_covers_two_rounds_on_the_costliest_path(self):
+    def test_the_default_allowance_covers_three_rounds_on_the_costliest_path(self):
         # Each round: the edit call flags a forecast change, the forecast is corrected and the memo rewritten.
-        fixture = LoopTransport(reviews=[['prose'], ['prose']], edit='forecast')
+        fixture = LoopTransport(reviews=[['prose'], ['prose'], ['prose']], edit='forecast')
         with tempfile.TemporaryDirectory() as directory:
             _, state = run_loop(directory, fixture)
         self.assertTrue(state['complete'])
-        for stage in ('model_response_1', 'revise_1', 'model_response_2', 'revise_2', 'review_2'):
+        # Round 1 corrects the forecast and rewrites; later rounds get the same proposal back, so the
+        # inputs match and the round edits the prose (with its retry) instead.
+        for stage in ('model_response_1', 'revise_1', 'model_response_2', 'prose_edits_2_retry',
+                      'model_response_3', 'prose_edits_3_retry', 'review_3'):
             self.assertIn(stage, stages(state))
         spent, peak = 0, 0
         for row in state['ledger']:
