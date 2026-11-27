@@ -505,33 +505,48 @@ def prompt_summary(data):
     return summary
 
 
-def render_note(panel, ref_label=lambda ref: f'[{ref}]'):
-    """Lines under the convention panel that show how the country risk row was built, or ''."""
+def render_parts(panel, ref_label=lambda ref: f'[{ref}]'):
+    """The exposure table under the country risk row and its method notes: (lines, notes)."""
     if not isinstance(panel, dict):
-        return ''
+        return [], []
     row = next((item for item in panel.get('rows') or [] if item.get('name') == 'country_risk_premium_revenue_weighted'), None)
     if row is None:
         note = panel.get('country_risk_note')
-        return f'Country risk row not shown: {note}' if note else ''
+        return ([f'No country risk row is shown. {note}'] if note else []), []
     reference = row.get('reference') or {}
     tables = [ref for ref in reference.get('table_refs') or [] if ref]
     filings = ' '.join(ref_label(ref) for ref in reference.get('source_refs') or [] if ref not in tables)
     us = reference.get('us_premium')
     # The shares and premiums below are Python's arithmetic on the cited sources, so they are
     # cited as computed from them (review of the merged code, 2026-11-27).
-    cited = ' '.join([*([filings] if filings else []), *(ref_label(ref) for ref in tables)])
-    lines = ['Country risk row' + (f', computed from {cited}' if cited else '') + ': shares of revenue by geography for the '
-             f'fiscal year ending {reference.get("fiscal_year_end")} and Damodaran\'s country and regional premiums, each '
-             'over the US premium' + (f' of {us * 100:.2f} points' if isinstance(us, (int, float)) else '') + ':']
+    lines = [f'Revenue shares by geography for the fiscal year ending {reference.get("fiscal_year_end")}'
+             + (f' {filings}' if filings else '') + ', with Damodaran\'s country and regional premiums over the US premium'
+             + (' ' + ' '.join(ref_label(ref) for ref in tables) if tables else '') + '.', '',
+             '| Region | Share of revenue | Premium over US (points) | Damodaran basis |', '|---|---:|---:|---|']
     for item in reference.get('exposures') or []:
         where = item.get('mapped_to')
-        lines.append(f'- {item["label"]}: {item["share_of_revenue"]:.1%} of revenue, {item["premium_over_us"] * 100:+.2f} points'
-                     + (f'; {where}' if where and where != item['label'] else ''))
+        lines.append(f'| {item["label"]} | {item["share_of_revenue"]:.1%} | {item["premium_over_us"] * 100:+.2f} | '
+                     + (where if where and where != item['label'] else '') + ' |')
     for item in reference.get('unmapped') or []:
-        lines.append(f'- {item["label"]}: {item["share_of_revenue"]:.1%} of revenue, unmapped and excluded from the weights')
-    closing = ' '.join([*(reference.get('choices') or []), *(reference.get('notes') or [])])
+        lines.append(f'| {item["label"]} | {item["share_of_revenue"]:.1%} | unmapped | excluded from the weights |')
     if row.get('status') in ('calculated', 'fragile_spread'):
-        closing = (f'The weighted premium of {row["weighted_country_risk_premium"] * 100:.2f} points is added to the cost of '
-                   f'equity in every year and in the terminal value; with equity at {row["equity_weight"]:.1%} of capital '
-                   f'every discount rate rises by {row["discount_rate_change"] * 100:.2f} points. ' + closing).strip()
-    return '\n'.join(lines) + ('\n\n' + closing if closing else '')
+        lines += ['', f'The weighted premium of {row["weighted_country_risk_premium"] * 100:.2f} points is added to the cost '
+                      f'of equity in every year and in the terminal value. With equity at {row["equity_weight"]:.1%} of '
+                      f'capital, every discount rate rises by {row["discount_rate_change"] * 100:.2f} points.']
+    notes = ['The country risk row is an exhibit. It is not ranked with the convention rows and carries no probability.',
+             'The S&P 500 implied premium already reflects US companies\' foreign revenue, so the country risk row '
+             'overstates the adjustment against the market benchmark.']
+    if isinstance(us, (int, float)):
+        notes.append(f'Country premiums are stated over the US premium of {us * 100:.2f} points.')
+    notes += [_CHOICE_TEXT.get(text, text) for text in [*(reference.get('choices') or []), *(reference.get('notes') or [])]]
+    return lines, notes
+
+
+# Saved choice sentences in the memo's voice.
+_CHOICE_TEXT = {_GDP_CHOICE: 'Within a region, countries are weighted by GDP because the company does not report sales by country.'}
+
+
+def render_note(panel, ref_label=lambda ref: f'[{ref}]'):
+    """The country risk exhibit as text: the exposure table, then its notes."""
+    lines, notes = render_parts(panel, ref_label)
+    return '\n'.join(lines + ([''] + notes if notes else []))

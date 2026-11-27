@@ -330,7 +330,8 @@ class PipelineSamplingTests(unittest.TestCase):
         self.assertIn('was left out', report['method_note'])
         # Its prompt stayed the shared one: no repair reason was written into the plan prompt.
         self.assertNotIn('plan_repair_reasons', state)
-        self.assertEqual(state['plan_sample_log']['samples'][1]['status'], 'dropped')
+        # The in-progress log is cleared once sampling ends; the report keeps the drop.
+        self.assertNotIn('plan_sample_log', state)
 
     def test_every_sample_failing_stops_the_run_and_discards_the_plans(self):
         invalid = [plan_repair.invalid_plan()] * 2

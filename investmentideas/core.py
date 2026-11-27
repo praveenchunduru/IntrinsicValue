@@ -322,6 +322,11 @@ def _cache_read_cap(pricing):
 CACHE_READ_WINDOW_SECONDS = 50 * 60
 
 
+def prefix_digest(prefix):
+    """The ledger's ``cached_prefix_sha256``: the first 16 hex digits of the prefix's SHA-256."""
+    return hashlib.sha256(prefix.encode()).hexdigest()[:16]
+
+
 # Long shared prefixes (the evidence, and for the reviewer the valuation and
 # draft) are sent first and marked for caching. OpenRouter turns the Anthropic
 # marker into a GPT-5.6 or GPT-6 cache breakpoint; the TTL applies to Anthropic only.
@@ -385,7 +390,7 @@ class Router:
         """Whether this session's ledger shows ``prefix`` written or read by ``model`` within the cache window."""
         if not prefix or not cache_markers_supported(model):
             return False
-        digest, session, now = hashlib.sha256(prefix.encode()).hexdigest(), getattr(self, 'session', None), time.time()
+        digest, session, now = prefix_digest(prefix), getattr(self, 'session', None), time.time()
         for row in self.ledger:
             details = (row.get('usage') or {}).get('prompt_tokens_details') or {}
             touched = (details.get('cache_write_tokens') or 0) > 0 or (details.get('cached_tokens') or 0) > 0
@@ -426,7 +431,9 @@ class Router:
                       {'type': 'text', 'text': prefix, 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}}]
             content = prompt
             row['cached_prefix_utf8_bytes'] = len(prefix.encode())
-            row['cached_prefix_sha256'] = hashlib.sha256(prefix.encode()).hexdigest()
+            # Equal digests across stages show the provider was sent identical cached bytes;
+            # prefix_cached() reads the same field to reserve a repeated request at the read price.
+            row['cached_prefix_sha256'] = prefix_digest(prefix)
             if isinstance(getattr(self, 'session', None), str):
                 row['session'] = self.session
         else:

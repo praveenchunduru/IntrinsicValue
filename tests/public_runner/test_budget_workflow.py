@@ -178,8 +178,11 @@ class BudgetWorkflowTests(unittest.TestCase):
                 self.assertIn('review_0',stages)
                 self.assertIn('draft_check_fix_0',stages)
                 if revisions:
-                    self.assertEqual(stages[-5:],[f'targeted_research_{revisions}',f'model_response_{revisions}',
-                        f'revise_{revisions}',f'draft_check_fix_{revisions}',f'review_{revisions}'])
+                    # The fixture's finding names no rule, so the forecast response runs and the
+                    # recomputed plan takes the rewrite. The fix call is not repeated: the rewrite
+                    # left the problems its first call already answered in place.
+                    self.assertEqual(stages[-4:],[f'targeted_research_{revisions}',f'model_response_{revisions}',
+                        f'revise_{revisions}',f'review_{revisions}'])
                 prompts=[full_text(p) for p in fixture.requests]
                 self.assertGreater(len(pipeline._evidence_context(state["sources"]).encode()),100000)
                 self.assertGreater(max(len(p.encode()) for p in prompts),500000)
@@ -473,7 +476,11 @@ class SharedPrefixTests(unittest.TestCase):
         review, check = prefix_of('Review this equity memo'), prefix_of('Check each review finding')
         self.assertIsNotNone(review)
         self.assertEqual(review, check)
-        self.assertIn('<<<DRAFT', review)
+        # The cached block is evidence then valuation; the draft follows the instructions, uncached.
+        self.assertNotIn('<<<DRAFT', review)
+        self.assertIn('\nValuation:\n', review)
+        payload = next(p for p in fixture.requests if instructions(p).startswith('Review this equity memo'))
+        self.assertTrue(instructions(payload).rstrip().endswith('DRAFT>>>'))
         self.assertEqual(prefix_of('Write the prose of'), prefix_of('Build an investment valuation plan'))
 
 

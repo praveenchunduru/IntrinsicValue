@@ -8,7 +8,7 @@ from datetime import date
 from decimal import Decimal
 import unittest
 
-from investmentideas import inputs, pipeline
+from investmentideas import inputs, memo_style, pipeline
 from investmentideas.valuation import evaluate
 
 from tests.public_runner.test_market_consistency import plan
@@ -61,7 +61,7 @@ class ContinuityCheckTests(unittest.TestCase):
         rows = result['forecast_continuity']['scenarios']
         first = result['scenarios']['base']['cashflows'][0]['ebit_margin']
         self.assertAlmostEqual(rows['base']['change_percentage_points'], (first - .30) * 100)
-        self.assertIn('Year-1 margin against the last reported results', pipeline._continuity_exhibit(result)[1])
+        self.assertIn('| Year-1 EBIT margin | 30.0% |', '\n'.join(pipeline._continuity_parts(result, memo_style.Style('USD'))[0]))
 
     def test_a_break_without_a_cited_basis_goes_back_with_the_reported_lines(self):
         value = locked_plan(.60)
@@ -136,8 +136,9 @@ class ReinvestmentContinuityTests(unittest.TestCase):
         value = self.locked(basis)
         result = pipeline._evaluate(value)
         pipeline._check_continuity(value, result, SOURCES)
-        self.assertIn('stated basis', '\n'.join(pipeline._reinvestment_lines(result)))
-        self.assertIn('billion a year computed from reported lines', pipeline.computed_summary(value, result))
+        text = '\n'.join(pipeline._continuity_parts(result, memo_style.Style('USD'))[0])
+        self.assertIn('- Base reinvestment basis: Management guided capital spending', text)
+        self.assertRegex(text, r'\| Net reinvestment, years 1-3 \(\$[BM]\) \| [\d,.]+ a year \|')
 
     def test_a_basis_citing_an_unknown_source_is_rejected(self):
         value = self.locked({name: 'Management guided capital spending to fall as construction completes [S999].'
@@ -229,4 +230,4 @@ class CostPathTests(unittest.TestCase):
         value = self.locked(peak=-.05, average=-.10)
         result = pipeline._evaluate(value)
         pipeline._check_continuity(value, result, SOURCES)
-        self.assertIn('Final-year margin against the reported history', '\n'.join(pipeline._continuity_exhibit(result)))
+        self.assertIn('| Final-year margin ceiling |  | none |', '\n'.join(pipeline._continuity_parts(result, memo_style.Style('USD'))[0]))

@@ -376,6 +376,19 @@ def _rules(severity):
     return '; '.join(f'{rule} {text}' for rule, level, text in RUBRIC_RULES if level == severity)
 
 
+# The owner's voice rules (2026-08-02) and the memo's number style (2026-11-27), told to the
+# writer and judged by the reviewer as wording (N2); the free checks below count the
+# mechanical ones.
+WRITING_STANDARD = (
+    'Writing standard (rule N2). Open each section with its conclusion. Write short declarative sentences that state '
+    'the positive claim. Never use "X, not Y" or any other contrast formula, and end no paragraph on a summary '
+    'sentence. Use concrete nouns, never consultant abstractions or metaphors. State a limit once, plainly, with '
+    'no commentary on what the evidence does or does not prove. Do not restate the first page\'s tables. State a '
+    'figure as the house or computed value ("the base-case value is $139"); do not narrate the exhibit it came '
+    'from ("the computed summary places it at"). Numbers: the first page names the currency once, so write $139 '
+    'a share, prices as quoted ($355.58), aggregates as $34.3B or $850M, never "USD" for a dollar filer and never '
+    'a number of seven or more digits; percentages to one decimal; no decimals unless the precision matters; no '
+    'em dashes.')
 RUBRIC = (
     'Quality standard (shared by the writer, the automatic checks and the reviewer). Each review finding names the '
     'rule it breaks. Blocker: ' + _rules('blocker') + '. Major: ' + _rules('major') + '. Minor: ' + _rules('minor') +
@@ -383,7 +396,7 @@ RUBRIC = (
     'reported figure it is compared with. Naming the convention step the value is most sensitive to is required and '
     'is not an attribution of the gap to price. Rounding is never material; unverified excerpts used only for attributed '
     'outside views, consensus or guidance context are not material, but a company fact or number supported only by '
-    'an unverified excerpt is, whatever its label.')
+    'an unverified excerpt is, whatever its label. ' + WRITING_STANDARD)
 
 
 # Free checks run on a draft before the paid review. They trace every figure in
@@ -391,10 +404,11 @@ RUBRIC = (
 # catch the defects a live review spent three paid rounds on (2026-11-14).
 UNVERIFIED_SOURCE_TIERS = {'search_excerpt_unverified'}
 PROSE_WORD_LIMIT = 3600
-_NUMBER = re.compile(r'(?<![\w.\[/-])(-?\$?\d[\d,]*(?:\.\d+)?)(\s*(?:%|bps|bp|x|×|billion|bn|B|million|mm|M|trillion|percentage points?|points?|pts|pp)\b|%)?', re.I)
+_NUMBER = re.compile(r'(?<![\w.\[/-])(-?\$?\d[\d,]*(?:\.\d+)?)(\s*(?:%|bps|bp|x|×|billion|bn|B|million|mm|M|trillion|T|percentage points?|points?|pts|pp)\b|%)?', re.I)
 _SCALES = {'%': (1e-2, 1), 'points': (1e-2, 1), 'point': (1e-2, 1), 'pts': (1e-2, 1), 'pp': (1e-2, 1),
            'percentage points': (1e-2, 1), 'percentage point': (1e-2, 1), 'bps': (1e-4, 1), 'bp': (1e-4, 1), 'billion': (1e9, 1e3, 1), 'bn': (1e9, 1e3, 1),
            'b': (1e9, 1e3, 1), 'million': (1e6, 1), 'mm': (1e6, 1), 'm': (1e6, 1), 'trillion': (1e12, 1e6, 1e3, 1),
+           't': (1e12, 1e6, 1e3, 1),
            'x': (1,), '×': (1,)}
 # Prose that assigns the gap to price a cause; Python states which inputs can close it.
 _CAUSE = re.compile(r'\b(?:(?:gap|difference|disagreement|divergence)\b[^.;]{0,40}?\b(?:value and (?:the )?price|'
@@ -473,14 +487,25 @@ def _traced(number, decimals, unit, pool):
     return False
 
 
-def prose_words(memo):
-    """Words of the writer's prose: no computed summary, no Python-rendered valuation section."""
-    body = memo.split('\n## Executable valuation')[0]
-    # The summary has no headings of its own: it ends at the next heading of any level.
-    summary = re.search(r'(?ms)^## Valuation summary \(computed by Python\)\n.*?(?=^#|\Z)', body)
+# The computed first page and the computed sections after the prose, in the current
+# layout and in the layout before the 2026-11-27 redesign.
+COMPUTED_FIRST_PAGE = re.compile(r'(?ms)^## (?:Valuation summary \(computed by Python\)|Summary)\n.*?(?=^#|\Z)')
+COMPUTED_AFTER_PROSE = re.compile(r'\n## (?:Executable valuation|Valuation detail)\b')
+
+
+def writer_prose(memo):
+    """The writer's text: no computed first page and nothing from the computed valuation detail on."""
+    body = COMPUTED_AFTER_PROSE.split(memo, 1)[0]
+    # The first page has no headings of its own: it ends at the next heading of any level.
+    summary = COMPUTED_FIRST_PAGE.search(body)
     if summary:
         body = body.replace(summary.group(0), '')
-    return len(re.findall(r"[A-Za-z][A-Za-z'\-]*", body))
+    return body
+
+
+def prose_words(memo):
+    """Words of the writer's prose: no computed summary, no Python-rendered valuation section."""
+    return len(re.findall(r"[A-Za-z][A-Za-z'\-]*", writer_prose(memo)))
 
 
 def trace_pools(sources, computed=()):
@@ -494,6 +519,9 @@ def trace_pools(sources, computed=()):
                 _numeric_leaves(part, target)
     for item in computed:
         _numeric_leaves(item, house)
+    # The memo shows computed figures to three significant figures ($1,970B, $41.4):
+    # those rounded forms trace too. Nothing coarser is added.
+    house |= {float(f'{value:.3g}') for value in house if value}
     return sorted(primary | house), sorted(unverified), sorted(house)
 
 
@@ -531,13 +559,9 @@ def prereview_checks(memo, sources, computed=()):
     tables. Returns findings in the review shape (severity, issue, excerpt).
     The memo body ends at the Python-rendered "## Executable valuation".
     """
-    body = memo.split('\n## Executable valuation')[0]
+    body = writer_prose(memo)
     # Python marks every unverified citation inline; judge the writer's own text.
     body = re.sub(r'\b(S\d+) unverified\b', r'\1', body)
-    # The summary has no headings of its own: it ends at the next heading of any level.
-    summary = re.search(r'(?ms)^## Valuation summary \(computed by Python\)\n.*?(?=^#|\Z)', body)
-    if summary:
-        body = body.replace(summary.group(0), '')
     tiers = {source.get('id'): source.get('source_tier') for source in sources if isinstance(source, dict)}
     primary_pool, unverified_pool, house_pool = trace_pools(sources, computed)
     untraced, unlabelled, additive, unlabelled_claims, cite_primary, causes = [], [], [], [], [], []
@@ -619,11 +643,63 @@ def prereview_checks(memo, sources, computed=()):
     if additive:
         add('convention-rows-added', 'minor', 'Convention or one-at-a-time rows are described as adding up or combining.',
             'State each row separately; rows are alternatives and are never added together.', [('', text) for text in additive])
+    dollars = any(isinstance(item, dict) and str(item.get('currency') or '').upper() == 'USD' for item in computed)
+    for identifier, issue, fix, items in style_findings(body, dollars):
+        add(identifier, 'minor', issue, fix, [('', text) for text in items])
     words = prose_words(memo)
     if words > PROSE_WORD_LIMIT:
         add('length', 'minor', f'The prose is {words} words; the budget is about 3,000.',
             'Cut repetition and secondary detail, keeping every section.', [])
     return findings
+
+
+# Thresholds for the counted style checks, calibrated on the three live memos of
+# 2026-11-27 (Apple, Microsoft, Coca-Cola): their prose has 8, 2 and 5 ", not "
+# contrasts and 5, 1 and 6 sentences that narrate an exhibit. A draft at or under
+# the allowance passes; a factual "not" or a single pointer to an exhibit is normal.
+ANTITHESIS_ALLOWANCE = 2
+NARRATION_ALLOWANCE = 2
+_ANTITHESIS = re.compile(r',\s+not\s+(?!only\b|just\b)', re.I)
+_NARRATION = re.compile(
+    r'\b(?:the\s+)?(?:computed\s+)?(?:summary|exhibit|table|panel|diagnostics?|rows?|output)\s+(?:above\s+|below\s+)?'
+    r'(?:places?|puts?|shows?|gives?|states?|reports?|records?|lists?|sets?|computes?|explains?)\b'
+    r'|\baccording to the (?:computed|summary|exhibit|table)', re.I)
+_CODE_USD = re.compile(r'\bUSD\b')
+# Seven or more digits, with or without thousands separators; citations and links excluded.
+_LONG_NUMBER = re.compile(r'(?<![\w,.])\d{1,3}(?:,\d{3}){2,}(?![\d,])|(?<![\w,.])\d{7,}(?![\d,])')
+
+
+def _sentences(text):
+    clean = re.sub(r'\[[^\]\n]*\]|https?://\S+', '', text)
+    return [part.strip() for part in re.split(r'(?<=[.!?])\s+|\n+', clean) if part.strip() and not part.startswith('#')]
+
+
+def style_findings(prose, dollars=True):
+    """(id, issue, fix, sentences) for each counted style rule the prose breaks."""
+    sentences = _sentences(prose)
+    found = []
+    usd = [line[:300] for line in sentences if _CODE_USD.search(line)] if dollars else []
+    if usd:
+        found.append(('currency-code', f'{len(usd)} sentences write "USD" for a dollar filer; the first page names the '
+                      'currency once.', 'Write $139 a share, $34.3B or $850M; keep quoted prices as quoted.', usd))
+    long = [line[:300] for line in sentences if _LONG_NUMBER.search(line)]
+    if long:
+        found.append(('long-number', f'{len(long)} sentences print a number of seven or more digits.',
+                      'Write the amount as $34.3B or $850M, or a share count as 14.6B or 297M shares.', long))
+    dashes = [line[:300] for line in sentences if '\u2014' in line]
+    if dashes:
+        found.append(('em-dash', f'{len(dashes)} sentences use an em dash.',
+                      'Use a full stop, a comma or a plain relative clause.', dashes))
+    contrast = [line[:300] for line in sentences if _ANTITHESIS.search(line)]
+    if len(contrast) > ANTITHESIS_ALLOWANCE:
+        found.append(('contrast-formula', f'{len(contrast)} sentences use the ", not" contrast formula.',
+                      'State the positive claim once and drop the contrast.', contrast))
+    narration = [line[:300] for line in sentences if _NARRATION.search(line)]
+    if len(narration) > NARRATION_ALLOWANCE:
+        found.append(('exhibit-narration', f'{len(narration)} sentences narrate an exhibit instead of stating the figure.',
+                      'State the figure as the house or computed value, for example "the base-case value is $139".',
+                      narration))
+    return found
 
 
 def assessment_findings(review):
@@ -714,6 +790,10 @@ def _expected_values(valuation):
     return expected
 
 
+def _decimals(text):
+    return len(text.split('.')[1]) if '.' in text else 0
+
+
 def _visible_values(memo):
     """Read only explicitly labelled per-share values, never arbitrary dollars."""
     found = []
@@ -727,9 +807,9 @@ def _visible_values(memo):
     clean = re.sub(r'\*\*|__', '', memo)
     for key, label in labels.items():
         for match in re.finditer(r'\b' + label + r'\s*[:=]\s*(?:USD\s*|\$\s*)?' + number, clean, re.I):
-            found.append((key, float(match.group(1).replace(',', ''))))
+            found.append((key, float(match.group(1).replace(',', '')), _decimals(match.group(1))))
     for match in re.finditer(r'<!--\s*valuation:([a-z_]+)\s*=\s*' + number + r'\s*-->', memo, re.I):
-        found.append((match.group(1).lower(), float(match.group(2).replace(',', ''))))
+        found.append((match.group(1).lower(), float(match.group(2).replace(',', '')), _decimals(match.group(2))))
     lines = clean.splitlines()
     for index, line in enumerate(lines):
         if '|' not in line:
@@ -750,7 +830,7 @@ def _visible_values(memo):
             key = scenario + '_per_share' if scenario else ('weighted_value_per_share' if re.search(r'weighted|expected', label) else None)
             value = re.fullmatch(r'(?:USD\s*|\$\s*)?' + number, cells[value_columns[0]], re.I)
             if key and value:
-                found.append((key, float(value.group(1).replace(',', ''))))
+                found.append((key, float(value.group(1).replace(',', '')), _decimals(value.group(1))))
     return found
 
 
@@ -850,10 +930,12 @@ def inspect_memo(memo, sources, valuation=None):
             findings.append(_finding('quote-date-mismatch', 'major', 'An explicitly stated quote observation date differs from the saved regular-session timestamp.', 'State the saved quote observation date separately from the memo date.'))
     expected, seen = _expected_values(valuation), _visible_values(memo)
     mismatches, unmatched = set(), set()
-    for key, value in seen:
+    for key, value, decimals in seen:
+        # A value matches at the precision it is displayed: $139 for 138.86, 41.45 for 41.4519.
+        tolerance = max(.00500001, 0.5 * 10 ** -decimals + 1e-9, abs(expected.get(key, 0)) * 1e-6)
         if key not in expected:
             unmatched.add(key)
-        elif not math.isfinite(value) or abs(value - expected[key]) > max(.00500001, abs(expected[key]) * 1e-6):
+        elif not math.isfinite(value) or abs(value - expected[key]) > tolerance:
             mismatches.add(key)
     if mismatches:
         findings.append(_finding('valuation-value-mismatch', 'major', 'Explicit per-share values in the memo differ from the executable model: ' + ', '.join(sorted(mismatches)) + '.', 'Regenerate every displayed valuation figure from the current model outputs.'))
