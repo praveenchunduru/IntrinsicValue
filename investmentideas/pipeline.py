@@ -2490,7 +2490,7 @@ DEFAULT_WEIGHTS = {'bear': 0.0, 'base': 1.0, 'bull': 0.0}
 
 
 def terminal_return_reference(sources):
-    """Median reported ROIC (Mauboussin and Callahan method) over the history, or None."""
+    """Median ROIC computed from reported values (Mauboussin and Callahan method) over the history, or None."""
     for sid,rows in _grouped_history(sources).items():
         values=[float('inf') if row.get('return_on_capital_unbounded') else row.get('return_on_invested_capital')
                 for row in rows[-5:]]
@@ -2503,7 +2503,7 @@ def terminal_return_reference(sources):
             unbounded=not math.isfinite(median)
             return {'median_return_on_capital':None if unbounded else median,'median_unbounded':unbounded,
                     'years':len(values),'source_refs':[sid],
-                    'basis':'Five-year median of reported return on invested capital by the Mauboussin and Callahan method '
+                    'basis':'Five-year median of return on invested capital computed from reported values by the Mauboussin and Callahan method '
                             '(NOPAT over average operating invested capital, with goodwill and acquired intangibles).'}
     return None
 
@@ -2565,8 +2565,8 @@ def _pin_terminal_return(locked, sources, changes):
     return ['Terminal return on new capital equals the terminal discount rate (Mauboussin\'s steady state): the 10-year '
             'forecast is the house horizon for excess returns, after which new investment earns its cost of capital, so growth '
             'beyond it adds no value; rate alternatives keep this. The convention panel shows the value with a terminal '
-            'return 4 points above the terminal rate, at 15% and 25%, and at the earlier house rule (the reported median '
-            'ROIC, at most 15%) where that differs from these, and with horizons of 5, 15 and 20 years and at Mauboussin\'s '
+            'return 4 points above the terminal rate, at 15% and 25%, and at the earlier house rule (the median ROIC '
+            'computed from reported values, at most 15%) where that differs from these, and with horizons of 5, 15 and 20 years and at Mauboussin\'s '
             'industry fade rate where the industry mapping has one.']
 
 

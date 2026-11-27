@@ -1355,7 +1355,8 @@ def render_quarterly(baseline, source_id=None, markdown=False):
     notes = []
     derived = [row for row in rows if 'derived' in label(row)]
     if derived:
-        notes.append('Quarters marked derived are not reported on their own: '
+        notes.append('Quarters marked derived are not tagged on their own in the company facts (an earnings release may '
+                     'still present them): '
                      + '; '.join(f'{row["period_end"]} is the {row["revenue_basis"] if row["revenue_basis"] != "reported" else row["operating_income_basis"]}'
                                  for row in derived))
     if any(row.get('revenue_growth_basis') == 'unequal_length' for row in rows):

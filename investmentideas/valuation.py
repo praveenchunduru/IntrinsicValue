@@ -2174,7 +2174,7 @@ def _convention_panel(actuals, definitions, scenarios, discounting, reported_pea
     # The house rule from 2026-11-15 to 2026-11-26: 15%, lowered to the reported
     # five-year median ROIC, never below the terminal rate.
     earlier = max(terminal, min(.15, reported_median_roic) if reported_median_roic and reported_median_roic > 0 else .15)
-    add('terminal_return_earlier_house_rule', 'Terminal return on new capital = the reported five-year median ROIC (the earlier house rule: 15% at most, never below the terminal rate)',
+    add('terminal_return_earlier_house_rule', 'Terminal return on new capital = the five-year median ROIC computed from reported values (the earlier house rule: 15% at most, never below the terminal rate)',
         {'terminal_roic': earlier}, applies=abs(earlier - .15) > 1e-9 and abs(base['terminal_roic'] - earlier) > 1e-9 and earlier >= base['terminal_growth'],
         reason='The earlier house rule gives 15% here (the 15% row) or the terminal rate (the house value)')
     # Damodaran's levels (owner choice, 2026-11-26): a lasting excess return of 4
