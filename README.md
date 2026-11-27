@@ -1,16 +1,97 @@
 # IntrinsicValue
 
-A portable equity-research application requiring **one OpenRouter API key**.
-It gathers financial and primary-source evidence, builds an editable valuation,
-and reviews and revises a complete memo. The local application requires Python
-3.10+ and **no runtime packages, subscription logins, data keys or hosted database**.
+**Open-source equity research that values a company the way a disciplined fundamental
+investor would, and shows every step.**
 
-This standalone edition contains only the portable application, tests and public data.
+Give it a ticker. It reads the company's SEC filings, builds a ten-year forecast, values
+the business with a discounted cash flow model and writes a research memo. A second
+model from a different lab then checks the memo against the evidence. A run costs about
+$5 in model fees and takes under half an hour. It needs Python 3.10+ and one OpenRouter
+API key, and installs nothing else.
 
-**Audit status:** an independent external audit assessed the showcase memo at B−
-and the process/software at C, and reproduced live SEC access, reported-input
-coverage and default-budget failures. The previous benchmark-parity claim is
-withdrawn. Repair and validation status is tracked in [audit status](docs/audit-status.md).
+The aim is hedge-fund-grade fundamental analysis that anyone can run, inspect and
+improve.
+
+## What it is for
+
+A professional analyst spends days on what one run produces: a sourced view of what a
+business is worth, what its share price already assumes, and what evidence would change
+the answer. IntrinsicValue makes that standard of work available to anyone. It also
+makes the method public. Every valuation rule is written down, dated and shown beside
+its alternatives, so you can see exactly where you agree and where you would choose
+differently.
+
+Each run gives you:
+
+- **A value per share** for a base case and two stress cases, with the forecast behind
+  each one.
+- **What the price needs.** The growth, margin or return on capital that would make
+  today's price fair, one input at a time. For revenue growth it also shows how often
+  companies of that size have achieved it.
+- **A model you can edit.** Every assumption sits in one file. Change a number and
+  revalue offline in seconds, with no API key.
+- **A memo** on the business, management's use of capital, the forecast, the risks and
+  the observations that would change the value.
+- **A source trail.** Reported figures come from SEC filings and code does the
+  arithmetic. Each claim cites its source, and web excerpts that could not be verified
+  are labelled.
+
+Language models do the reading and the writing. Code does every calculation. A model
+from a different lab reviews the result, and each finding is checked again before it
+counts.
+
+## Whose methods it follows
+
+The valuation rules draw on the published work of investors and teachers who have
+written down how they do it:
+
+- **Aswath Damodaran** on the discount rate and the forecast: a current implied equity
+  risk premium, industry betas, growth that has to be paid for with reinvestment, R&D
+  treated as investment, and long-run growth capped at the risk-free rate.
+- **Michael Mauboussin** on returns and expectations: return on invested capital
+  measured as in his 2022 paper, a continuing value in which new investment earns its
+  cost of capital, base rates for growth, and the question of what the price already
+  expects.
+- **Stanley Druckenmiller** on rates and rate of change: the memo shows the value under
+  other interest-rate regimes and sets the latest quarters beside the annual history.
+
+The method was critiqued from each of these three perspectives and revised in response.
+None of them has reviewed or endorsed this project. The full rules, with sources, are in
+the [underwriting guide](docs/underwriting.md).
+
+## How to read the output
+
+- **The base case is the headline.** The bear and bull cases are stress tests and carry
+  no probabilities.
+- **The rules are conservative on purpose.** After year ten, new investment earns only
+  its cost of capital, so growth beyond the forecast adds no value. Under the same rules
+  the S&P 500 is worth about 0.80 of its price (November 2026). Compare a company's
+  value / price with that figure: a company at 0.80 is priced like the market.
+- **You can price your disagreement.** The convention table revalues the company one
+  change at a time: a longer period of high returns, another discount rate, another
+  terminal assumption.
+- **The value is an estimate with a date.** It rests on a forecast that a language model
+  wrote from public filings. A forecast can be wrong, and two runs on the same company
+  can differ.
+- **It is a starting point.** Use it to learn a company quickly, to test your own view,
+  or to see what a price assumes.
+
+## Not investment advice
+
+IntrinsicValue is a research and education tool. Nothing it produces is investment
+advice, a recommendation to buy or sell any security, or a price target. Language models
+write and review the memo, and they make mistakes. The software checks do not establish
+that a forecast is right. The authors are not your financial advisers and accept no
+liability for decisions made with this software. Do your own work, or consult a licensed
+adviser, before you invest.
+
+## Status
+
+In three live runs on 2026-11-27 (Microsoft, Apple and Coca-Cola), one memo passed the
+model review after one revision and two ended with open findings. An external audit in
+early November 2026 graded an earlier version's showcase memo B− and its process C; the
+benchmark-parity claim made before it is withdrawn. What has been repaired since, what
+each live run found and what is still open are in [audit status](docs/audit-status.md).
 
 ## Run locally
 
