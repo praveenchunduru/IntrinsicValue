@@ -25,7 +25,8 @@ from .analytics import annual_metrics
 from .fundamentals import yahoo_financials
 from .inputs import canonical_reported_inputs, operating_company_gate, pin_reported_inputs
 from .quality import (WRITING_STANDARD, dollar_amounts, style_added, DIAGNOSTIC_SCOPE, HOUSE_ATTRIBUTION, RUBRIC, TRADING_TERMS, assessment_findings, claim_ledger,
-                      inspect_memo, parse_json, parse_review, prereview_checks, prose_words, trace_pools, untraced_figures)
+                      inspect_memo, parse_json, parse_review, prereview_checks, prose_words, trace_pools, untraced_figures,
+                      _figures)
 from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_breakdown_facts, inline_facts, archive_focus_excerpts
 from .evidence_tables import (breakdown_markdown, breakdown_tables, filing_supplement_for, historical_baseline,
                               quarterly_markdown, render_baseline, render_roic, render_breakdowns, render_quarterly)
@@ -326,18 +327,53 @@ def _evidence_blocks(state):
     return _evidence_context(cached),(_later_evidence(later,_evidence_rows(cached)[3]) if later else '')
 
 
-def _forecast_findings(findings, memo, python_ids=()):
-    """Surviving blockers and majors that a prose edit cannot answer, as (id, reason).
+# A forecast input the plan author sets. A finding names one when its issue or fix
+# names a scenario's input ("base growth", "the bull case margins") or a plan input,
+# or when its fix asks for an input to change ("raise base growth"). A live-style M5
+# finding asking to raise base growth got a prose patch (review, 2026-11-27).
+# Terminal growth and the terminal return follow the house conventions, not the author.
+_FORECAST_INPUT = (r"(?:growth(?: rates?| paths?)?|(?:gross |operating |ebit )?margins?|tax rates?|"
+                   r"sales[- ]to[- ]capital(?: ratios?)?|reinvestment(?: rates?)?|expense shares?|r&d shares?|"
+                   r"(?:unlevered )?beta|probabilit(?:y|ies)|scenario weights?)")
+FORECAST_INPUT_NAMED = re.compile(
+    r"\b(?:base|bull|bear)(?:[- ]case)?(?: scenario)?(?:'s)? (?:revenue |sales |operating |ebit |gross |year-1 )?" +
+    _FORECAST_INPUT + r"\b|\bforecast (?:inputs?|drivers?|arrays?)\b|\bplan (?:inputs?|assumptions?)\b", re.I)
+FORECAST_CHANGE_ASKED = re.compile(
+    r"\b(?:raise|lower|increase|reduce|cut|change|revise|adjust|rebuild|re-?estimate)\w*\b[^.;]{0,40}?\b" +
+    _FORECAST_INPUT + r"\b", re.I)
+
+
+def _names_forecast_input(finding):
+    """Whether a finding's issue or fix names a forecast input, or its fix asks for one to change."""
+    issue,fix=str(finding.get('issue') or ''),str(finding.get('fix') or '')
+    return bool(FORECAST_INPUT_NAMED.search(issue+' '+fix) or FORECAST_CHANGE_ASKED.search(fix))
+
+
+def _in_prose(finding, memo):
+    excerpt=finding.get('current_excerpt') or ''
+    return bool(excerpt.strip()) and excerpt in memo
+
+
+def _finding_key(finding):
+    """(rule, quoted text): a finding's identity across reviews, whose IDs are renumbered."""
+    return (finding.get('rule'),finding.get('current_excerpt') or '')
+
+
+def _forecast_findings(findings, memo, python_ids=(), answered=()):
+    """Surviving blockers and majors that need the forecast response, as (id, reason).
 
     The forecast response runs only when this is not empty. A reviewer finding
-    counts when it names no quality-standard rule, so it cannot be classed as a
-    wording defect, or when its quoted text is not in the writer's prose: the
-    computed summary, exhibits, tables and the plan text Python prints (scenario
-    rationales, monitoring cases, counterfactual and repurchase labels) change
-    only with the plan. A Python check counts when it found no valuation model.
-    Every other blocker or major names a rule about the prose (B1-B3, M1-M6) and
-    quotes the prose, so exact edits answer it. The edit call can still report
-    that a finding needs a forecast change; that also runs the forecast response.
+    counts when it names a forecast input (see ``_names_forecast_input``),
+    whatever rule it cites and whatever it quotes, or when it quotes the writer's
+    prose and names no quality-standard rule, so it cannot be classed as a
+    wording defect. A finding that quotes computed text (the first page, the
+    valuation detail, the tables) and names no forecast input is left to the
+    review status: no stage can change that text, and reopening the forecast for
+    it every round never resolved it (review, 2026-11-27). A finding the forecast
+    response already answered "unchanged" on this valuation (``answered``, keyed
+    by ``_finding_key``) does not run it again. A Python check counts when it
+    found no valuation model. The edit call can still report that a finding
+    needs a forecast change; that also runs the forecast response.
     """
     reasons=[]
     for finding in findings:
@@ -348,12 +384,43 @@ def _forecast_findings(findings, memo, python_ids=()):
             if identifier in PLAN_CHECK_IDS:
                 reasons.append((identifier,'a Python check found no valuation model'))
             continue
-        excerpt=finding.get('current_excerpt') or ''
-        if not finding.get('rule'):
+        if _finding_key(finding) in answered:
+            continue
+        if _names_forecast_input(finding):
+            reasons.append((identifier,'names a forecast input'))
+        elif _in_prose(finding,memo) and not finding.get('rule'):
             reasons.append((identifier,'names no quality-standard rule'))
-        elif not excerpt.strip() or excerpt not in memo:
-            reasons.append((identifier,'quotes text outside the writer\'s prose'))
     return reasons
+
+
+def _computed_text_findings(findings, memo, python_ids=(), answered=()):
+    """IDs of reviewer blockers and majors that quote computed text no stage can change.
+
+    These quote text outside the writer's prose and either name no forecast
+    input or were already answered "unchanged" by the forecast response.
+    """
+    return [finding.get('id') for finding in findings
+            if isinstance(finding,dict) and finding.get('severity') in {'blocker','major'} and
+            finding.get('id') not in python_ids and not _in_prose(finding,memo) and
+            (not _names_forecast_input(finding) or _finding_key(finding) in answered)]
+
+
+def _answered_forecast(state, valuation_sha256):
+    """(rule, quote) of findings the forecast response answered "unchanged" on this valuation in this cycle.
+
+    Carried into later rounds like ``_carried_refutations``: a forecast that was
+    kept for a finding is not reopened when the next review raises it again.
+    """
+    answered=set()
+    for entry in state.get('revision_rounds',[]):
+        if (entry.get('cycle')==state.get('revision_base',0) and entry.get('forecast_response')=='unchanged' and
+                entry.get('valuation_sha256')==valuation_sha256):
+            answered|={tuple(item) for item in entry.get('answered',[]) if isinstance(item,list) and len(item)==2}
+    return answered
+
+
+COMPUTED_TEXT_NOTE = ('These blockers or majors quote computed text that no revision stage can change, so the review '
+                      'loop stopped with them open: {ids}.')
 
 
 def _edit_required(findings, memo, python_ids=()):
@@ -373,7 +440,7 @@ def _edit_required(findings, memo, python_ids=()):
     return required
 
 
-FORECAST_SKIP_REASON = ('Every surviving blocker and major names a quality-standard rule and quotes the writer\'s prose, '
+FORECAST_SKIP_REASON = ('No surviving blocker or major names a forecast input or lacks a quality-standard rule, '
                         'so the forecast was not reopened; the valuation is unchanged.')
 # Python's checks that only a plan can answer; its other checks concern the prose.
 PLAN_CHECK_IDS = frozenset({'valuation-model-missing'})
@@ -412,13 +479,91 @@ def _edit_response(text):
     return edits,flags
 
 
-def _apply_finding_edits(memo, edits, finding_ids, pools, dollars=True):
+# Rules about figures: only a finding under one of these may change a figure in the
+# prose. Python's figure checks count too. An edit for a wording finding that moved a
+# valued figure still applied (review, 2026-11-27).
+FIGURE_RULES = frozenset({'B1','B3','M1','M3'})
+FIGURE_CHECK_IDS = frozenset({'number-untraced','number-unverified-only','cite-primary-source','comparison-direction',
+                              'valuation-value-mismatch','valuation-model-missing'})
+_SCENARIO_WORD = re.compile(r'\b(bear|base|bull|weighted)\b', re.I)
+
+
+def _valued_figures(result):
+    """Per-share values by name: bear, base, bull and weighted, where computed."""
+    values={}
+    if isinstance(result,dict):
+        for name in ('bear','base','bull'):
+            value=((result.get('scenarios') or {}).get(name) or {}).get('per_share_value')
+            if isinstance(value,(int,float)) and not isinstance(value,bool):
+                values[name]=float(value)
+        weighted=result.get('weighted_per_share_value')
+        if isinstance(weighted,(int,float)) and not isinstance(weighted,bool):
+            values['weighted']=float(weighted)
+    return values
+
+
+def _figure_list(text):
+    return [(display,number,decimals) for display,number,decimals,_ in _figures(text or '')]
+
+
+def _shows(number, decimals, value):
+    return abs(number-abs(value))<=0.5*10**-decimals+1e-9
+
+
+def _scope_breach(quote, replacement, finding, values):
+    """Why an edit reaches past its finding, or None.
+
+    It may not delete a heading line or drop a citation the finding does not
+    name. It may change a figure only for a rule about figures, and a new
+    per-share or scenario figure must equal the computed value its sentence names.
+    """
+    kept={line.strip() for line in replacement.splitlines()}
+    for line in quote.splitlines():
+        if line.lstrip().startswith('#') and line.strip() not in kept:
+            return 'replacement removes the heading '+line.strip()[:80]
+    cited=lambda text:set(re.findall(r'\bS\d+\b',' '.join(re.findall(r'\[([^\]\n]*\bS\d+[^\]\n]*)\]',text))))
+    dropped=cited(quote)-cited(replacement)-set((finding or {}).get('source_refs') or [])
+    if dropped:
+        return 'replacement drops citations the finding does not name: '+', '.join(sorted(dropped))
+    # Matched by value, so a restyled amount ($36.3B for USD 36.3 billion) is the same figure.
+    before=[number for _,number,_ in _figure_list(quote)]
+    added=[]
+    for item in _figure_list(replacement):
+        if item[1] in before:
+            before.remove(item[1])
+        else:
+            added.append(item)
+    if not added:
+        return None
+    rule=(finding or {}).get('rule')
+    # A finding passed by ID alone has no known rule, so it may not change a figure.
+    if rule not in FIGURE_RULES and (finding or {}).get('id') not in FIGURE_CHECK_IDS:
+        return 'replacement changes a figure though the finding is not about figures: '+', '.join(d for d,_,_ in added[:5])
+    valued=any(_shows(number,decimals,value) for _,number,decimals in _figure_list(quote) for value in values.values())
+    for display,number,decimals in added:
+        if not (valued or any(_shows(number,decimals,value) for value in values.values())):
+            continue
+        sentence=next((part for part in re.split(r'(?<=[.!?])\s+',replacement) if display in part),replacement)
+        names=[match.group(1).lower() for match in _SCENARIO_WORD.finditer(sentence.split(display)[0])]
+        if not names or names[-1] not in values or not _shows(number,decimals,values[names[-1]]):
+            return (f'replacement writes {display} for a valued figure; the computed '
+                    +(f'{names[-1]} value is {values[names[-1]]:.2f}' if names and names[-1] in values else 'value its sentence names is not that'))
+    return None
+
+
+def _apply_finding_edits(memo, edits, finding_ids, pools, dollars=True, values=None):
     """Apply edits that each answer a named finding; return (memo, one record per edit).
 
     An edit is rejected when it names no finding, when its quote is not exactly
     once in the prose, or when its replacement adds a figure that traces to no
-    source or computed value, or a trading-layer term, that the quote lacks.
+    source or computed value, or a trading-layer term, that the quote lacks, or
+    reaches past its finding (see ``_scope_breach``). ``finding_ids`` is a set
+    of IDs or a mapping of ID to finding; with the mapping the rule and source
+    references of each finding bound its edits. ``values`` holds the computed
+    per-share values by name (``_valued_figures``).
     """
+    findings=finding_ids if isinstance(finding_ids,dict) else None
+    values=values or {}
     records=[]
     for edit in edits if isinstance(edits,list) else []:
         record={'finding':edit.get('finding') if isinstance(edit,dict) else None,'applied':False}
@@ -447,6 +592,8 @@ def _apply_finding_edits(memo, edits, finding_ids, pools, dollars=True):
                 record['reason']='replacement adds a trading-layer term'
             elif style_added(quote,replacement,dollars,memo):
                 record['reason']='replacement breaks the writing standard: '+', '.join(style_added(quote,replacement,dollars,memo))
+            elif _scope_breach(quote,replacement,(findings or {}).get(record['finding']),values):
+                record['reason']=_scope_breach(quote,replacement,(findings or {}).get(record['finding']),values)
             else:
                 memo=memo.replace(quote,replacement)
                 record['applied']=True
@@ -1946,7 +2093,10 @@ def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
                      '; revision rounds are priced separately and format/forecast repairs are excluded',
             'basis':'Uncached UTF-8 byte reservations at maximum catalog price tiers and configured output limits. '
                     'Only currently known context is included. Future search results, synthesis, forecasts, '
-                    'computed valuation and memo text can increase reservations; this floor is not a completion guarantee or predicted bill.',
+                    'computed valuation and memo text can increase reservations; this floor is not a completion guarantee or predicted bill.'+
+                    (' A later plan sample is reserved at the cache-read price; if the provider misses the cache it is '
+                     'billed at the cache-write price, the ledger records the shortfall, and every later reservation '
+                     'counts the actual charge.' if plan_samples>1 else ''),
             'budget_usd':router.budget, 'known_context_reservation_floor_usd':floor,
             'suggested_total_allowance_usd':suggested if suggested<=100 else None,
             'max_revisions':max_revisions, 'passed':router.budget>=floor, 'stages':stages,
@@ -4093,6 +4243,17 @@ def _with_summary(memo, plan, result, sources=(), ticker=''):
     return title+'\n\n'+(summary+'\n' if summary else '')+prose+'\n'
 
 
+def _inspected_text(memo, sources, plan, result, ticker=''):
+    """The first page and the writer's prose: what Python's memo checks read.
+
+    The valuation detail lists counterfactual and convention tables with "Case"
+    and "Value per share" columns. Read as the scenario table, a case named
+    bull_case or one holding "expected" raised a value mismatch that no edit could
+    clear (review, 2026-11-27). The first page carries the scenario table itself.
+    """
+    return _label_unverified(_with_summary(memo,plan,result,sources,ticker),sources)
+
+
 def reader_view(memo, sources, plan, result, ticker=''):
     """The delivered memo up to the sources: title, first page, prose, valuation detail, reported history, method notes.
 
@@ -4137,6 +4298,9 @@ def _render(memo, sources, gaps, plan, result, state):
         note+=(f"\n\nReview model: {latest['review_model']}"+
                (f"; author model: {latest['author_model']}" if latest.get('author_model') else '')+
                ('. The same model wrote and reviewed this memo.' if same else '.'))
+    stuck=(state.get('computed_text_findings') or {}).get('ids')
+    if stuck:
+        note+='\n\n'+COMPUTED_TEXT_NOTE.format(ids=', '.join(map(str,stuck)))
     body=reader_view(memo,sources,plan,result,state.get('ticker',''))
     limits=('\n\nRetrieval gaps:\n'+'\n'.join('- '+g for g in gaps)) if gaps else '\n\nNo retrieval gap is recorded.'
     return (body+'\n\n## Sources\n'+refs+limits+
@@ -4845,6 +5009,17 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
     context,later=_evidence_blocks(state)
     def evidence_above():
         return EVIDENCE_ABOVE+(LATER_EVIDENCE+later if later else '')
+    # The stale-facts note joins the gaps before they are serialized: built after,
+    # the first attempt's plan prompts lacked it and a resumed attempt sent different
+    # prompts, so every plan sample was paid for again (review, 2026-11-27).
+    stale=[source['id'] for source in state['sources'] if isinstance(source,dict) and isinstance(source.get('data'),dict)
+           and source['data'].get('fact_origin')=='sec_companyfacts' and
+           (source['data'].get('selection') or {}).get('concepts_sha256')!=CONCEPT_SELECTION_SHA256]
+    if stale:
+        note=(f'SEC facts {", ".join(stale)} were collected under an earlier concept list, so reported cost and expense '
+              'lines may be missing from the operating reference. Run in a new --output folder to collect them.')
+        if note not in state['gaps']:
+            state['gaps'].append(note)
     gaps=json.dumps(state['gaps'])
     pending=state.get('pending_revision')
     resume_revision=_pending_revision_matches(pending,state)
@@ -4874,14 +5049,6 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 'If operating expectations are near consensus, say so and identify the actual rate, terminal '
                 'or capitalization disagreement instead of manufacturing contrarianism. '
                 'List the five highest-impact uncertainties.\nEvidence:\n'+context,tokens=EVIDENCE_SYNTHESIS_TOKENS)
-    stale=[source['id'] for source in state['sources'] if isinstance(source,dict) and isinstance(source.get('data'),dict)
-           and source['data'].get('fact_origin')=='sec_companyfacts' and
-           (source['data'].get('selection') or {}).get('concepts_sha256')!=CONCEPT_SELECTION_SHA256]
-    if stale:
-        note=(f'SEC facts {", ".join(stale)} were collected under an earlier concept list, so reported cost and expense '
-              'lines may be missing from the operating reference. Run in a new --output folder to collect them.')
-        if note not in state['gaps']:
-            state['gaps'].append(note)
     if 'plan' not in state:
         anchor_revenue=(reported.get('actuals') or {}).get('revenue')
         prompt=('Build an investment valuation plan for '+ticker+'. Ground actuals in supplied evidence; '
@@ -5153,6 +5320,13 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'mode':mode,'edit_required':list(required)}
         checkpoint()
 
+    def stop_on_computed_text(iteration,stuck):
+        state['complete']=False
+        state['quality_status']='unresolved_findings'
+        state['computed_text_findings']={'iteration':iteration,'ids':list(stuck)}
+        state.pop('pending_revision',None)
+        checkpoint()
+
     def note_round(number,**fields):
         rounds=state.setdefault('revision_rounds',[])
         entry=next((item for item in rounds if item.get('round')==number and item.get('cycle')==state.get('revision_base',0)),None)
@@ -5200,8 +5374,9 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             save_pending(iteration,memo,combined,adjudication,'edits',manifest,required)
             return edit_round(iteration,memo,combined,adjudication,required,manifest)
         computed=(result,plan,_computed_tables(state['sources']))+_rounded_inputs(plan,result)
-        edited,records=_apply_finding_edits(memo,edits or [],{f.get('id') for f in combined if isinstance(f,dict)},
-                                            trace_pools(state['sources'],computed),_dollar_filer(plan,result))
+        edited,records=_apply_finding_edits(memo,edits or [],{f.get('id'):f for f in combined if isinstance(f,dict)},
+                                            trace_pools(state['sources'],computed),_dollar_filer(plan,result),
+                                            _valued_figures(result))
         edited=_label_unverified(edited,state['sources'])
         answered={item['finding'] for item in records if item['applied']}
         missing=[identifier for identifier in required if identifier not in answered]
@@ -5321,7 +5496,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         manifest={'memo_sha256':hashlib.sha256(visible.encode()).hexdigest(),
                   'sources_sha256':_digest(state['sources']),'valuation_sha256':_digest(result),
                   'review_type':'model_peer_review_not_publication_certification'}
-        deterministic=inspect_memo(visible,state['sources'],result)+[
+        deterministic=inspect_memo(_inspected_text(memo,state['sources'],plan,result,ticker),state['sources'],result)+[
             {key:value for key,value in issue.items() if key!='items'}|{'issue':issue['issue']+' Examples: '+
              '; '.join(item['figure'] or item['sentence'][:80] for item in issue['items'][:8])} for issue in issues]
         fresh_notes=(state.get('external_notes','') if state.get('external_notes_digest') !=
@@ -5498,10 +5673,21 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         core.save(folder/'source-ledger.json',claim_ledger(report))
         checkpoint()
         if not major:
+            state.pop('computed_text_findings',None)
             state['complete']=bool(result)
             if not result:
                 state['quality_status']='missing_valuation'
             break
+        python_ids={f.get('id') for f in deterministic}|PYTHON_FINDING_IDS
+        answered=_answered_forecast(state,_digest(result))
+        reasons=_forecast_findings(combined,memo,python_ids,answered)
+        required=_edit_required(combined,memo,python_ids)
+        stuck=_computed_text_findings(combined,memo,python_ids,answered)
+        if not reasons and not required:
+            # Only computed text no stage can change remains: stop with it open.
+            stop_on_computed_text(iteration,stuck)
+            break
+        state.pop('computed_text_findings',None)
         if _revisions_used(state)==max_revisions:
             state['complete']=False
             state['quality_status']='unresolved_findings'
@@ -5527,11 +5713,12 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         # The forecast is reopened only for findings a prose edit cannot answer
         # (see _forecast_findings). Live runs (2026-11-27) paid $1.12-1.34 for a
         # forecast response that answered "unchanged" for Microsoft and Apple.
-        python_ids={f.get('id') for f in deterministic}|PYTHON_FINDING_IDS
-        reasons=_forecast_findings(combined,memo,python_ids)
-        required=_edit_required(combined,memo,python_ids)
         if reasons:
             adjudication,decision=forecast_response(iteration,memo,combined)
+            if decision=='unchanged':
+                # Kept for these findings: a later review raising them again does not reopen it.
+                note_round(iteration+1,valuation_sha256=_digest(result),
+                           answered=[list(_finding_key(f)) for f in combined if f.get('id') in {item[0] for item in reasons}])
         else:
             adjudication={'skipped':True,'reason':FORECAST_SKIP_REASON,
                           'findings':[f.get('id') for f in combined if f.get('severity') in {'blocker','major'}]}
@@ -5544,6 +5731,11 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             note_round(iteration+1,revision='rewrite',rewrite_reason='the plan changed')
             finish_revision(iteration,memo,combined,adjudication)
             continue
+        if not required:
+            # The forecast stands and no finding quotes the prose: an edit call would change nothing.
+            note_round(iteration+1,revision='none',stop_reason='the forecast stands and no blocker or major quotes the prose')
+            stop_on_computed_text(iteration,_computed_text_findings(combined,memo,python_ids,_answered_forecast(state,_digest(result))))
+            break
         save_pending(iteration,memo,combined,adjudication,'edits',record['manifest'],required)
         edit_round(iteration,memo,combined,adjudication,required,record['manifest'])
     final_report=_render(state['current_memo'],state['sources'],state['gaps'],plan,result,state)

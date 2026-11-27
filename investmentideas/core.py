@@ -412,6 +412,8 @@ class Router:
         reserve = self.estimate(model, prompt, max_tokens, web=web, prefix=prefix or '', cached=cached)
         catalog_model = self.catalog[model]
         pin, pout = _text_price_caps(catalog_model['pricing'])
+        # The allowance check counts what earlier calls actually charged, including the
+        # overshoot of a cache-read reservation the provider billed at the write price.
         spent = sum(row['charged_or_reserved_usd'] for row in self.ledger)
         if spent + reserve > self.budget:
             raise BudgetExceeded(f'Budget would be exceeded before {stage}: ${spent:.4f} used/reserved, ${reserve:.4f} reserved for next call. '
@@ -502,6 +504,14 @@ class Router:
         row.update(status='received', usage=usage)
         if valid_number(cost):
             row['charged_or_reserved_usd'] = cost
+            if cost > reserve:
+                # A request reserved at the cache-read price that missed the cache is billed
+                # at the write price: the ledger keeps the shortfall and the actual charge.
+                row['reservation_overshoot_usd'] = cost - reserve
+                if cached:
+                    row['cache_read_reservation_missed'] = True
+                if spent + cost > self.budget:
+                    row['allowance_exceeded_usd'] = spent + cost - self.budget
         choice = result['choices'][0]
         message = choice.get('message', {})
         content = message.get('content')
