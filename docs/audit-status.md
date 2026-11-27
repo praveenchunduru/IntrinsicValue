@@ -757,16 +757,83 @@ finding in any run.
 
 The runs' folders are kept outside the repository. No run has used the last fixes yet.
 
+### Stabilization (2026-11-27)
+
+The three live runs showed four problems with the process:
+
+- Paid runs were serving as the test suite: a defect surfaced only when a run paid for
+  the stage that exposed it.
+- About 45% of a run's cost bought nothing. The evidence cache was written again after
+  targeted research, and a forecast response was paid to answer "unchanged".
+- Full rewrites in revision introduced new errors.
+- On the same evidence the value moved 9-12% between forecasts. Four plan samples at
+  temperature 0 valued Apple at $138 to $151 a share (an 8.7% spread) and Microsoft at
+  $354 to $398 (12.0%), for $4.55 with `tools/replay.py --plan-samples`.
+
+The changes, described in the
+[underwriting guide](underwriting.md#how-the-first-draft-is-produced):
+
+- **Three forecasts, averaged.** The balanced profile writes the plan three times from
+  the same evidence (`--plan-samples`, 1 to 5) and values the mean of their inputs, with
+  median industry weights (`consensus.py`). Across the 3-sample subsets of the four saved
+  samples the base value then spread 1.0% for Apple and 2.9% for Microsoft. The subsets
+  share samples, so independent runs will differ more. Extra samples cost about $0.30
+  each because the evidence is cached. The first page states the range of the samples'
+  values, and rationales no longer restate input figures.
+- **Review loop.** The evidence block is frozen at the plan stage and cached for the whole
+  run. Findings are answered by exact edits (`prose_edits_N`) that Python applies and
+  checks. The forecast is reopened only for a finding that names a forecast input, and
+  the memo is rewritten only when the forecast inputs changed or a required edit failed.
+  Up to two rounds by default. Findings on text Python writes are listed separately and
+  saved to `computed-text-findings.json`. Python owns its plan text, and model-facing
+  JSON is rounded to six significant figures.
+- **Memo layout and writing standard.** A computed first page, then the eight prose
+  sections, valuation detail, reported history, method notes, sources and review status.
+  Numbers read $139 and $34.3B, with units in table headers. The writing standard
+  (`quality.WRITING_STANDARD`, rule N2) covers the prose only, and free checks enforce its
+  style rules. The reviewer reads the delivered text, and `tools/rerender.py` rebuilds a
+  saved memo for free.
+- **Tools.** `tools/replay.py --plan-samples N`, `--consensus-only` and `--from review`,
+  and `tools/consensus_check.py`, which recombines saved samples with no request.
+- **Smaller fixes.** The rate block takes the plan's currency and unit (two of eight live
+  samples had paid a repair for it). Non-operating investment lines keep a stable order,
+  so samples send identical prompts. An audit of every note Python renders in four runs
+  corrected the ones that misdescribed what the engine does.
+
+Live results:
+
+- **Smoke runs, dev profile.** A Coca-Cola run stopped at the plan stage for $0.53:
+  Claude Haiku 5.5 wrote no valid plan in three samples of four attempts each. A replay
+  from the draft cost $0.64 and showed the frozen cache and the edit rounds working live.
+- **Microsoft, full run on 594276b: $7.34, unresolved.** A method note Python writes
+  ("the rate alternatives keep this rule") read as wrong beside a diagnostic. The edit
+  call asked for a forecast change, the forecast response rewrote the assumptions label,
+  and the loop paid a full rewrite and a reviewer cache write in both rounds. d0bdbce
+  keeps Python's text out of the forecast response and counts a response as a plan
+  change only when a forecast input changes; bea453f corrects the note and the others the
+  audit found.
+- **Microsoft, review-only replay on edde0a4: $1.73, approved** with two minor findings
+  after one edit round. The second review read the cache: $0.08, against $0.47 for the
+  first.
+- **Coca-Cola and Alphabet:** [PLACEHOLDER, to be filled in: full runs started on
+  2026-11-27 and still running when this section was written.]
+
+Spending on 2026-11-26 and 2026-11-27 so far is $29.53 by the runs' cost summaries:
+$14.75 for the three live runs above, $4.55 for the plan samples, $1.17 for the smoke
+runs, $7.34 for the Microsoft full run and $1.73 for the replay. The suite has 979
+offline tests, passing on Python 3.9, 3.12 and 3.13.
+
 ### Still open after 2026-11-14
 
-- One of three live runs on the 2026-11-26 change set produced an approved memo (Apple,
-  after one revision). No first draft has passed without a revision.
+- Two memos have passed review: Apple's full run after one revision and Microsoft's
+  review-only replay on the stabilized code after one edit round. No first draft has
+  passed without a round.
 - The plan-prompt evidence-tier rule and the rubric clarification have not been run live.
 - No paid run has yet shown a first draft with no surviving major finding; replay 2 does
   so only when the later fact-check is applied offline.
-- Plan forecasts vary by up to 4% in value between runs on the same evidence; the
-  2026-11-26 review traced most of Apple's spread to revenue growth, which the printed
-  base rates now place against history and nothing checks.
+- Single forecasts on the same evidence spread 9-12% in value. Averaging three cut the
+  spread across subsets of four saved samples to 1-3%, but the subsets share samples:
+  repeatability across independent runs has not been measured.
 - The terminal return on new capital was the plan author's judgment (25% for both Apple
   and Microsoft) and the largest single sensitivity in both memos; since 2026-11-26 it
   is a house convention.
@@ -778,6 +845,8 @@ The runs' folders are kept outside the repository. No run has used the last fixe
   reviewer again on 2026-11-26): balanced uses Claude Haiku 5.5, Claude Opus 5.5 and
   GPT-6.2 Sol; economy uses DeepSeek V4.1 Flash, DeepSeek V4 Pro and Kimi K3.1 Pro. The
   balanced profile has run live (2026-11-27); the economy profile has not.
+- The dev profile cannot write a plan: Claude Haiku 5.5 failed all three samples on
+  Coca-Cola.
 - The writer still occasionally does arithmetic the computed tables do not supply (a
   net share reduction stated a thousand times too small, then corrected to a wrong
   figure). The reported-history table carries no net share change.

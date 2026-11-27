@@ -71,8 +71,9 @@ the [underwriting guide](docs/underwriting.md).
   change at a time: a longer period of high returns, another discount rate, another
   terminal assumption.
 - **The value is an estimate with a date.** It rests on a forecast that a language model
-  wrote from public filings. A forecast can be wrong, and two runs on the same company
-  can differ.
+  wrote from public filings. In the default profile the model writes the forecast three
+  times and the value uses their average; the first page shows how far the three values
+  ranged. A forecast can still be wrong, and two runs on the same company can differ.
 - **It is a starting point.** Use it to learn a company quickly, to test your own view,
   or to see what a price assumes.
 
@@ -88,7 +89,9 @@ adviser, before you invest.
 ## Status
 
 In three live runs on 2026-11-27 (Microsoft, Apple and Coca-Cola), one memo passed the
-model review after one revision and two ended with open findings. An external audit in
+model review after one revision and two ended with open findings. The review loop was
+then rebuilt to answer findings with exact edits; on the rebuilt code a review-only
+replay of Microsoft passed after one edit round. An external audit in
 early November 2026 graded an earlier version's showcase memo B− and its process C; the
 benchmark-parity claim made before it is withdrawn. What has been repaired since, what
 each live run found and what is still open are in [audit status](docs/audit-status.md).
@@ -157,8 +160,9 @@ whose own facts conflict, or that report shares only by class, are refused with 
 reason; see the [issuer sample](docs/audit-status.md#live-validation-on-2026-11-14).
 
 The workflow synthesizes evidence, builds a source-referenced forecast plan,
-computes a bear/base/bull FCFF DCF in Python and writes a memo. The first draft is
-built to stand on its own:
+computes a bear/base/bull FCFF DCF in Python and writes a memo. In the balanced profile
+the plan is written three times from the same evidence, and the plan valued averages
+them input by input. The first draft is built to stand on its own:
 
 - Python extracts the filings' revenue, cost and operating income by product, segment
   and geography, five years of reported history, the latest eight fiscal quarters, and
@@ -171,9 +175,11 @@ built to stand on its own:
 - Free checks trace every figure in the prose to the computed output or a primary
   source, then one small call fixes what they find. Citations of unverified web
   excerpts are labelled in the text.
-- A different model reviews the memo against the same written quality standard
-  the writer was given. One revision follows by default if material findings remain;
-  findings still open stay visible.
+- A different model reviews the memo as the reader sees it, against the same written
+  quality standard the writer was given. Up to two revision rounds follow by default if
+  material findings remain. A round answers the findings with exact edits that code
+  applies and checks, and rewrites the memo only when the forecast changed or an edit
+  failed. Findings still open stay visible.
 
 The discount rate follows the conventions the equity risk premium was solved under.
 Damodaran's implied premium assumes the market grows at the Treasury rate forever; a
@@ -225,8 +231,11 @@ export OPENROUTER_API_KEY
 # Replace with your real requester email for SEC access; this is not a paid key
 export SEC_CONTACT_EMAIL='your-real-email@example.com'
 
-# Full memo: Claude Haiku research, Claude Opus analysis, GPT-6.2 Sol review
+# Full memo: Claude Haiku research, Claude Opus analysis (three forecasts), GPT-6.2 Sol review
 python -m investmentideas AAPL --profile balanced --budget 20
+
+# One forecast instead of three, and at most one revision round
+python -m investmentideas AAPL --plan-samples 1 --max-revisions 1 --budget 20
 
 # Cheaper full analysis, or a four-call financial overview
 python -m investmentideas AAPL --profile economy --budget 20
@@ -241,6 +250,12 @@ python -m investmentideas AAPL --review-notes findings.txt --max-revisions 3 --b
 # Re-run the plan, draft and review of a saved run on its frozen evidence
 python tools/replay.py research-output/AAPL/full-RUN_HASH replay-output --from draft
 
+# Measure how far the value moves across four plan samples on the same evidence
+python tools/replay.py research-output/AAPL/full-RUN_HASH samples-output --plan-samples 4 --budget 8
+
+# Rebuild a saved memo with the current rendering code, at no cost
+python tools/rerender.py research-output/AAPL/full-RUN_HASH memo-rerendered.md
+
 # Choose a different final reviewer without repeating completed research
 python -m investmentideas AAPL --review-model moonshotai/kimi-k3.1-pro --budget 20
 
@@ -248,8 +263,11 @@ python -m investmentideas AAPL --review-model moonshotai/kimi-k3.1-pro --budget 
 
 Use `--evidence` for focused text, `--sources` for supplemental source records,
 `--counterfactuals` for computed base-case overrides, and `--draft` for an edited
-author body. `--easy-model` and `--strong-model` select explicit model IDs; unavailable
-IDs and unsupported pricing fail before paid research. `--sec-contact your-real-email@example.com`
+author body. `--plan-samples N` (1-5) sets how many forecasts are written and averaged:
+three by default in the balanced profile, one in the others. `--max-revisions N` (0-8,
+default 2) limits the revision rounds after the first review. `--easy-model` and
+`--strong-model` select explicit model IDs; unavailable IDs and unsupported pricing
+fail before paid research. `--sec-contact your-real-email@example.com`
 sets SEC requester identity for one run without saving it. `SEC_CONTACT_EMAIL` or a
 contact-bearing `SEC_USER_AGENT` can supply it instead. See `--help` and the
 [underwriting guide](docs/underwriting.md).
@@ -265,11 +283,16 @@ The same ticker/models/evidence on the same UTC date resume saved stages rather
 than paying again. A new day refreshes the evidence; use `--output fresh-folder`
 for a new same-day snapshot. OS file locks prevent duplicate concurrent full runs.
 
-- `memo.md`: the research draft, computed valuation, sources, limitations and review status.
+- `memo.md`: a computed first page, the eight prose sections, the valuation detail,
+  reported history, method notes, sources and review status.
 - `sources.json`, `sources_raw/`: provenance, exact excerpts, retrieval dates and document archives.
 - `source-ledger.json`: paragraph-to-citation mapping; citation syntax is not semantic proof.
 - `assumptions.json`, `valuation.json`, `cashflows.csv`, `sensitivity.csv`: editable inputs and reproducible calculations.
-- `reviews/`, `revisions/`: frozen drafts, recorded findings, model responses and covered-file hashes.
+- `plan-consensus.json`: each forecast sample, its value and value impact, and how they were combined.
+- `reviews/`, `revisions/`: frozen drafts, recorded findings, model responses, each round's
+  edits (`edits-N.json`) and covered-file hashes.
+- `computed-text-findings.json`: review findings on text the code writes, collected for a code fix.
+- `budget-preflight.json`: the reservation floors priced before the first paid call.
 - `state.json`, `usage.json`: checkpoints, requested/returned models, reported token usage and costs/reservations.
 - `cost-summary.json`: cumulative stage/model costs, retained estimates and reported token-count coverage.
 
@@ -320,12 +343,18 @@ These measurements do not establish token savings, optimal routing or a quality/
 frontier; see the [measurement limits](docs/underwriting.md#costs-and-context-size).
 
 As listed on 2026-11-26, Claude Haiku 5.5 cost $0.10/$0.50, Claude Opus 5.5 $4/$20 and
-GPT-6.2 Sol $2/$10 per million input/output tokens ($4/$15 above 272,000 prompt tokens); Exa Auto search cost $0.007 per
-request. With the evidence cached across stages, a balanced first draft through review
-and its finding check is estimated at about $3 and a run with one revision at about
-$4.50, from measured token counts; not yet observed on a bill. The default allowance is
-$20: a ceiling, because each call reserves its prompt bytes at the model's highest
-price tier before it is sent, and a GPT-6.2 Sol review alone reserves about $2.50.
+GPT-6.2 Sol $2/$10 per million input/output tokens ($4/$15 above 272,000 prompt
+tokens); Exa Auto search cost $0.007 per request.
+
+Measured on 2026-11-27, balanced profile: three full runs with one forecast and one
+revision cost $4.50, $4.86 and $5.40; a Microsoft run with three forecasts and two
+rounds cost $7.34 on code whose loop paid a full rewrite in each round, since fixed; a
+review-only replay on the fixed code cost $1.73; extra forecast samples cost about
+$0.30 each because the evidence is cached. Estimated from replays, and not yet seen on
+a bill, a full run on the current code costs $2.60 to $3.40 with one forecast and about
+$0.60 more with three. The default allowance is $20: a ceiling, because each call
+reserves its prompt bytes at the model's highest price tier before it is sent, and a
+GPT-6.2 Sol review alone reserves about $2.50.
 Prices change. A four-call AAPL economy overview reported **$0.00757138** but had
 factual/date errors. It establishes transport/cost functionality, not memo quality
 or a promised full-run price. Full-memo cost depends on evidence and revisions.
@@ -339,9 +368,11 @@ charges and uncertain reservations still count when resuming the same settings.
 
 Free evidence collection precedes primary-input and budget preflights. An insufficient
 initial allowance stops before paid research and saves `budget-preflight.json` with
-an actionable resume instruction. Its known-context reservation floor covers the first
-draft and one review; unknown future search results, generated forecasts, valuation
-context, memo text, repairs and revisions can require more. Complete actual prompts
+an actionable resume instruction. Its known-context reservation floor covers the
+forecast samples, the first draft and one review; each revision round is priced
+beside it, with a usual-path and a worst-case floor for the whole run. Unknown future
+search results, generated forecasts, valuation context, memo text and repairs can
+require more. Complete actual prompts
 are reserved again before each request. If primary evidence is missing, retry free
 collection with a SEC contact or supply primary disclosures; dated snapshots remain frozen.
 A run can stop with unresolved findings when its budget or revision limit is reached;
@@ -390,7 +421,8 @@ python -m pip install .
 investmentideas --help
 ```
 
-The current source passes **854 tests** locally on Python 3.9, 3.12 and 3.13; the
+The current source passes **979 tests** locally on Python 3.9, 3.12 and 3.13 (one
+skips unless saved runs are named for it); the
 v0.2.0 release passed 268. The
 [CI matrix](https://github.com/praveenchunduru/IntrinsicValue/actions/runs/42261827883)
 tests Python 3.10, 3.12 and 3.13. CI runs synthetic evidence and mocked transports without model calls or

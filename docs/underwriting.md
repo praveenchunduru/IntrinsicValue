@@ -564,8 +564,8 @@ Every plan with a market price reports:
   continuing value is then NOPAT over the rate; otherwise it starts just above terminal
   growth, and only those rows can be marked fragile. When no rate in the range gives the
   price, `price_bound` reports the highest and lowest values with the rates that give
-  them, and the summary says that no flat rate in the searched range, up to 50%,
-  reconciles the price.
+  them, and the valuation detail says that no flat rate in the searched range, up to
+  50%, reconciles the price.
 - `convention_panel`: base value with one convention changed at a time: the current
   rate held constant, Damodaran's terminal rate, terminal growth at the risk-free rate,
   steady-state and terminal tax at the marginal rate, a terminal return 4 points above
@@ -576,13 +576,14 @@ Every plan with a market price reports:
   capital efficiency with R&D kept expensed as in the forecast, R&D expensed in the
   continuing value (the earlier house rule, where an R&D share is set), and the whole
   rate path one point higher and lower.
-  Rows carry no probability. The largest convention row is named; the two rate shifts
-  show scale and are not ranked. Rows that need the glide appear only under it. The
-  writer's instructions define a convention step as a calculated panel row with no kind
-  in brackets.
-- Exhibit rows in the same panel, never ranked and never changing the house value. The
-  summary and the panel name the largest horizon row and the largest rate-regime row
-  on a line of their own, labelled as exhibits:
+  Rows carry no probability. The first page lists the three convention rows that move
+  the value most; the two rate shifts show scale and are not ranked. Rows that need the
+  glide appear only under it. The writer's instructions define a convention step as a
+  row of the convention tables, the base value with one house convention changed.
+- Exhibit rows, never ranked and never changing the house value. The valuation detail
+  prints the conventions, the horizon rows and the rate-regime rows as separate tables,
+  and the writer's instructions call horizon, rate-regime and country-risk rows
+  exhibits:
   - **Horizons.** Five years keeps plan years 1-5 and makes the later model years
     steady-state years. Fifteen and twenty years hold the final-year margin and capital
     efficiency (the final sales-to-capital and R&D share where those are paths) while
@@ -823,13 +824,13 @@ less nine months restated later without Kenvue, against about $23.7 billion). Gr
 comes from comparatives in the same filing, or for a derived quarter the same two
 filings, so a restatement between the years is not read as growth. Quarters whose
 lengths differ by more than three days show n/m: Home Depot's 13-week fourth quarter
-against a 14-week one had shown −3.8% where sales per day rose 3.6%. The four latest quarters give the
-twelve-month margin the ceilings use. The annual tables showed Nvidia's 0.2% growth
-and 16% margin for the year to January 2023 while its quarterly margins ran at 7%, 10%
-and then 30%. The 10-K
-and 10-Q excerpts include gross-margin, inventory, purchase commitment and
-share-repurchase disclosures. The tables are derived from the archived documents on
-every run, so a folder collected earlier gets new columns.
+against a 14-week one had shown −3.8% where sales per day rose 3.6%. The four latest
+quarters give the twelve-month margin the ceilings use. The annual tables showed
+Nvidia's 0.2% growth and 16% margin for the year to January 2023 while its quarterly
+margins ran at 7%, 10% and then 30%. The 10-K and 10-Q excerpts include gross-margin,
+inventory, purchase commitment and share-repurchase disclosures. The tables are
+derived from the archived documents on every run, so a folder collected earlier gets
+new columns.
 
 Beside the history, Python computes return on invested capital by the method of
 Mauboussin and Callahan ("Return on Invested Capital: How to Calculate ROIC and Handle
@@ -907,20 +908,69 @@ revenue by product, service or segment, otherwise aggregate growth and margin ar
 Stated aggregate paths that the operating drivers do not produce are dropped, and
 the assumption notes record the largest gap. Python fills market equity, debt and
 finance leases from the reported bridge and, for US-dollar plans, the risk-free rate
-and premium from their source. The draft stage gets extended thinking (8,000 tokens,
-added to its output limit) where the model's catalog entry supports it. The plan stage
-does not think: a live plan call spent its whole 18,000-token limit reasoning and
-returned no text. A thinking stage that ends that way is retried once without
-reasoning.
+and premium from their source; the rate block takes the plan's currency and unit, so a
+model that writes them differently costs no repair. The draft stage gets extended
+thinking (8,000 tokens, added to its output limit) where the model's catalog entry
+supports it. The plan stage does not think: a live plan call spent its whole
+18,000-token limit reasoning and returned no text. A thinking stage that ends that way
+is retried once without reasoning. Claude Haiku 5.5 reasons unasked and OpenRouter
+counts that inside the output limit, so Haiku stages switch reasoning off, and a
+response cut off at its limit is retried once at 1.75 times the limit.
 
-Python places a valuation summary under the memo's title: scenario values and value /
-price with the index benchmark's ratio beside them, what the price implies, what the
-price requires (with the base-rate percentile of the required growth), the largest
-convention steps, the largest exhibit rows and year-1 margin against the reported
-results. The writer gets eight sections of about 3,000 words in total and the shared
-quality standard (`quality.RUBRIC`). It copies computed and reported figures exactly
-and does no arithmetic of its own. The section instructions allow the index benchmark
-only as context, reported as the index's own ratio, and a free check does not count a
+In the balanced profile the plan is written three times from the same evidence and
+prompt (`--plan-samples`, 1 to 5; other profiles write one). Each sample is its own
+request (`valuation_plan`, `valuation_plan_s2`, ...) with its own repairs, and a
+sample still invalid after them is dropped and recorded. Samples after the first read
+the cached evidence and cost about $0.30 each. Python then combines the valid samples
+input by input (`consensus.py`): each year's growth, gross margins, expense shares and
+sales-to-capital, and the tax and rate inputs, by their mean, and the industry weights
+of the bottom-up beta by their median, with an industry a sample left out counted as
+zero and the weights renormalized. Samples that disagree on segments or horizon are
+combined within the largest group that agrees, or the sample closest to the median
+paths is used alone. The text (rationales, cited bases, counterfactuals, monitoring)
+comes from the sample whose base-case revenue and EBIT paths are closest to the
+per-year medians. The plan prompt asks for rationales that give evidence and direction
+without restating input figures, and a figure in the text that matches one of that
+sample's own inputs is rewritten to the combined input. The combined plan goes through
+the lock, the continuity checks and the engine as a single plan does.
+`plan-consensus.json` and `forecast_consensus` in `valuation.json` record each sample,
+its value and its value impact (its driver groups swapped into the plan valued). The
+first page states the range of the samples' base values, and the method notes give the
+count and any sample left out. Inputs reach the prompt in a fixed order, so every
+sample sends the same request; the non-operating investment lines had followed the
+process hash seed.
+
+Four plan samples on identical evidence and prompt at temperature 0 (2026-11-27)
+valued Apple at $138 to $151 a share and Microsoft at $354 to $398, spreads of 8.7% and
+12.0% of the median. The discount rate moved Apple's value most: one sample mapped
+about half the business to telecom equipment. Means of three samples' paths with median
+industry weights gave a spread across the 3-sample subsets of 1.0% for Apple and 2.9%
+for Microsoft (`tools/consensus_check.py`); medians of both gave 1.2% and 7.1%. The
+subsets share samples, so independent runs will differ more.
+
+The memo reads, in order: a computed title and first page, the eight prose sections,
+Valuation detail, Reported history, Method notes, Sources and Review status. The first
+page names the currency once and holds one sentence on the values, the scenario table
+with the S&P 500 row, a sentence on the range of the forecast samples, "What the price
+needs" (one base-case input at a time, with the base-rate percentile of the required
+growth) and "Conventions that move the value most" (the three largest convention
+rows). The
+valuation detail carries the equity bridge, the forecast, the discount rate and what
+the price implies, the convention, horizon and rate-regime tables, base rates,
+monitoring and multiples, and year-1 margin against the reported results. Python's own
+sentences are short declaratives, and each basis note and caveat is stated once, in the
+method notes; a guard test fails when a rendered note calls a computed figure reported.
+Numbers follow one style: per-share values to three significant figures ($139), quoted
+prices as quoted ($355.58), aggregates as $34.3B or $850M, units in table headers, and
+model-written labels inside computed sections restyled the same way.
+
+The writer gets eight sections of about 3,000 words in total and the shared quality
+standard (`quality.RUBRIC`), whose writing standard (`quality.WRITING_STANDARD`, rule
+N2) covers the eight prose sections only: conclusions first, short declarative
+sentences, no contrast formulas or summary closers, no narration of the exhibits, and
+the number style above. The writer copies computed and reported figures exactly and
+does no arithmetic of its own. The section instructions allow the index benchmark only
+as context, reported as the index's own ratio, and a free check does not count a
 sentence that only reports the index's discount to its price as assigning the gap a
 cause.
 
@@ -930,11 +980,15 @@ found only in unverified excerpts and not presented as outside context; figures 
 to excerpts although a primary source has them; convention rows described as adding
 up; prose that assigns the gap to price a cause; table rows in the prose; a rise or
 fall word whose own figures move the other way; uncited frequency claims; mentions of
-Python or instructions; and prose over 3,600 words. One fix call returns quote-and-replacement edits that
-Python applies when the quote occurs once (deleting a duplicated passage removes its
-second copy); what remains goes to the reviewer as minor diagnostics. Python labels
-every citation of an unverified excerpt inline, as in [S16 unverified], and the source
-register carries the same label. The review applies the same quality standard, whose
+Python or instructions; prose over 3,600 words; and the style rules: "USD" written for
+a dollar filer, numbers of seven or more digits, em dashes, and more than two ", not"
+contrasts or two sentences that narrate an exhibit. One fix call returns
+quote-and-replacement edits that Python applies when the quote occurs once (deleting a
+duplicated passage removes its second copy); what remains goes to the reviewer as minor
+diagnostics. Python labels every citation of an unverified excerpt inline, as in [S16
+unverified], and the source register carries the same label. The reviewer and the
+finding check read the delivered memo up to the sources (`reader_view`), so a finding
+quotes what the reader sees. The review applies the same quality standard, whose
 rules carry IDs (B1-B3 blockers, M1-M6 majors, N1-N3 minors); each finding names the
 rule it breaks and is graded no higher than that rule's class. Every blocker or major
 the reviewer raises is then checked once more in a fresh context (`finding_check_N`). A
@@ -946,28 +1000,62 @@ contains none of the trading-layer terms the rule names; an M6 finding whose tex
 the figure as a house or computed one; and a finding refuted in an earlier review on the
 same text under the same rule. The reviewer's answers on the central weakness and the gap
 to price are recorded for the reader, not findings: Python's summary states which inputs
-alone can and cannot bring value to the price, and the conclusion does not restate it. A historical repurchase case whose
-amount is within 3% of a reported year's buybacks takes that year's program value and
-average price, so the exhibits and the history table quote one price. By default one revision follows if material findings remain,
-and the second review checks the earlier findings rather than re-auditing from scratch.
+alone can and cannot bring value to the price, and the conclusion does not restate it. A
+historical repurchase case whose amount is within 3% of a reported year's buybacks takes
+that year's program value and average price, so the exhibits and the history table
+quote one price.
 
-Python prints the reported history, the latest eight fiscal quarters, the
-return-on-capital table (one column per year) and the segment tables after
-the exhibits, with a scale check of the final forecast year against today; writers no
-longer re-type them. The valuation section also prints the equity bridge from
-enterprise value to value per share, the base-rate table after the scale check, and
-the forecast ROIC under the operating bridge.
+Up to two revision rounds follow by default (`--max-revisions`) while material
+findings remain, and each later review checks the earlier findings rather than
+re-auditing from scratch. A round answers the findings with exact quote-and-replace
+edits (`prose_edits_N`) that Python applies and checks. Python rejects an edit whose
+quote is not in the prose, and one that deletes a heading, drops a citation its finding
+does not name, adds an untraced figure or a trading term, breaks a style rule the quote
+did not, or changes a figure when its rule is not about figures. A new per-share figure
+must equal the computed value its sentence names. `reviews/edits-N.json` records which
+finding each edit answers. The forecast response (`model_response_N`) runs only when a
+surviving blocker or major names a forecast input, quotes the prose without naming a
+rule of the standard, or comes from a Python check that found no valuation, or when the
+edit call says only a forecast change answers a prose finding. Python owns part of the
+plan (the assumptions label, the pinned rate records, the house probabilities and
+terminal return, the per-year paths); those fields are left out of the proposal the
+response edits and restored if it returns them, and a response whose forecast inputs
+match the plan counts as unchanged. The memo is rewritten in full only when the forecast
+inputs changed or a required blocker or major got no applied edit. A blocker or major
+that quotes text Python writes and names no forecast input cannot be changed by any
+round: it is listed separately in the review status and written to
+`computed-text-findings.json` for a code fix.
 
-The evidence is sent first in every Claude stage, marked for one-hour provider caching,
-and the review and its finding check share one prefix of evidence, valuation and the
-draft between markers, so later stages read the evidence at the cache price. GPT-5.6
-and GPT-6 caching is explicit, each run keeps one provider through a session id, and reservations
-count the prefix at the cache-write price. A plan repair that returns the rejected plan
-unchanged ends the loop, and repair reasons are saved with the run.
+The Reported history section prints the annual results, the latest eight fiscal
+quarters, the return-on-capital table and the segment tables, scaled so a small company
+reads in millions; writers no longer re-type them. The valuation detail also prints the
+equity bridge from enterprise value to value per share (lines with nothing reported are
+named in one note), the forecast ROIC, the base-rate table and a scale check of the
+final forecast year against today.
+
+The evidence block is frozen when the plan stage writes it and sent first in every
+Claude stage, marked for one-hour provider caching, so the whole run reads it at the
+cache price. Sources from targeted research follow it uncached. The review and its
+finding check cache evidence and valuation, and the draft comes last, uncached, so a
+second review pays no new cache write for a changed draft. GPT-5.6 and GPT-6 caching is
+explicit, and each run keeps one provider through a session id. A plan sample after the
+first is reserved at the cache-read price once the ledger shows the prefix cached; a
+cache miss is recorded and every later reservation counts the actual charge. Floats in
+model-facing JSON are shown to six significant figures; saved files keep full
+precision, and the rounded figures join the figure trace. A plan repair that returns
+the rejected plan unchanged ends the loop, and repair reasons are saved with the run.
 
 `tools/replay.py` re-runs the plan, draft, checks and review of a saved run on its
-frozen evidence (`--from plan`, `--from draft` or `--from review`), so a prompt or
-extraction change can be judged for a dollar or two instead of a full run.
+frozen evidence (`--from plan`, `--from draft` or `--from review`, which keeps the
+saved plan and draft and runs only the free checks, their fix call and the review), so
+a prompt or extraction change can be judged for a dollar or two instead of a full run.
+`--plan-samples N` requests the plan N times on the identical prompt in one cache
+session, values each sample and prints their spread and a driver decomposition, then
+the consensus of every 3-sample subset and of all the samples; `--consensus-only`
+reports the consensus of samples already saved, with no request.
+`tools/consensus_check.py` does the same for saved sample folders, with a choice of
+mean or median. `tools/rerender.py` rebuilds a
+saved run's memo with the current rendering code at no cost, keeping its prose.
 
 ## Replay evidence and review a supplied plan
 
@@ -1023,6 +1111,13 @@ usage, not additional tokens. Requested and returned model identities remain
 visible. Reusing a saved stage makes no new ledger row, so this summary cannot
 count stage-cache hits or infer their savings. It is not invoice reconciliation.
 
+The budget preflight prices the plan samples (the later ones at the cache-read price),
+the first draft, its fix call, review and finding check, and then each revision round:
+its usual stages (targeted research, the edit call, the fix call, the review and its
+check) and the forecast response and rewrite it adds only when a finding concerns the
+forecast or an edit fails. `budget-preflight.json` records a usual-path and a
+worst-case reservation floor. Both are reservations, and neither predicts the bill.
+
 `state.json.prompt_context_metrics` records `full_json_utf8_bytes` and
 `presentation_utf8_bytes` for the valuation context. The deterministic presentation
 uses backward `same_as` JSON pointers and SHA-256 hashes for exact repeats when
@@ -1054,9 +1149,9 @@ review that gives neither answer gets a minor finding and can pass; the memo the
 the assessment as not stated. The default reviewer is a different model from the
 author: GPT-6.2 Sol for `balanced` (owner choice, 2026-11-26: the newest OpenAI
 generation in the catalog) and Kimi K3.1 Pro for `economy`. When `--strong-model`
-names the default reviewer, the profile's default author reviews instead. `--review-model` can name any model,
-including the author, and is saved with the run; a run folder saved before the
-cross-model default keeps its saved reviewer.
+names the default reviewer, the profile's default author reviews instead.
+`--review-model` can name any model, including the author, and is saved with the run;
+a run folder saved before the cross-model default keeps its saved reviewer.
 
 A model pass is a recorded assessment, not independent publication certification,
 an assurance of no defects, an investment recommendation or proof of forecast
