@@ -3750,7 +3750,9 @@ def _reported_figure(row, result, plan, sources):
         if ranks:
             key,house,needed=ranks
             if house:
-                parts.append(f'base-rate percentile {house}'+(f' (needed {needed})' if needed else ''))
+                parts.append(f'the base-case rate is at the {house} percentile of the base rates'+
+                             (f', the needed rate at the {needed}' if needed and needed[-2:] in ('th','st','nd','rd')
+                              else f', the needed rate {needed}' if needed else ''))
     elif name=='ebit_margin':
         cost=result.get('cost_path_continuity') or {}
         peak,years=cost.get('max_operating_margin'),cost.get('years')
@@ -4386,7 +4388,7 @@ def _equity_bridge_parts(plan, result, style, sources=None):
         for basis,labels in groups.items():
             names=labels[0] if len(labels)==1 else ', '.join(labels[:-1])+' and '+labels[-1]
             parts.append(names+(f' ({basis})' if basis else ''))
-        notes.insert(0,'Bridge lines with nothing to add or deduct: '+'; '.join(parts)+'.')
+        notes.insert(0,_Specific('Bridge lines with nothing to add or deduct: '+'; '.join(parts)+'.'))
     rows+=_stale_bridge_rows(plan,result,style,sources,scale,decimals)
     lines=['','### Enterprise value to value per share','',f'Base case, {style.unit(unit)} unless the line says otherwise.','']
     lines+=_table(['Line',style.unit(unit),'Basis'],rows,['---','---:','---'])
@@ -4451,9 +4453,9 @@ def _forecast_parts(result, style):
     lead=[]
     opening=returns.get('opening_invested_capital')
     if with_roic and _finite_number(opening):
-        lead=['',f'ROIC is NOPAT over average invested capital, which starts at {style.amount(opening)} on '
-                 f'{returns.get("fiscal_year_end") or "the last balance sheet"}{_cite(returns.get("source_refs"))} and adds '
-                 'each year\'s net reinvestment.']
+        lead=['',f'ROIC is NOPAT over the average of each year\'s opening and closing invested capital. Invested capital '
+                 f'is {style.amount(opening)} on {returns.get("fiscal_year_end") or "the last balance sheet"}'
+                 f'{_cite(returns.get("source_refs"))}, and each year adds its net reinvestment.']
     return ['','### Forecast, base case','']+_table(header,rows)+lead,notes
 
 
@@ -4828,6 +4830,12 @@ def _monitoring_parts(result, style):
         notes.append('Counterfactual cases change named base-case forecasts only. Reported actuals, the equity bridge and '
                      'the headline value stay fixed. The overrides are in assumptions.json and valuation.json.')
     return lines,notes
+
+
+def _has_stub(result):
+    """True when the valuation discounts from a date inside forecast year 1, so that year counts only in part."""
+    stub=(((result or {}).get('discounting') or {}).get('timing') or {}).get('stub_years')
+    return _finite_number(stub) and 0<stub<1
 
 
 def _multiples_parts(result, style):
@@ -5298,7 +5306,8 @@ def _sensitivity_parts(result, style, plan=None):
         foot.append(f'In the {words(moving)} rows, the terminal return on new capital moves with the terminal rate the '
                     'row sets.')
     if still:
-        foot.append(f'The {words(still)} rows change the rates through year 10 and leave the terminal rate unchanged.')
+        foot.append(f'The {words(still)} rows change the rates before the terminal rate is reached and leave the '
+                    'terminal rate unchanged.')
     if foot:
         lines+=['',' '.join(foot)]
     return lines,[]
@@ -5400,7 +5409,8 @@ def _exit_parts(result, style):
     out=['','### Entry and exit multiples','',
          'EBIT multiples and the annual return at today\'s price under two exits: the base method\'s terminal value, and '
          'the market\'s entry multiple applied to year-'+str(year)+' EBIT. Each return is on a conditional cash stream: '
-         'net debt and other claims are settled at the start, each year\'s free cash flow to the firm is paid out, and the '
+         'net debt and other claims are settled at the start, the forecast free cash flow to the firm is paid out as it '
+         'falls due'+(', with year 1 counted only for its unexpired part,' if _has_stub(result) else '')+' and the '
          'stated exit applies in year '+str(year)+'. Neither column forecasts what shareholders will earn.','']
     out+=_table(['Scenario','Market EV / year-1 EBIT',f'Terminal value / year-{year} EBIT','Return at the terminal value',
                  'Return at the entry multiple'],rows)
