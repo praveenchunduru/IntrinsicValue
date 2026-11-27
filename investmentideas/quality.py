@@ -415,10 +415,16 @@ _ADDITIVE = re.compile(r'\b(?:together|combined|in total|cumulative(?:ly)?|add u
 _PANEL = re.compile(r'\b(?:convention|panel|step|one[- ]at[- ]a[- ]time|terminal return|rate path)\b', re.I)
 
 
+# Left out of the figure trace: the plan's rate_history holds 240 monthly rates, which
+# would let almost any small percentage in a draft pass as traced.
+_UNTRACED_KEYS = frozenset({'rate_history'})
+
+
 def _numeric_leaves(value, out):
     if isinstance(value, dict):
-        for item in value.values():
-            _numeric_leaves(item, out)
+        for key, item in value.items():
+            if key not in _UNTRACED_KEYS:
+                _numeric_leaves(item, out)
     elif isinstance(value, list):
         for item in value:
             _numeric_leaves(item, out)

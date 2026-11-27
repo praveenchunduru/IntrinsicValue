@@ -85,7 +85,8 @@ def valuation_context(plan, result):
     """Return compact JSON retaining assumptions and authoritative result headlines.
 
     The full plan and all result fields remain, including unfamiliar calibration,
-    monitoring, sensitivity, diagnostic and reverse-DCF fields. Only cashflows
+    monitoring, sensitivity, diagnostic and reverse-DCF fields, except the plan's
+    monthly ``rate_history`` pairs, which are counted rather than listed. Only cashflows
     directly inside named ``counterfactuals``/``countercases`` are summarized:
     annual FCFF/PV observations plus complete first/last operating rows survive.
     Main-scenario cashflows and every annual revenue path remain complete.
@@ -99,6 +100,13 @@ def valuation_context(plan, result):
     # Validate JSON and nonfinite values before transforming any content.
     plan_hash, result_hash = _sha(plan), _sha(result)
     references_enabled = not (_has_literal_reference(plan) or _has_literal_reference(result))
+    shown_plan = copy.deepcopy(plan)
+    history = shown_plan.get('rate_history')
+    if isinstance(history, dict) and isinstance(history.get('months'), list):
+        # The monthly rate pairs feed only the computed rate-regime rows in the result;
+        # the saved plan keeps them all.
+        shown_plan['rate_history'] = dict({key: value for key, value in history.items() if key != 'months'},
+                                          months_in_saved_plan=len(history['months']))
     presentation = copy.deepcopy(result)
     for key in ('counterfactuals', 'countercases'):
         cases = presentation.get(key)
@@ -117,7 +125,7 @@ def valuation_context(plan, result):
             'projection_scope': 'Main scenarios and all revenue paths are complete. Countercase cashflows may show annual FCFF/PV aggregates and complete first/last operating rows; intermediate operating detail remains in the full artifact. All other fields are retained.',
             'reference_basis': 'When references_enabled is true, same_as is a plain RFC6901 JSON pointer (not a URI fragment). Resolve it for the exact repeated value; sha256 hashes its compact sorted UTF-8 JSON after cashflow presentation and before reference replacement. References are disabled if an original input contains the reserved two-field same_as/sha256 object, so original literal objects retain their meaning.',
         },
-        'plan': copy.deepcopy(plan),
+        'plan': shown_plan,
         'result': presentation,
     }
     return _json(_deduplicate(payload, '', {}) if references_enabled else payload)

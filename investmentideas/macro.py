@@ -36,6 +36,8 @@ COUNTRY_RISK_URL = 'https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile
 # The workbook linked from that page; only it carries the GDP weights behind his regional averages.
 REGIONAL_RISK_URL = 'https://pages.stern.nyu.edu/~adamodar/pc/datasets/ctryprem.xlsx'
 MAX_INPUT_BYTES = 3_000_000
+# Years of monthly ERP pairs carried for the rate-regime exhibit.
+HISTORY_YEARS = 10
 _MAX_XML_BYTES = 8_000_000
 _MAX_ZIP_BYTES = 16_000_000
 _MAX_ROWS = 20_000
@@ -212,7 +214,11 @@ def _workbook_rate(cell, name, low, high):
 
 
 def parse_damodaran_erp(data, *, as_of=None):
-    """Read the latest eligible same-row Treasury/sustainable-payout ERP pair."""
+    """Read the latest eligible same-row Treasury/sustainable-payout ERP pair.
+
+    ``monthly_history`` lists the same pair for each month of the ten years ending
+    at that observation; nothing is filled in for months that lack either value.
+    """
     raw = _bytes(data)
     cutoff, today = _as_of(as_of)
     cells, date1904, path = _workbook_cells(raw)
@@ -254,6 +260,17 @@ def parse_damodaran_erp(data, *, as_of=None):
     missing = ('n', None, False)
     risk_free = _workbook_rate(cells.get(f'C{row}', missing), 'Treasury proxy', -.05, .30)
     premium = _workbook_rate(cells.get(f'I{row}', missing), 'Sustainable-payout ERP', 0, .40)
+    # Every same-row pair in the ten years ending at the selected month, for the
+    # rate-regime exhibit. Months without both values (the early series) are left out.
+    start = date(observation.year - HISTORY_YEARS, observation.month, 1)
+    history = []
+    for day in sorted(dates):
+        if not start < day <= observation:
+            continue
+        pair = [cells.get(f'{column}{dates[day]}') for column in ('C', 'I')]
+        if all(value and value[1] is not None and value[1].strip() for value in pair):
+            history.append([day.isoformat(), _workbook_rate(pair[0], 'Treasury proxy', -.05, .30),
+                            _workbook_rate(pair[1], 'Sustainable-payout ERP', 0, .40)])
     return {
         'dataset': 'damodaran_us_implied_erp', 'currency': 'USD',
         'observed_at': observation.isoformat(), 'date_precision': 'day',
@@ -265,6 +282,10 @@ def parse_damodaran_erp(data, *, as_of=None):
                        'risk_free_cell': f'C{row}', 'raw_risk_free_rate': cells[f'C{row}'][1],
                        'erp_cell': f'I{row}', 'raw_equity_risk_premium': cells[f'I{row}'][1],
                        'required_headers': headers, 'source_sha256': hashlib.sha256(raw).hexdigest()},
+        'monthly_history': history,
+        'monthly_history_basis': (f'[start of month, Treasury proxy, sustainable-payout ERP] for every month in the '
+                                  f'{HISTORY_YEARS} years ending at the selected observation that reports both, oldest '
+                                  'first; the same columns and checks as the selected pair.'),
         'caveats': ['Start-of-month snapshot date; not a claim of a Treasury trade on that calendar day.',
                     'Uses only the sustainable-payout implied ERP method and its same-row conventional Treasury proxy.',
                     'No sovereign-default adjustment, issuer country-risk premium or newer Treasury substitution is performed.',
@@ -703,9 +724,16 @@ def gather_us_calibration(fetch_bytes, *, as_of=None, country_risk=False):
             gaps.append({'kind': 'macro_calibration_gap', 'source': dataset, 'url': url,
                          'reason': str(error) + '; no calibration input assigned.'})
             continue
+        # The ERP's monthly history sits beside data: it feeds only the rate-regime
+        # exhibit. Inside data it would enter every model prompt, and its 240 rates
+        # would let almost any small percentage in a draft pass the figure trace.
+        history = parsed.pop('monthly_history', None)
+        history_basis = parsed.pop('monthly_history_basis', None)
         sources.append({'title': title, 'url': url, 'kind': 'macro_calibration',
                         'source_tier': tier, 'retrieved_at': retrieved_at,
                         'observation_date': parsed['observed_at'], 'data': parsed,
+                        **({'monthly_history': history, 'monthly_history_basis': history_basis}
+                           if history is not None else {}),
                         'raw_document': raw, 'raw_media_type': media_type, 'archive_extension': suffix,
                         'raw_document_sha256': hashlib.sha256(raw).hexdigest(),
                         'ingestion_method': 'public_file_strict_parser'})
