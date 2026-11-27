@@ -1176,8 +1176,11 @@ def _nonoperating_assets(pick, cash):
         if entry['line'] in found:
             concept, item = found[entry['line']]
             entry.update(concept='us-gaap:' + concept, value=_json_number(item['value']), source_refs=item['source_refs'])
-    components = {field: _component(found[field][0], found[field][1], 'reported carrying value') for field in chosen}
-    total = sum((found[field][1]['value'] for field in chosen), Decimal(0))
+    # In the order the lines were selected: a set's order follows the process hash seed,
+    # which changed the forecast prompt between runs on the same evidence (Coca-Cola).
+    ordered = list(dict.fromkeys(field for field, _ in lines))
+    components = {field: _component(found[field][0], found[field][1], 'reported carrying value') for field in ordered}
+    total = sum((found[field][1]['value'] for field in ordered), Decimal(0))
     reported = any(field in found for field in NONOPERATING_FIELDS)
     record = {'nonoperating_assets': total, 'components': components, 'not_added': not_added,
               'basis': NONOPERATING_POLICY if reported else NONOPERATING_ABSENCE_POLICY,
