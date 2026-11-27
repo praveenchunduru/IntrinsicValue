@@ -442,7 +442,19 @@ class IndexBenchmarkTests(unittest.TestCase):
                                       'terminal_growth': growth, 'terminal_roic': rate, 'terminal_roic_basis': 'terminal_rate'}
                                for name, weight in (('bear', 0.0), ('base', 1.0), ('bull', 0.0))}}
         price = 1000 * (1 + growth) * .3 * (1 - growth / ret) / (rate - growth)
-        self.assertAlmostEqual(benchmark['value_to_price'], base_value(index) / price, places=9)
+        # One timing for value and price (engine review, 2026-11-26): each index year invests
+        # growth / return of its NOPAT for the following year's growth, so the continuing value
+        # starts from year-11 NOPAT. Hand value, independent of the engine:
+        nopat = [1000 * .3 * (1 + growth) ** year for year in range(1, 12)]
+        house = (sum(n * (1 - growth / ret) / (1 + rate) ** year for year, n in enumerate(nopat[:10], 1)) +
+                 nopat[10] / rate / (1 + rate) ** 10)
+        self.assertAlmostEqual(benchmark['value_to_price'], house / price, places=9)
+        result_engine = valuation._project({'revenue': 1000.0, 'net_debt': 0.0, 'other_equity_claims': 0.0,
+                                            'shares_outstanding': 1.0},
+                                           dict(index['scenarios']['base'], convention='constant',
+                                                terminal_roic_follows_rate=True))
+        self.assertAlmostEqual(result_engine['pv_forecast_fcff'] + nopat[9] * (1 + growth) / rate *
+                               result_engine['cashflows'][-1]['discount_factor'], house, places=6)
         self.assertLess(benchmark['value_to_price'], 1)
         self.assertAlmostEqual(benchmark['value_to_price_with_no_excess_return_years'],
                                ERP / (rate * (1 - growth / ret)), places=12)

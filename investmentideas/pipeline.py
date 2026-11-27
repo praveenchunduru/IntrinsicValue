@@ -1924,8 +1924,10 @@ def _proposal_view(proposal):
     view=copy.deepcopy(proposal)
     for scenario in (view.get('scenarios') or {}).values():
         if isinstance(scenario,dict):
-            # Python rebuilds the per-year ratios from sales_to_capital on every lock.
-            scenario.pop('sales_to_capital_path',None)
+            # Python rebuilds the per-year ratios from sales_to_capital, and sets the R&D
+            # shares from the R&D line, on every lock; the author edits those inputs instead.
+            for field in ('sales_to_capital_path','rnd_share_path','rnd_basis'):
+                scenario.pop(field,None)
     model=view.get('operating_model')
     if not isinstance(model,dict) or model.get('earnings_mode')!='gross_profit_less_expenses':
         return view
@@ -2106,8 +2108,8 @@ def _pin_terminal_rnd(locked, sources, changes):
     new R&D after the forecast earned below its cost forever. R&D only, not selling
     or administrative costs. The shares are the plan's own R&D line; a plan without
     one (aggregate margins) holds the reported share, and a company that reports no
-    R&D (Costco) gets none. The continuing value amortizes the forecast's own R&D,
-    so the reported history is kept only for forecasts shorter than six years.
+    R&D (Costco) gets none. The continuing value uses the final-year share, with
+    amortization at steady terminal growth (owner decision, 2026-11-26).
     """
     model=locked.get('operating_model') if isinstance(locked.get('operating_model'),dict) else {}
     reported=_reported_expense_shares(locked).get('research_and_development') or 0.0
@@ -2142,45 +2144,8 @@ def _pin_terminal_rnd(locked, sources, changes):
                                       'net R&D investment' if basis=='plan_rnd_line' else
                                       'reported R&D share of revenue, held (the plan has no R&D line); the continuing value adds '
                                       'back net R&D investment')})
-    history=reported_rnd_history(sources,(locked.get('actuals') or {}).get('revenue'))
-    if history and any(isinstance(item,dict) and item.get('rnd_share_path') for item in (locked.get('scenarios') or {}).values()):
-        locked['reported_rnd_history']=history
-    else:
-        locked.pop('reported_rnd_history',None)
-
-
-def reported_rnd_history(sources, anchor_revenue):
-    """Reported R&D for consecutive fiscal years ending at the forecast anchor year, oldest first, or None.
-
-    The last history year must be the anchor: its revenue matches the pinned revenue.
-    """
-    if not isinstance(anchor_revenue,(int,float)) or anchor_revenue<=0:
-        return None
-    for sid,rows in _grouped_history(sources).items():
-        if not rows or not isinstance(rows[-1].get('revenue'),(int,float)) or \
-                abs(rows[-1]['revenue']-anchor_revenue)>1e-6*anchor_revenue:
-            continue
-        run=[]
-        for row in reversed(rows):
-            amount=row.get('research_and_development')
-            if (not isinstance(amount,(int,float)) or isinstance(amount,bool) or amount<0 or
-                    (run and not _consecutive_years(row,run[0]))):
-                break
-            run.insert(0,row)
-        if run:
-            return {'amounts':[row['research_and_development'] for row in run],
-                    'fiscal_year_ends':[row.get('fiscal_year_end') for row in run],'source_refs':[sid],
-                    'basis':'Reported R&D for consecutive fiscal years ending at the forecast anchor year, oldest first; '
-                            'the continuing value amortizes it only where the forecast is shorter than six years.'}
-    return None
-
-
-def _consecutive_years(earlier, later):
-    try:
-        days=(date.fromisoformat(later['fiscal_year_end'])-date.fromisoformat(earlier['fiscal_year_end'])).days
-    except (KeyError,TypeError,ValueError):
-        return False
-    return 350<=days<=380
+    # Retired with the forecast-based amortization (2026-11-26); a plan locked under it drops it.
+    locked.pop('reported_rnd_history',None)
 
 
 def forecast_capital_reference(sources):
@@ -2311,7 +2276,7 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
             if any(isinstance(scenario,dict) and scenario.get('rnd_share_path')
                    for scenario in (locked.get('scenarios') or {}).values()):
                 convention_notes.append('The continuing value adds net R&D investment (final-year R&D less six-year '
-                                        'amortization of the forecast\'s own R&D) back to NOPAT, so R&D after the forecast is '
+                                        'amortization at steady terminal growth) back to NOPAT, so R&D after the forecast is '
                                         'investment that earns the terminal return.')
     else:
         convention_notes=['This supplied plan keeps its own rate and timing conventions; the market-consistent rate path '
@@ -2974,8 +2939,9 @@ def _forecast_roic_lines(result, currency):
                   f'operating-approach invested capital including goodwill and acquired intangibles at the fiscal year end '
                   f'{returns.get("fiscal_year_end") or "of the last report"}'+(f' [{refs}]' if refs else '')+', and adds each '
                   'year\'s net reinvestment. ROIC is NOPAT over average capital; 3-year incremental ROIC is the NOPAT change '
-                  'over three years over the capital change over the three years ending a year earlier, so it starts in year '
-                  '4 (n/a before; n/m where capital fell). Forecast NOPAT is EBIT after the plan\'s tax rate, while the history '
+                  'over three years over the capital that paid for that growth (the same three years\' capital change, because '
+                  'forecast reinvestment pays for the same year\'s growth; the history table lags capital a year), so it starts '
+                  'in year 4 (n/a before; n/m where capital fell). Forecast NOPAT is EBIT after the plan\'s tax rate, while the history '
                   'table uses EBITA after the cash tax rate, so the definitions differ slightly. The last column is the return '
                   'on new capital after the forecast, the terminal return'+
                   (', earned on NOPAT and capital that include net R&D investment, which the forecast years expense' if rnd else '')+

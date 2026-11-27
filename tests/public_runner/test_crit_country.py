@@ -477,11 +477,17 @@ class PanelRowTests(unittest.TestCase):
         self.assertNotIn('country_risk_note', plain['convention_panel'])
         self.assertIsNone(self.row(plain))
 
-    def test_a_malformed_reference_is_refused(self):
+    def test_a_malformed_reference_writes_a_note_and_never_stops_the_valuation(self):
+        # Engine review (2026-11-26): an exhibit failure must not fail the valuation.
+        house = valuation.evaluate(glide_plan(calculated()))['scenarios']
         for reference in ('0.01', {'status': 'calculated', 'weighted_premium': .5},
-                          {'status': 'calculated', 'weighted_premium': float('nan')}):
-            with self.subTest(reference=reference), self.assertRaises(ValueError):
-                valuation.evaluate(glide_plan(reference))
+                          {'status': 'calculated', 'weighted_premium': float('nan')},
+                          dict(calculated(), country_table='not a table'), dict(calculated(), exposures=7)):
+            with self.subTest(reference=reference):
+                result = valuation.evaluate(glide_plan(reference))
+                self.assertIsNone(self.row(result))
+                self.assertIn('The country risk row was not computed', result['convention_panel']['country_risk_note'])
+                self.assertEqual(result['scenarios'], house)
 
 
 class PipelineTests(unittest.TestCase):
