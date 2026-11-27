@@ -23,9 +23,12 @@ compares against the market price.
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
 import math
 import statistics
 
+from . import drivers
 from .valuation import _sales_to_capital_ratios
 
 SCENARIOS = ('bear', 'base', 'bull')
@@ -251,26 +254,11 @@ class _Merge:
     def __init__(self, group, method, held_shares, notes, sector_method='median'):
         self.group, self.method, self.held, self.notes = group, method, held_shares, notes
         self.sector_method = sector_method
-        self.spread = []
-
-    def track(self, label, paths):
-        if len(paths) < 2:
-            return
-        horizon = min(len(path) for path in paths)
-        ranges = [max(path[year] for path in paths) - min(path[year] for path in paths) for year in range(horizon)]
-        middle = [statistics.median(path[year] for path in paths) for year in range(horizon)]
-        scale = max(math.fsum(abs(value) for value in middle) / horizon, 1e-9)
-        self.spread.append({'input': label, 'mean_range': math.fsum(ranges) / horizon, 'max_range': max(ranges),
-                            'year_of_max_range': ranges.index(max(ranges)) + 1,
-                            'mean_median': math.fsum(middle) / horizon,
-                            'relative_range': math.fsum(ranges) / horizon / scale})
 
     def series(self, label, paths):
-        self.track(label, paths)
         return _per_year(paths, self.method)
 
     def scalar(self, label, values, method=None):
-        self.track(label, [[value] for value in values])
         return _center(values, method or self.method)
 
 
@@ -415,7 +403,7 @@ def _merge(group, representative, method, held_shares, notes, sector_method):
         if model:
             _merge_operating(merge, out, name, horizon)
     _merge_rate(merge, out)
-    return out, merge.spread
+    return out
 
 
 # ------------------------------------------------------------------ the plan
@@ -506,13 +494,12 @@ def consensus_plan(plans, *, valuations=None, held_shares=None, method=DEFAULT_M
         # The median of two is their mean; the industry weights then average too.
         report['notes'].append('Only two samples share a structure, so the consensus is their mean.')
     members = [plans[index] for index in group]
-    plan, spread = _merge(members, plans[representative], method, held_shares, report['notes'], sector_method)
+    plan = _merge(members, plans[representative], method, held_shares, report['notes'], sector_method)
     order = sorted(group, key=lambda index: ((distances.get(index) if distances.get(index) is not None else math.inf), index))
     report.update(representative_sample=numbers[representative],
                   representative_basis='closest consolidated base-case revenue and EBIT paths to the per-year median of '
                                        'the samples in the consensus (mean absolute relative gap)',
-                  basis_donors=_basis_donors(set(group), plans, order, numbers),
-                  varied_most=sorted(spread, key=lambda row: (-row['relative_range'], row['input']))[:12])
+                  basis_donors=_basis_donors(set(group), plans, order, numbers))
     report['notes'] = list(dict.fromkeys(report['notes']))
     return plan, report
 
@@ -638,3 +625,122 @@ def method_note(report, currency=''):
     else:
         head = f'The forecast is the {"mean" if report.get("method") == "mean" or used == 2 else "median"} of {which}'
     return head + spread + '.' + tail
+
+
+# ----------------------------------------------------------- value impact
+
+def value_impact(plan, result, donors):
+    """Which input group moves the value most across the samples, by re-valuing the plan valued.
+
+    ``plan`` and ``result`` are the locked consensus and its valuation; ``donors``
+    are (sample number, locked plan, valuation) for each sample in the consensus.
+    Each row swaps one driver group (growth path, margin path, capital efficiency,
+    tax, discount rate) from one sample into the consensus and holds the rest, as
+    ``tools/replay.py --plan-samples`` does around its median sample. Groups are
+    ranked by the range of base values they produce.
+    """
+    report = drivers.decompose((0, plan, result), donors)
+    rows = []
+    for group, item in report['groups'].items():
+        swaps = [row for row in item['swaps'] if 'base_value' in row]
+        rows.append({'group': group, 'min_base_value': item['min_base_value'], 'max_base_value': item['max_base_value'],
+                     'range': item['range'], 'range_fraction': item['range_fraction_of_median'],
+                     'swaps': item['swaps'], 'valid_swaps': len(swaps)})
+    rows.sort(key=lambda row: (-row['range'], drivers.DRIVER_GROUPS.index(row['group'])))
+    return {'basis': 'Each row re-values the plan valued with one sample\'s driver group and every other input '
+                     'unchanged; groups interact, so the ranges do not add up.', 'groups': rows}
+
+
+# ------------------------------------------------------------ the record
+
+def fingerprint(plan):
+    """A digest of the forecast inputs of a locked plan, to tell later whether the plan valued was edited."""
+    model = plan.get('operating_model') if isinstance(plan.get('operating_model'), dict) else {}
+    rate = plan.get('discount_rate') if isinstance(plan.get('discount_rate'), dict) else {}
+    beta = rate.get('unlevered_beta') if isinstance(rate.get('unlevered_beta'), dict) else {}
+    inputs = {'scenarios': {name: {key: value for key, value in (scenario or {}).items()
+                                   if key in ('tax_rate', 'terminal_tax_rate', 'sales_to_capital', 'growth_rates',
+                                              'ebit_margins', 'terminal_growth', 'wacc')}
+                            for name, scenario in (plan.get('scenarios') or {}).items() if isinstance(scenario, dict)},
+              'operating': {name: {'components': (scenario or {}).get('components'),
+                                   'expenses': (scenario or {}).get('expenses')}
+                            for name, scenario in (model.get('scenarios') or {}).items() if isinstance(scenario, dict)},
+              'beta': [(item.get('sector'), item.get('weight')) for item in beta.get('sectors') or [] if isinstance(item, dict)],
+              'rate': {key: (record or {}).get('value') for key, record in rate.items()
+                       if isinstance(record, dict) and key in ('pretax_cost_of_debt', 'marginal_tax_rate')}}
+    return hashlib.sha256(json.dumps(inputs, sort_keys=True, default=str).encode()).hexdigest()[:16]
+
+
+def combined(record):
+    """True when the plan valued is a combination of two or more forecasts."""
+    return bool(record) and record.get('plan_used') == 'consensus' and \
+        len((record.get('structure_decision') or {}).get('group') or []) > 1
+
+
+def _range(record):
+    values = [row['values']['base'] for row in record.get('samples') or []
+              if row.get('in_consensus') and _number((row.get('values') or {}).get('base'))]
+    return (min(values), max(values)) if len(values) > 1 else None
+
+
+def _count(record):
+    return len((record.get('structure_decision') or {}).get('group') or [])
+
+
+def first_page_sentence(record, style):
+    """One sentence under the scenario table, or None when no combination of forecasts is valued."""
+    if not combined(record) or not _range(record):
+        return None
+    low, high = _range(record)
+    count = WORDS.get(_count(record), str(_count(record)))
+    kind = 'averages' if record.get('method') == 'mean' or _count(record) == 2 else 'is the median of'
+    if record.get('edited_after_consensus'):
+        return (f'The forecast began as the {"average" if kind == "averages" else "median"} of {count} forecasts '
+                f'written from the same evidence, valued at {style.per_share(low)} to {style.per_share(high)}, and was '
+                'revised after review.')
+    return (f'The base case {kind} {count} forecasts written from the same evidence; their values ranged from '
+            f'{style.per_share(low)} to {style.per_share(high)}.')
+
+
+def method_notes(record, style):
+    """The Method notes on how the forecast was built from several samples; [] for one requested forecast."""
+    if not record or record.get('requested_samples', record.get('sample_count', 1)) == 1:
+        return []
+    count, requested = _count(record), record.get('requested_samples', record.get('sample_count'))
+    dropped = record.get('dropped') or []
+    span = _range(record)
+    values = (f' Their base values ranged from {style.per_share(span[0])} to {style.per_share(span[1])} a share.'
+              if span else '')
+    left = (f' {WORDS.get(len(dropped), len(dropped)).capitalize()} of the {WORDS.get(requested, requested)} '
+            f'forecasts requested failed validation after {"their" if len(dropped) > 1 else "its"} repairs and '
+            f'{"were" if len(dropped) > 1 else "was"} left out.' if dropped else '')
+    excluded = (record.get('structure_decision') or {}).get('excluded') or []
+    other = (f' {WORDS.get(len(excluded), len(excluded)).capitalize()} used a different set of segments or horizon and '
+             f'{"were" if len(excluded) > 1 else "was"} left out.' if excluded and combined(record) else '')
+    if combined(record):
+        if record.get('method') == 'mean' or count == 2:
+            how = ('Growth, gross margins, expense shares, sales-to-capital and tax rates are averaged year by year'
+                   + ('; the industry weights behind the beta take the median, so an industry only one forecast used '
+                      'drops out' if record.get('sector_weight_method') == 'median' and count > 2 else '') + '.')
+        else:
+            how = 'Each forecast input is the median of the forecasts, year by year.'
+        note = (f'The forecast combines {WORDS.get(count, count)} forecasts written independently from the same evidence '
+                f'and request. {how} The rationales and named cases come from the forecast closest to the average '
+                f'path.{values}{left}{other}')
+    elif record.get('plan_used') == 'representative_sample_fallback':
+        note = (f'{WORDS.get(count, count).capitalize()} forecasts were written independently from the same evidence. '
+                'Their combination failed a forecast check the individual forecasts passed, so the forecast valued is '
+                f'the one closest to their average path.{values}{left}')
+    elif record.get('method') == 'closest_single_sample':
+        note = (f'{WORDS.get(requested, requested).capitalize()} forecasts were written independently from the same '
+                'evidence, but no two used the same segments and horizon, so the forecast valued is the one closest to '
+                f'their median path.{values}{left}')
+    else:
+        note = (f'{WORDS.get(requested, requested).capitalize()} forecasts were requested from the same evidence; one '
+                f'passed validation and is the forecast valued.{left}')
+    notes = [note]
+    if record.get('edited_after_consensus'):
+        notes.append('A forecast correction after review then edited the plan valued. The values above are those of the '
+                     'forecasts before the correction; the scenario table shows the corrected plan.')
+    return notes
+

@@ -1931,7 +1931,11 @@ def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
             'budget_usd':router.budget, 'known_context_reservation_floor_usd':floor,
             'suggested_total_allowance_usd':suggested if suggested<=100 else None,
             'max_revisions':max_revisions, 'passed':router.budget>=floor, 'stages':stages,
-            'revision_rounds':rounds,
+            'revision_rounds':rounds, 'plan_samples':plan_samples,
+            # The whole run priced together: the K plan samples (the later ones at the
+            # cache-read price), the first draft and review, and every revision round.
+            'usual_path_reservation_floor_usd':floor+sum(item['usual_floor_usd'] for item in rounds),
+            'worst_case_reservation_floor_usd':floor+sum(item['usual_floor_usd']+item['conditional_floor_usd'] for item in rounds),
             'largest_single_reservation_floor_usd':max((row['reservation_floor_usd'] for row in every),default=0.0),
             'revision_basis':'Each call needs its own reservation on top of what earlier calls actually cost; a round '
                              'adds the conditional stages only when a finding concerns the forecast or an edit fails.'}
@@ -3173,6 +3177,9 @@ def computed_summary(plan, result):
     if _finite_number(benchmark.get('value_to_price')):
         rows.append(['S&P 500, same conventions']+([] if headline else [''])+['',f'{benchmark["value_to_price"]:.2f}'])
     lines=lead+_table(header,rows)
+    combined=consensus.first_page_sentence(_consensus_record(result),style)
+    if combined:
+        lines+=['',combined]
     requirements=(result.get('price_requirements') or {}).get('rows') or []
     if requirements:
         body,percentile_key=[],None
@@ -4077,7 +4084,8 @@ def _render(memo, sources, gaps, plan, result, state):
                ('. The same model wrote and reviewed this memo.' if same else '.'))
     detail,groups=_valuation_parts(plan,result)
     history,history_notes=_reported_parts(sources)
-    groups=groups+[('Reported history',history_notes),
+    groups=groups+[('Forecast samples',consensus.method_notes(_consensus_record(result),_style(plan,result))),
+                   ('Reported history',history_notes),
                    ('Review',['Software checks and model reviews do not establish investment truth or forecast accuracy.'])]
     body=_label_unverified(_with_summary(memo,plan,result,sources,state.get('ticker','')).rstrip()+'\n'+'\n'.join(detail)+
                            '\n'+'\n'.join(history+_notes_lines(groups)),sources)
@@ -4181,21 +4189,42 @@ def _consensus_summary(report):
     """The part of the consensus report saved with the valuation."""
     keys = ('method', 'sector_weight_method', 'requested_samples', 'sample_count', 'plan_used', 'representative_sample',
             'structure_decision', 'consensus_values', 'sample_value_range', 'dropped', 'fallback',
-            'bases_from_other_samples', 'method_note', 'notes')
+            'bases_from_other_samples', 'plan_fingerprint', 'notes')
     summary = {key: copy.deepcopy(report[key]) for key in keys if key in report}
     summary['samples'] = [{'sample': row['sample'], 'values': row.get('values'), 'in_consensus': row.get('in_consensus')}
                           for row in report.get('samples', [])]
-    summary['varied_most'] = [row['input'] for row in report.get('varied_most', [])[:6]]
+    impact = (report.get('value_impact') or {}).get('groups') or []
+    summary['value_impact'] = [{key: row[key] for key in ('group', 'min_base_value', 'max_base_value', 'range')}
+                               for row in impact]
     summary['basis'] = ('Each sample is the same plan request sent again in one cache session; the plan valued combines '
                         'the valid samples input by input (plan-consensus.json). Nothing in it reads the market price.')
     return summary
 
 
-def _attach_consensus(state):
-    """Carry the forecast-sample record into the valuation of a model-written plan."""
+def _attach_consensus(state, plan=None, result=None):
+    """Carry the forecast-sample record into the valuation of a model-written plan.
+
+    ``plan`` and ``result`` default to the plan and valuation in state. A plan whose
+    forecast inputs no longer match the combined plan (a forecast correction after
+    review) is marked edited, so its sample range is not shown as current.
+    """
     report = state.get('plan_consensus')
-    if report and state.get('valuation') is not None and not state.get('provided_forecast_digest'):
-        state['valuation']['forecast_consensus'] = _consensus_summary(report)
+    plan = state.get('plan') if plan is None else plan
+    result = state.get('valuation') if result is None else result
+    if not report or result is None or not isinstance(plan, dict) or state.get('provided_forecast_digest'):
+        return
+    summary = _consensus_summary(report)
+    if report.get('plan_fingerprint') and consensus.fingerprint(plan) != report['plan_fingerprint']:
+        summary['edited_after_consensus'] = True
+        summary['current_values'] = {name: ((result.get('scenarios') or {}).get(name) or {}).get('per_share_value')
+                                     for name in SCENARIO_NAMES}
+    result['forecast_consensus'] = summary
+
+
+def _consensus_record(result):
+    """The forecast-sample record of a valuation, or None (single forecasts and runs saved before it)."""
+    record = (result or {}).get('forecast_consensus') if isinstance(result, dict) else None
+    return record if isinstance(record, dict) else None
 
 
 def _plan_samples_stage(folder, state, call, checkpoint, progress, prompt, prefix, strong, samples):
@@ -4278,6 +4307,11 @@ def _plan_samples_stage(folder, state, call, checkpoint, progress, prompt, prefi
         report.update(requested_samples=samples, dropped=dropped)
         report['method_note'] = consensus.method_note(report, (chosen['plan'].get('reported_inputs') or {}).get('currency', ''))
         report['consensus_proposal'] = candidate
+        report['plan_fingerprint'] = consensus.fingerprint(chosen['plan'])
+        if len(valid) > 1 and report.get('plan_used') == 'consensus':
+            # Ranked by value: each sample's driver group swapped into the plan valued.
+            report['value_impact'] = consensus.value_impact(
+                chosen['plan'], chosen['result'], [(item['sample'], item['plan'], item['result']) for item in valid])
     state.setdefault('actual_input_corrections', []).extend(chosen['changes'])
     _reset_plan_notes(state)
     _record_omitted_sections(state, chosen['omitted'], 'forecast plan\'s')
@@ -5027,6 +5061,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 _reset_plan_notes(state)
                 _record_omitted_sections(state,omitted,f'review {iteration+1} correction\'s')
                 plan,result=locked,corrected
+                _attach_consensus(state,plan,result)
                 save_valuation(folder,plan,result)
                 state['valuation']=result
                 if apply:

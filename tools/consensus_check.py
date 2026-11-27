@@ -74,6 +74,9 @@ def build(samples, chosen, lock, method, held, sector_method):
                                             method=method, sector_method=sector_method)
     plan, (locked, changes, result, omitted) = consensus.lock_consensus(plan, report, lock, proposals)
     report['sample_numbers'] = [samples[index]['sample'] for index in chosen]
+    if report.get('plan_used') == 'consensus' and len(chosen) > 1:
+        report['value_impact'] = consensus.value_impact(
+            locked, result, [(samples[index]['sample'], samples[index]['locked'], samples[index]['result']) for index in chosen])
     return values(result), report
 
 
@@ -90,6 +93,7 @@ def check(folder, method=consensus.DEFAULT_METHOD, sector_method=consensus.DEFAU
     for sample in samples:
         try:
             sample['result'], (locked, *_rest) = lock(sample['proposal'])
+            sample['locked'] = locked
         except consensus.LOCK_ERRORS as exc:
             # A response saved before its repairs finished is not a valid sample.
             skipped.append({'sample': sample['sample'], 'reason': str(exc)[:300]})
@@ -109,7 +113,8 @@ def check(folder, method=consensus.DEFAULT_METHOD, sector_method=consensus.DEFAU
                          'representative_sample': report.get('representative_sample'),
                          'plan_used': report.get('plan_used'), 'notes': report.get('notes'),
                          'bases_from_other_samples': report.get('bases_from_other_samples'),
-                         'varied_most': [item['input'] for item in report.get('varied_most', [])[:5]]})
+                         'value_impact': [{key: item[key] for key in ('group', 'min_base_value', 'max_base_value', 'range')}
+                                          for item in (report.get('value_impact') or {}).get('groups', [])]})
     triples = [row for row in rows if len(row['samples']) == 3]
     summary = {name: spread([row['values'][name] for row in triples]) for name in SCENARIOS} if len(triples) > 1 else {}
     single = {name: spread([sample['values'][name] for sample in samples]) for name in SCENARIOS}
@@ -134,6 +139,9 @@ def table(result):
             extra += '; bases from ' + ', '.join(f'{item["sample"]}:{item["field"]}.{item["scenario"]}'
                                                  for item in row['bases_from_other_samples'])
         lines.append(f'  {label:24} ' + ' '.join(f'{value[name]:8.2f}' for name in SCENARIOS) + '  ' + extra)
+        if row.get('value_impact'):
+            lines.append('      base value by driver group swapped in: ' + '; '.join(
+                f'{item["group"]} {item["min_base_value"]:.1f}-{item["max_base_value"]:.1f}' for item in row['value_impact'][:3]))
     def percent(item):
         return ' '.join(f'{name} {100 * item[name]:.1f}%' for name in SCENARIOS if item.get(name) is not None)
     lines.append('  spread of single samples, (max-min)/median: ' + percent(result['single_sample_spread']))
