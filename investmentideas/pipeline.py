@@ -2555,7 +2555,19 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
     proposal['amount_unit']='currency_units'
     proposal['share_unit']='shares'
     proposal['valuation_date']=valuation_day
+    rate_units=[]
+    if apply_conventions and isinstance(proposal.get('discount_rate'),dict):
+        # Python copies the rate block's debt, lease and equity amounts from the reported
+        # bridges, so its currency and unit are the plan's. Two of eight live plan samples
+        # (2026-11-27) paid for a repair because the model wrote them differently.
+        for field in ('currency','amount_unit'):
+            if proposal['discount_rate'].get(field)!=proposal[field]:
+                rate_units.append({'field':'discount_rate.'+field,'previous':proposal['discount_rate'].get(field),
+                                   'pinned':proposal[field],'source_refs':[],
+                                   'reason':'the rate block uses the plan currency and unit; its amounts are copied from the reported bridges'})
+                proposal['discount_rate'][field]=proposal[field]
     locked,changes=pin_reported_inputs(proposal,sources)
+    changes.extend(rate_units)
     _expenses_from_shares(locked,changes)
     _sales_to_capital_paths(locked,changes)
     operating=locked.get('operating_model')
