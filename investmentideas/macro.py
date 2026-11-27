@@ -10,6 +10,9 @@ The ERP parser selects the explicitly labeled sustainable-payout series and its
 same-row conventional Treasury proxy. It never substitutes another ERP method,
 a newer Treasury observation, a sector for an issuer, or an issuer debt yield.
 Unrecognized formats and unavailable observations produce gaps, never defaults.
+The optional country risk page and regional workbook are read into every country
+and region row; which countries an issuer sells in is decided in country_risk.py,
+and the result feeds one labelled convention-panel row, never the house rate.
 """
 from __future__ import annotations
 
@@ -29,6 +32,9 @@ from zipfile import BadZipFile, ZipFile
 ERP_URL = 'https://pages.stern.nyu.edu/~adamodar/pc/implprem/ERPbymonth.xlsx'
 BETAS_URL = 'https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/Betas.html'
 AA_URL = 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=BAMLC0A2CAAEY'
+COUNTRY_RISK_URL = 'https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/ctryprem.html'
+# The workbook linked from that page; only it carries the GDP weights behind his regional averages.
+REGIONAL_RISK_URL = 'https://pages.stern.nyu.edu/~adamodar/pc/datasets/ctryprem.xlsx'
 MAX_INPUT_BYTES = 3_000_000
 _MAX_XML_BYTES = 8_000_000
 _MAX_ZIP_BYTES = 16_000_000
@@ -95,7 +101,7 @@ def _xml(archive, name):
         raise ValueError('Calibration workbook has missing or invalid XML parts') from None
 
 
-def _workbook_cells(data):
+def _workbook_cells(data, sheet_name='Historical ERP'):
     try:
         archive = ZipFile(io.BytesIO(data))
     except BadZipFile:
@@ -114,21 +120,21 @@ def _workbook_cells(data):
             raise ValueError('Unsupported workbook date1904 metadata')
         date1904 = epoch_flag in ('1', 'true')
         sheets = workbook.find(_MAIN + 'sheets')
-        selected = [] if sheets is None else [sheet for sheet in sheets if sheet.get('name') == 'Historical ERP']
+        selected = [] if sheets is None else [sheet for sheet in sheets if sheet.get('name') == sheet_name]
         if len(selected) != 1:
-            raise ValueError('Workbook must contain exactly one Historical ERP sheet')
+            raise ValueError(f'Workbook must contain exactly one {sheet_name} sheet')
         relation_id = selected[0].get(_DOC_REL + 'id')
         relations = _xml(archive, 'xl/_rels/workbook.xml.rels')
         matches = [item for item in relations if item.tag == _PKG_REL + 'Relationship' and item.get('Id') == relation_id]
         if (not relation_id or len(matches) != 1 or matches[0].get('TargetMode') == 'External'
                 or not matches[0].get('Type', '').endswith('/worksheet')):
-            raise ValueError('Historical ERP must resolve to an internal worksheet')
+            raise ValueError(f'{sheet_name} must resolve to an internal worksheet')
         target = matches[0].get('Target', '')
         if urlparse(target).scheme or '\\' in target:
-            raise ValueError('Invalid Historical ERP worksheet target')
+            raise ValueError(f'Invalid {sheet_name} worksheet target')
         path = posixpath.normpath(target.lstrip('/') if target.startswith('/') else 'xl/' + target)
         if not path.startswith('xl/worksheets/') or not path.endswith('.xml'):
-            raise ValueError('Invalid Historical ERP worksheet path')
+            raise ValueError(f'Invalid {sheet_name} worksheet path')
         strings = []
         if 'xl/sharedStrings.xml' in archive.namelist():
             shared = _xml(archive, 'xl/sharedStrings.xml')
@@ -140,10 +146,10 @@ def _workbook_cells(data):
         worksheet = _xml(archive, path)
         sheet_data = worksheet.find(_MAIN + 'sheetData')
         if worksheet.tag != _MAIN + 'worksheet' or sheet_data is None:
-            raise ValueError('Historical ERP is not a supported worksheet')
+            raise ValueError(f'{sheet_name} is not a supported worksheet')
         cells = {}
         if len(sheet_data) > _MAX_ROWS:
-            raise ValueError('Historical ERP exceeds its row limit')
+            raise ValueError(f'{sheet_name} exceeds its row limit')
         for row in sheet_data:
             for cell in row.findall(_MAIN + 'c'):
                 coordinate = cell.get('r', '')
@@ -384,6 +390,232 @@ def parse_sector_betas(data, *, as_of=None):
                         'This table does not establish peer lease conventions or a normalized issuer marginal tax rate.']}
 
 
+class _CountryTables(_Tables):
+    """Top-level tables; merged cells are recorded per table instead of failing the page.
+
+    The country page opens with a small table of links whose cells span columns.
+    Only the selected country table must be free of merged cells.
+    """
+    def __init__(self):
+        super().__init__()
+        self.merged = set()
+
+    def handle_starttag(self, tag, attrs):
+        if (tag in ('td', 'th') and self.depth == 1 and not self.ignored and
+                any(key in ('rowspan', 'colspan') and value not in ('1', None) for key, value in attrs)):
+            self.merged.add(len(self.tables))
+            attrs = [(key, value) for key, value in attrs if key not in ('rowspan', 'colspan')]
+        super().handle_starttag(tag, attrs)
+
+
+_COUNTRY_HEADERS = ('Country', "Moody's rating", 'Adj. Default Spread', 'Country Risk Premium',
+                    'Equity Risk Premium', 'Corporate Tax Rate')
+_UPDATED = re.compile(r'Last updated:\s*(' + '|'.join(_MONTHS) + r')\s+(?:([0-9]{1,2}),\s*)?([0-9]{4})')
+# A note Damodaran appends to a revised row, as in "Turkey (updated February 2026)".
+_ROW_NOTE = re.compile(r'\s*\((updated\s+[A-Za-z]+\s+[0-9]{4})\)$', re.I)
+# Published rates are rounded to hundredths of a percentage point; two rounded
+# figures can differ from their exact difference by one hundredth.
+_ROUNDED = .00011
+
+
+def _percent(text, name, low, high):
+    match = re.fullmatch(r'([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))\s*%', text.strip())
+    if not match:
+        raise ValueError(f'{name} must be a percentage')
+    return _number(float(match[1]) / 100, name, low, high)
+
+
+def parse_country_risk_premiums(data, *, as_of=None):
+    """Damodaran's dated country table: rating-based country risk premium and total ERP per country.
+
+    Returns every country row. No issuer exposure, region or weighting is chosen here.
+    """
+    raw = _bytes(data)
+    cutoff, today = _as_of(as_of)
+    try:
+        document = raw.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        if not re.search(br'charset\s*=\s*["\']?(?:windows-1252|iso-8859-1)', raw[:4096], re.I):
+            raise ValueError('Country risk HTML has an unsupported encoding') from None
+        document = raw.decode('cp1252', errors='strict') if b'windows-1252' in raw[:4096].lower() else raw.decode('latin-1')
+    parser = _CountryTables()
+    parser.feed(document)
+    parser.close()
+    if parser.depth or parser.row is not None or parser.cell is not None:
+        raise ValueError('Country risk HTML table is incomplete')
+    text = _normal(' '.join(parser.text))
+    stamps = _UPDATED.findall(text)
+    days = {(month, day, year) for month, day, year in stamps if day}
+    if len(days) != 1 or len({(month, year) for month, _, year in stamps}) != 1:
+        raise ValueError('Country risk page needs one dated "Last updated" header that agrees with every other update line')
+    month, day, year = days.pop()
+    try:
+        published = date(int(year), _MONTHS.index(month) + 1, int(day))
+    except ValueError:
+        raise ValueError('Country risk update date is invalid') from None
+    if published > today or published > cutoff:
+        raise ValueError('Country risk update date is after as_of or in the future')
+    matches = [index for index, table in enumerate(parser.tables)
+               if table and tuple(table[0][:len(_COUNTRY_HEADERS)]) == _COUNTRY_HEADERS]
+    if len(matches) != 1:
+        raise ValueError('Country risk table headers changed or are ambiguous')
+    if matches[0] in parser.merged:
+        raise ValueError('Country risk table has unsupported merged cells')
+    table = parser.tables[matches[0]]
+    width = len(table[0])
+    countries, names = [], set()
+    for row in table[1:]:
+        if not any(row):
+            continue
+        if len(row) != width or not row[0]:
+            raise ValueError('Country risk rows have missing columns or names')
+        note = _ROW_NOTE.search(row[0])
+        name = row[0][:note.start()] if note else row[0]
+        if name in names:
+            raise ValueError('Country risk table repeats a country')
+        names.add(name)
+        countries.append({'country': name, 'rating': row[1] or None,
+                          'default_spread': _percent(row[2], 'Country default spread', 0, .5),
+                          'country_risk_premium': _percent(row[3], 'Country risk premium', 0, .5),
+                          'equity_risk_premium': _percent(row[4], 'Country equity risk premium', 0, .6),
+                          **({'row_note': note[1]} if note else {})})
+    if not 20 <= len(countries) <= 400:
+        raise ValueError('Country risk table has no bounded set of country records')
+    # Every total premium is the same mature-market premium plus the country's premium.
+    mature = [row['equity_risk_premium'] - row['country_risk_premium'] for row in countries]
+    base = sorted(mature)[len(mature) // 2]
+    if any(abs(value - base) > _ROUNDED for value in mature):
+        raise ValueError('Country risk rows do not share one mature-market premium')
+    united_states = next((row for row in countries if row['country'] == 'United States'), None)
+    if united_states is None:
+        raise ValueError('Country risk table has no United States row')
+    return {'dataset': 'damodaran_country_risk_premiums', 'observed_at': published.isoformat(), 'date_precision': 'day',
+            'mature_market_premium': round(base, 6), 'us_country_risk_premium': united_states['country_risk_premium'],
+            'countries': countries,
+            'provenance': {'required_headers': list(_COUNTRY_HEADERS), 'columns': table[0],
+                           'update_lines': [' '.join(part for part in stamp if part) for stamp in stamps],
+                           'source_sha256': hashlib.sha256(raw).hexdigest()},
+            'caveats': ['Rating-based premiums: the default spread for the local-currency sovereign rating scaled by relative '
+                        'equity market volatility. The CDS-based columns are not read.',
+                        'Rates are published rounded to hundredths of a percentage point.',
+                        'Since the 2025 Moody\'s downgrade the United States carries a premium of its own; a valuation that '
+                        'pairs the Treasury rate with the implied premium over it applies only differences from that premium.',
+                        'No issuer exposure, country assignment or revenue weighting is performed here.']}
+
+
+_REGIONAL_SHEET = 'Regional Weighted Averages'
+_REGIONAL_HEADERS = {'A': 'Country', 'E': 'Equity Risk Premium', 'F': 'Country Risk Premium', 'H': 'Region'}
+_CORE = {'cp': 'http://schemas.openxmlformats.org/package/2006/metadata/core-properties',
+         'dcterms': 'http://purl.org/dc/terms/'}
+
+
+def _workbook_modified(data):
+    """The workbook's last-modified day from its core properties, the only date the regional sheet carries."""
+    try:
+        archive = ZipFile(io.BytesIO(data))
+    except BadZipFile:
+        raise ValueError('Damodaran regional source is not an XLSX workbook') from None
+    with archive:
+        try:
+            properties = _xml(archive, 'docProps/core.xml')
+        except ValueError:
+            raise ValueError('Regional workbook has no readable core properties date') from None
+    stamp = properties.findtext('{%s}modified' % _CORE['dcterms'])
+    if not stamp or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z', stamp.strip()):
+        raise ValueError('Regional workbook modified date is missing or not a UTC timestamp')
+    return _iso_date(stamp.strip()[:10], 'Regional workbook modified date'), stamp.strip()
+
+
+def _cell_number(cells, coordinate, name, low, high):
+    kind, text, _ = cells.get(coordinate, ('n', None, False))
+    if text is None or not text.strip() or kind not in ('n', ''):
+        raise ValueError(f'{name} at {coordinate} is missing or not numeric')
+    return _number(text, name, low, high)
+
+
+def _cell_text(cells, coordinate):
+    kind, text, _ = cells.get(coordinate, ('n', None, False))
+    if kind in ('s', 'str', 'inlineStr') and text is not None:
+        return _normal(text)
+    return None
+
+
+def parse_regional_risk_premiums(data, *, as_of=None):
+    """Country GDP, country risk premium and region from Damodaran's GDP-weighted regional sheet.
+
+    Each region's published total must equal the GDP-weighted average of its
+    countries, which confirms the rows were read as he aggregates them. Regions
+    are reported as published; any other grouping is computed by the caller from
+    the same country rows and weights.
+    """
+    raw = _bytes(data)
+    cutoff, today = _as_of(as_of)
+    modified, stamp = _workbook_modified(raw)
+    if modified > today or modified > cutoff:
+        raise ValueError('Regional workbook modified date is after as_of or in the future')
+    cells, _, path = _workbook_cells(raw, _REGIONAL_SHEET)
+    for column, expected in _REGIONAL_HEADERS.items():
+        if _cell_text(cells, column + '1') != expected:
+            raise ValueError(f'Regional sheet header changed at {column}1')
+    gdp_header = re.fullmatch(r'GDP \(in millions\) in ([0-9]{4})', _cell_text(cells, 'B1') or '')
+    if not gdp_header:
+        raise ValueError('Regional sheet GDP header changed at B1')
+    rows = sorted({int(match[1]) for coordinate in cells if (match := re.fullmatch(r'A([0-9]+)', coordinate))})
+    countries, regions, names, block = [], [], set(), []
+    for row in rows:
+        label = _cell_text(cells, f'A{row}')
+        if row == 1 or label is None:
+            continue
+        if label == 'Region':
+            break  # The summary table repeats the region rows below.
+        region = _cell_text(cells, f'H{row}')
+        if region:
+            if label in names:
+                raise ValueError('Regional sheet repeats a country')
+            names.add(label)
+            block.append({'country': label, 'region': region,
+                          'gdp_millions': _cell_number(cells, f'B{row}', 'Country GDP', 1e-6, 1e9),
+                          'country_risk_premium': _cell_number(cells, f'F{row}', 'Country risk premium', 0, .5),
+                          'equity_risk_premium': _cell_number(cells, f'E{row}', 'Country equity risk premium', 0, .6)})
+            continue
+        # A total closes the block above it. Its label can shorten the countries'
+        # region name ("Eastern Europe" over "Eastern Europe & Russia").
+        names_in_block = {item['region'] for item in block}
+        if len(names_in_block) != 1 or not (label == block[0]['region'] or block[0]['region'].startswith(label + ' ')):
+            raise ValueError(f'Regional total {label!r} at A{row} does not close its block of countries')
+        gdp = _cell_number(cells, f'B{row}', 'Regional GDP', 1e-6, 1e10)
+        premium = _cell_number(cells, f'F{row}', 'Regional country risk premium', 0, .5)
+        total = sum(item['gdp_millions'] for item in block)
+        weighted = sum(item['gdp_millions'] * item['country_risk_premium'] for item in block) / total
+        if not math.isclose(gdp, total, rel_tol=1e-9) or abs(weighted - premium) > 1e-9:
+            raise ValueError(f'Regional total {label!r} is not the GDP-weighted average of its countries')
+        regions.append({'region': block[0]['region'], 'total_label': label, 'gdp_millions': gdp,
+                        'country_risk_premium': premium, 'countries': len(block)})
+        countries.extend(block)
+        block = []
+    if block or not regions or len(regions) > 30 or not 20 <= len(countries) <= 400:
+        raise ValueError('Regional sheet has no bounded set of closed regional blocks')
+    mature = [item['equity_risk_premium'] - item['country_risk_premium'] for item in countries]
+    if max(mature) - min(mature) > 1e-9:
+        raise ValueError('Regional sheet rows do not share one mature-market premium')
+    united_states = next((item for item in countries if item['country'] == 'United States'), None)
+    if united_states is None:
+        raise ValueError('Regional sheet has no United States row')
+    return {'dataset': 'damodaran_regional_country_risk', 'observed_at': modified.isoformat(), 'date_precision': 'day',
+            'date_basis': 'Workbook last-modified time in its file properties; the sheet itself states no update date.',
+            'gdp_year': int(gdp_header[1]), 'mature_market_premium': mature[0],
+            'us_country_risk_premium': united_states['country_risk_premium'],
+            'regions': regions, 'countries': countries,
+            'provenance': {'sheet': _REGIONAL_SHEET, 'worksheet_part': path, 'modified': stamp,
+                           'required_headers': _REGIONAL_HEADERS, 'source_sha256': hashlib.sha256(raw).hexdigest()},
+            'caveats': ['Regional premiums are weighted by country GDP, not by any company\'s sales.',
+                        'Region totals are the workbook\'s cached formula results, checked against the GDP-weighted average '
+                        'of the listed countries.',
+                        'The date is the file\'s last-modified time; a row revised later on the dated country page can '
+                        'differ here.',
+                        'No issuer exposure, country assignment or revenue weighting is performed here.']}
+
+
 def parse_fred_aa(data, *, as_of=None):
     """Read a dated AA corporate-index yield, explicitly an issuer debt-cost proxy."""
     raw = _bytes(data)
@@ -430,12 +662,14 @@ def parse_fred_aa(data, *, as_of=None):
                         'No issuer-specific spread, sovereign spread or country-risk premium is inferred.']}
 
 
-def gather_us_calibration(fetch_bytes, *, as_of=None):
+def gather_us_calibration(fetch_bytes, *, as_of=None, country_risk=False):
     """Fetch three independent public sources; unavailable inputs become gap records.
 
     ``as_of`` is an ISO date or ``datetime.date``. Returned source objects have
     no citation IDs and are evidence only, never automatic valuation assignments.
     Arbitrary exception messages are not copied into gaps or saved artifacts.
+    ``country_risk=True`` also fetches Damodaran's dated country risk page and his
+    GDP-weighted regional workbook, which feed one convention-panel row only.
     """
     cutoff, _ = _as_of(as_of)
     retrieved_at = datetime.now(timezone.utc).isoformat()
@@ -448,6 +682,14 @@ def gather_us_calibration(fetch_bytes, *, as_of=None):
          'Damodaran US sector beta table; no issuer sector assigned', 'academic_market_data', 'text/html', '.html'),
         ('fred_us_aa_effective_yield', AA_URL, parse_fred_aa,
          'FRED ICE BofA AA US Corporate Index Effective Yield; issuer debt-cost proxy', 'official_market_data', 'text/csv', '.csv'))
+    if country_risk:
+        tasks += (
+            ('damodaran_country_risk_premiums', COUNTRY_RISK_URL, parse_country_risk_premiums,
+             'Damodaran country risk premiums by sovereign rating; no issuer exposure assigned', 'academic_market_data',
+             'text/html', '.html'),
+            ('damodaran_regional_country_risk', REGIONAL_RISK_URL, parse_regional_risk_premiums,
+             'Damodaran GDP-weighted regional country risk premiums; no issuer exposure assigned', 'academic_market_data',
+             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', '.xlsx'))
     for dataset, url, parse, title, tier, media_type, suffix in tasks:
         try:
             raw = _bytes(fetch_bytes(url))

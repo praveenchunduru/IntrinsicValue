@@ -83,6 +83,12 @@ from the valuation date. Optional scenario ``terminal_tax_rate`` applies to
 steady-state years and the terminal value. Plans without these fields keep the
 original constant-rate, integer-year conventions and reproduce exactly.
 
+Optional ``country_risk_reference`` (pinned by the pipeline from reported revenue
+by geography and Damodaran's country tables; see country_risk.py) adds one panel
+row: the base value with ``weighted_premium`` added to the cost of equity in every
+year and the terminal value, so every rate rises by the equity weight times the
+premium. It needs a dated ``discount_rate``; the house value is unchanged.
+
 When net_debt_bridge.finance_leases_included_in_net_debt is true, its debt is a
 combined total. Same-date rate inputs split that total using separately reported
 finance leases. If that split is unavailable, financial_debt must declare
@@ -1503,6 +1509,9 @@ def evaluate(plan):
             actuals, definitions, scenarios, discounting,
             reported_peak_margin=peak if isinstance(peak, (int, float)) else None,
             reported_median_roic=median if isinstance(median, (int, float)) and math.isfinite(median) else None)
+        if 'country_risk_reference' in plan:
+            _country_risk_row(result['convention_panel'], plan['country_risk_reference'], actuals,
+                              definitions['base'], scenarios['base']['per_share_value'], calibration)
     if 'beta_cross_checks' in plan:
         result['beta_cross_checks'] = _beta_cross_checks(canonical_plan, actuals, definitions['base'], scenarios['base']['per_share_value'])
     result['computed_diagnostics']['valuation_multiples'] = _valuation_multiples(plan, actuals, scenarios, market)
@@ -1775,6 +1784,69 @@ def _convention_panel(actuals, definitions, scenarios, discounting, reported_pea
             'basis': 'Base scenario, one convention changed at a time from the house case; every other input fixed. '
                      'Convention rows are alternatives a careful analyst could defend; sensitivity rows show scale only and '
                      'are not ranked. These carry no probability, are not forecasts and are never tuned to the price.'}
+
+
+COUNTRY_RISK_ROW = 'country_risk_premium_revenue_weighted'
+
+
+def _country_risk_row(panel, reference, actuals, base, baseline, calibration):
+    """Damodaran's revenue-weighted country risk premium added to the cost of equity, as one panel row.
+
+    The pipeline pins ``country_risk_reference`` (country_risk.py): each country's
+    or region's premium over the US premium, weighted by reported revenue. Here it
+    is added to the cost of equity in every year and in the terminal value, as a
+    premium times revenue exposure and not scaled by beta. The cost of debt and the
+    capital weights are unchanged, so every discount rate rises by the equity weight
+    times the premium; a terminal return that follows the terminal rate follows it.
+    The row is not ranked with the convention rows: the S&P 500 implied premium is
+    solved from US companies that already earn foreign revenue.
+    """
+    if not isinstance(reference, dict):
+        raise ValueError('country_risk_reference must be an object')
+    if reference.get('status') != 'calculated':
+        reason = reference.get('reason')
+        panel['country_risk_note'] = (reason.strip() if isinstance(reason, str) and reason.strip() else
+                                      'No revenue-weighted country risk premium was computed.')
+        return
+    premium = _number(reference.get('weighted_premium'), 'country_risk_reference.weighted_premium')
+    if not -.02 <= premium <= .2:
+        raise ValueError('country_risk_reference.weighted_premium must be a decimal rate between -0.02 and 0.20')
+    if calibration is None:
+        panel['country_risk_note'] = ('The country risk row needs the dated discount-rate inputs for the equity weight; '
+                                      'this plan states its discount rates directly.')
+        return
+    if calibration.get('basis') == 'house_hurdle':
+        panel['country_risk_note'] = 'A house hurdle is a policy rate; no country risk premium is added to it.'
+        return
+    weight = calibration['equity_weight']
+    shift = weight * premium
+    exposures = [{key: item.get(key) for key in ('label', 'share_of_revenue', 'premium_over_us', 'mapped_to')}
+                 for item in reference.get('exposures') or [] if isinstance(item, dict)]
+    unmapped = [{key: item.get(key) for key in ('label', 'share_of_revenue')}
+                for item in reference.get('unmapped') or [] if isinstance(item, dict)]
+    row = {'name': COUNTRY_RISK_ROW, 'kind': 'country_risk',
+           'label': (f'Cost of equity plus a revenue-weighted country risk premium of {premium * 100:.2f} points (Damodaran\'s '
+                     'country table: each country\'s or region\'s premium over the US premium times its share of revenue). '
+                     'The S&P 500 implied premium already reflects US companies\' foreign revenue, so this row overstates '
+                     'the adjustment against the market benchmark'),
+           'per_share_value': None, 'dollar_delta': None, 'percent_delta': None,
+           'weighted_country_risk_premium': premium, 'cost_of_equity_change': premium, 'equity_weight': weight,
+           'discount_rate_change': shift,
+           'reference': {'fiscal_year_end': reference.get('fiscal_year_end'), 'exposures': exposures, 'unmapped': unmapped,
+                         'choices': list(reference.get('choices') or []), 'notes': list(reference.get('notes') or []),
+                         'us_premium': (reference.get('country_table') or {}).get('us_country_risk_premium'),
+                         'source_refs': list(reference.get('source_refs') or []),
+                         'table_refs': [(reference.get(key) or {}).get('source_ref') for key in ('country_table', 'regional_table')
+                                        if (reference.get(key) or {}).get('source_ref')]}}
+    try:
+        result = _project(actuals, base, shift=shift)
+        spread = result.get('terminal_spread', _rate_path(base, shift=shift)[1] - base['terminal_growth'])
+        row.update(per_share_value=result['per_share_value'], terminal_spread=spread,
+                   status='fragile_spread' if spread < FRAGILE_TERMINAL_SPREAD else 'calculated',
+                   **_value_change(result['per_share_value'], baseline))
+    except (ValueError, ArithmeticError) as error:
+        row.update(status='not_calculated', reason=str(error)[:300])
+    panel['rows'].append(row)
 
 
 def _beta_cross_checks(plan, actuals, base, baseline):
