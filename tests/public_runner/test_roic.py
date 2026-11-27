@@ -141,18 +141,23 @@ class MethodTests(unittest.TestCase):
         self.assertAlmostEqual(rows[-1]['operating_lease_interest'], 6)
         self.assertAlmostEqual(rows[-1]['ebita'], 206)
 
-    def test_intangibles_need_selling_and_administrative_reported_apart(self):
+    def test_one_line_sga_uses_the_peters_and_taylor_shares_and_split_lines_the_company_method(self):
+        # Changed 2026-11-26: one-line SG&A was left without an adjusted ROIC.
         rows = [year(f'20{10 + i}-12-31', research_and_development=100, selling_general_administrative=200)
                 for i in range(9)]
         measures, status = roic.history(rows)
-        self.assertEqual(status, 'no_split')
-        self.assertIsNone(measures[-1].get('adjusted_return'))
+        self.assertEqual(status, 'computed')
+        latest = measures[-1]
+        self.assertEqual(latest['intangibles_basis'], 'one_line')
+        # R&D 100 x (6+5+...+1)/6 plus 30% of SG&A, 60 x (2+1)/2.
+        self.assertAlmostEqual(latest['capitalized_intangibles'], 350 + 90)
         rows = [dict(row, selling_and_marketing=150, general_and_administrative=50) for row in rows]
         measures, status = roic.history(rows)
         self.assertEqual(status, 'computed')
         # Flat spending: investment equals amortization, so NOPAT is unchanged; the
         # balance is R&D 100 x (6+5+...+1)/6 plus S&M 105 x 1.5 plus G&A 10 x 1.5.
         latest = measures[-1]
+        self.assertEqual(latest['intangibles_basis'], 'split')
         self.assertAlmostEqual(latest['adjusted_nopat'], latest['nopat'])
         self.assertAlmostEqual(latest['capitalized_intangibles'], 350 + 157.5 + 15)
 

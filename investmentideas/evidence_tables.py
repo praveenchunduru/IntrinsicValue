@@ -200,6 +200,20 @@ def _duration(gaap, concepts, start, end, currency, as_of=None):
     return None, None, None
 
 
+def _research_and_development(gaap, start, end, currency, as_of=None):
+    """(value, concept, filed) for R&D: the larger of the inclusive concept and its part.
+
+    ResearchAndDevelopmentExpense includes acquired in-process R&D, so it cannot be
+    smaller than ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost.
+    Johnson & Johnson tags only its acquired in-process charge with the inclusive
+    concept ($0.1 billion for 2025 against $14.7 billion of R&D), which put its
+    R&D at 0.1% of revenue.
+    """
+    found = [_duration(gaap, (concept,), start, end, currency, as_of) for concept in DURATIONS['research_and_development']]
+    found = [item for item in found if item[0] is not None]
+    return max(found, key=lambda item: item[0]) if found else (None, None, None)
+
+
 # A split restates earlier share counts and per-share values. Quarterly reports
 # are scanned too: between a split and the next annual report, the latest annual
 # values are on the old basis.
@@ -763,7 +777,9 @@ def historical_baseline(payload, years=5, as_of=None, supplement=None):
         concepts['revenue'] = period['revenue_concept']
         filed = {}
         for name, options in DURATIONS.items():
-            row[name], used, filed[name] = _duration(gaap, options, start, end, currency, as_of)
+            row[name], used, filed[name] = (_research_and_development(gaap, start, end, currency, as_of)
+                                            if name == 'research_and_development' else
+                                            _duration(gaap, options, start, end, currency, as_of))
             if used:
                 concepts.setdefault(name, used)
                 if name in SHARE_BASIS_FIELDS and split and filed[name] < split:
@@ -864,7 +880,146 @@ def historical_baseline(payload, years=5, as_of=None, supplement=None):
     if supplement and any(_from_filing(row) for row in table):
         result['supplement_source'] = supplement.get('source_id')
         result['source'] += f'; gaps filled from the {supplement.get("form") or "annual"} filed {supplement.get("filing_date")}'
+    quarterly = quarterly_table(payload, as_of)
+    if quarterly:
+        result['quarterly'] = quarterly
     return result
+
+
+# Quarterly rate of change (Druckenmiller lens, 2026-11-26 critique): the annual
+# table showed Nvidia's 0.2% growth and 16% margin for the year to January 2023
+# while its quarters ran at 7%, 10% and then 30%; Meta's annual +37% hid quarterly
+# growth that had fallen from +56% to -1%. The quarters are already in the
+# company-facts record.
+QUARTERS_SHOWN = 8
+QUARTERLY_FORMS = ANNUAL_FORMS | {'10-Q', '10-Q/A'}
+# A fiscal quarter is 12-14 weeks; Costco's fourth quarter is 16 weeks.
+QUARTER_DAYS = (75, 120)
+# Contract liabilities first: the concept that replaced deferred revenue under ASC 606.
+DEFERRED_REVENUE = ('ContractWithCustomerLiabilityCurrent', 'DeferredRevenueCurrent', 'ContractWithCustomerLiability',
+                    'DeferredRevenue')
+
+
+def _reported_periods(gaap, concept, currency, as_of=None):
+    """{(start, end): value} of the latest filing in an annual or quarterly report by ``as_of``."""
+    best = {}
+    for unit, rows in ((gaap.get(concept) or {}).get('units') or {}).items():
+        if unit != currency or not isinstance(rows, list):
+            continue
+        for row in rows:
+            if (not isinstance(row, dict) or row.get('form') not in QUARTERLY_FORMS or
+                    not isinstance(row.get('val'), (int, float)) or isinstance(row.get('val'), bool) or
+                    not _day(row.get('end')) or not _day(row.get('filed')) or (as_of and row['filed'] > as_of)):
+                continue
+            key = (row.get('start'), row['end'])
+            if key not in best or row['filed'] > best[key][1]:
+                best[key] = (row['val'], row['filed'])
+    return {key: value for key, (value, _) in best.items()}
+
+
+def _quarter_value(series, fiscal_start, start, end, previous_end, fiscal_end):
+    """(value, basis) for one fiscal quarter: as reported, or one cumulative period less another."""
+    if (start, end) in series:
+        return series[(start, end)], 'reported'
+    if previous_end and (fiscal_start, end) in series and (fiscal_start, previous_end) in series:
+        basis = ('fiscal year less nine months' if end == fiscal_end else
+                 'year to date less the previous year to date')
+        return series[(fiscal_start, end)] - series[(fiscal_start, previous_end)], basis
+    return None, None
+
+
+def quarterly_table(payload, as_of=None, quarters=QUARTERS_SHOWN):
+    """The latest fiscal quarters from the company-facts record, oldest first, or None.
+
+    Each quarter is reported on its own where the filing does so, else derived from
+    cumulative periods of the same fiscal year: the fourth quarter as the fiscal year
+    less nine months, a second or third quarter as one year to date less the last.
+    Revenue uses the concept the annual history chose for that fiscal year. Growth
+    compares a quarter with the one ending 350-380 days earlier. Inventory and
+    deferred revenue are balance-sheet values at each quarter end where tagged.
+    """
+    gaap = ((payload or {}).get('facts') or {}).get('us-gaap') or {}
+    years = _fiscal_years(gaap, 4, as_of)
+    if not years:
+        return None
+    currency = years[-1]['currency']
+    following = (_day(years[-1]['end']) + timedelta(days=1)).isoformat()
+    frames = [(year['start'], year['end'], year['revenue_concept']) for year in years if year['currency'] == currency]
+    frames.append((following, None, years[-1]['revenue_concept']))
+    income = _reported_periods(gaap, 'OperatingIncomeLoss', currency, as_of)
+    series = {concept: _reported_periods(gaap, concept, currency, as_of) for concept in REVENUE}
+
+    def fiscal_quarters(fiscal_start, fiscal_end, concept):
+        revenue = series[concept]
+        limit = fiscal_end or (_day(fiscal_start) + timedelta(days=340)).isoformat()
+        ends = sorted(end for start, end in revenue if start == fiscal_start and end < limit and
+                      QUARTER_DAYS[0] <= (_day(end) - _day(start)).days <= 300)
+        if fiscal_end:
+            ends.append(fiscal_end)
+        found, previous = [], None
+        for number, end in enumerate(ends, 1):
+            start = fiscal_start if previous is None else (_day(previous) + timedelta(days=1)).isoformat()
+            if number > 4 or not QUARTER_DAYS[0] <= (_day(end) - _day(start)).days <= QUARTER_DAYS[1]:
+                break
+            sales, sales_basis = _quarter_value(revenue, fiscal_start, start, end, previous, fiscal_end)
+            if sales is None:
+                break
+            operating, operating_basis = _quarter_value(income, fiscal_start, start, end, previous, fiscal_end)
+            found.append({'period_start': start, 'period_end': end, 'fiscal_quarter': number, 'revenue': sales,
+                          'revenue_basis': sales_basis, 'revenue_concept': concept, 'operating_income': operating,
+                          'operating_income_basis': operating_basis,
+                          'operating_margin': operating / sales if operating is not None and sales > 0 else None})
+            previous = end
+        return found
+
+    rows = []
+    for fiscal_start, fiscal_end, concept in frames:
+        # The annual history's concept first; quarterly reports can use another
+        # (Nvidia's 10-Qs tag Revenues for years whose annual total is contract revenue).
+        # One concept per fiscal year, so a derived quarter never mixes scopes.
+        options = [fiscal_quarters(fiscal_start, fiscal_end, option)
+                   for option in (concept, *(item for item in REVENUE if item != concept))]
+        rows += max(options, key=len)
+    # The latest unbroken run of quarters.
+    run = rows[-1:]
+    for row in reversed(rows[:-1]):
+        if _day(run[0]['period_start']) - _day(row['period_end']) != timedelta(days=1):
+            break
+        run.insert(0, row)
+    rows = run
+    for row in rows:
+        end = _day(row['period_end'])
+        prior = [other for other in rows if 350 <= (end - _day(other['period_end'])).days <= 380]
+        row['revenue_growth'] = (row['revenue'] / prior[0]['revenue'] - 1
+                                 if prior and prior[0]['revenue'] and prior[0]['revenue'] > 0 else None)
+    rows = rows[-quarters:]
+    if len(rows) < 4:
+        return None
+    instants = {}
+    for name, options in (('inventory', ('InventoryNet',)), ('deferred_revenue', DEFERRED_REVENUE)):
+        for option in options:
+            values = {end: value for (start, end), value in _reported_periods(gaap, option, currency, as_of).items()
+                      if start is None}
+            if any(row['period_end'] in values for row in rows):
+                instants[name] = option
+                for row in rows:
+                    row[name] = values.get(row['period_end'])
+                break
+    output = {'rows': rows, 'currency': currency, 'concepts': instants,
+              'basis': 'Fiscal quarters from 10-Q and 10-K facts in the SEC company-facts record; a quarter not '
+                       'reported on its own is one cumulative period less another of the same fiscal year.'}
+    last = rows[-4:]
+    if (all(row['revenue'] is not None and row['operating_income'] is not None for row in last) and
+            all(_day(b['period_start']) - _day(a['period_end']) == timedelta(days=1) for a, b in zip(last, last[1:])) and
+            last[-1]['period_end'] > years[-1]['end']):
+        sales, operating = sum(row['revenue'] for row in last), sum(row['operating_income'] for row in last)
+        if sales > 0:
+            output['trailing_twelve_months'] = {
+                'period': {'start_date': last[0]['period_start'], 'end_date': last[-1]['period_end']},
+                'revenue': sales, 'operating_income': operating, 'operating_margin': operating / sales,
+                'quarters': len(last), 'quarters_after_fiscal_year': sum(row['period_end'] > years[-1]['end'] for row in last),
+                'basis': 'The four latest fiscal quarters summed.'}
+    return output
 
 
 def _member_label(member):
@@ -1010,9 +1165,9 @@ def _roic_inputs(gaap, period, as_of):
     """One fiscal year's inputs to roic.history from company facts."""
     start, end, currency = period['start'], period['end'], period['currency']
     row = {'fiscal_year_end': end, 'revenue': period['revenue']}
-    for name in ('operating_income', 'income_tax_expense', 'pretax_income', 'net_income', 'research_and_development',
-                 'selling_general_administrative'):
+    for name in ('operating_income', 'income_tax_expense', 'pretax_income', 'net_income', 'selling_general_administrative'):
         row[name], _, _ = _duration(gaap, DURATIONS[name], start, end, currency, as_of)
+    row['research_and_development'], _, _ = _research_and_development(gaap, start, end, currency, as_of)
     for name, options in roic.DURATIONS.items():
         row[name], _, _ = _duration(gaap, options, start, end, currency, as_of)
     if row['pretax_income'] is None and row['net_income'] is not None and row['income_tax_expense'] is not None:
@@ -1029,7 +1184,12 @@ ROIC_FIELDS = ('nopat', 'nopat_margin', 'ebita', 'ebit_basis', 'operating_lease_
                'return_on_capital_unbounded', 'invested_capital_excluding_acquired', 'return_excluding_acquired',
                'return_excluding_acquired_unbounded', 'intangible_investment', 'intangible_amortization',
                'capitalized_intangibles', 'adjusted_nopat', 'adjusted_invested_capital', 'adjusted_return',
-               'adjusted_return_unbounded', 'incremental_return', 'incremental_capital_change', 'investment_rate')
+               'adjusted_return_unbounded', 'intangibles_basis', 'incremental_return', 'incremental_return_status',
+               'incremental_capital_change', 'investment_rate')
+# The basis note flags a latest NOPAT tax rate this far from its three-year median
+# (Microsoft, Alphabet, Amazon, Meta and Salesforce: 8-12% in the latest year
+# against medians near 20%, 2026-11-26 critique).
+TAX_RATE_NOTE_GAP = .05
 
 
 def _attach_roic(table, gaap, as_of):
@@ -1091,6 +1251,53 @@ def render_baseline(baseline, source_id=None, include_roic=True):
     return '\n'.join(lines + (_roic_lines(rows, ref) if include_roic else []))
 
 
+def render_quarterly(baseline, source_id=None, markdown=False):
+    """The quarterly rate-of-change table: one row per quarter, or with ``markdown`` one column per quarter."""
+    quarterly = (baseline or {}).get('quarterly') or {}
+    rows = quarterly.get('rows') or []
+    if not rows:
+        return ''
+    ref = f' [{source_id}]' if source_id else ''
+    concepts = quarterly.get('concepts') or {}
+    measures = [('revenue', lambda row: _money(row.get('revenue'))),
+                ('growth on the year-earlier quarter', lambda row: _pct(row.get('revenue_growth'))),
+                ('operating margin', lambda row: _pct(row.get('operating_margin')))]
+    if 'inventory' in concepts:
+        measures.append(('inventory at quarter end', lambda row: _money(row.get('inventory'))))
+    if 'deferred_revenue' in concepts:
+        measures.append(('deferred revenue at quarter end', lambda row: _money(row.get('deferred_revenue'))))
+    def label(row):
+        derived = row.get('revenue_basis') not in (None, 'reported') or row.get('operating_income_basis') not in (None, 'reported')
+        return f'Q{row["fiscal_quarter"]}' + (' (derived)' if derived else '')
+    caption = (f'Reported fiscal quarters{ref}, {quarterly.get("currency", "")} billions; ratios computed by Python from '
+               'reported values; n/a means not reported.')
+    notes = []
+    derived = [row for row in rows if 'derived' in label(row)]
+    if derived:
+        notes.append('Quarters marked derived are not reported on their own: '
+                     + '; '.join(f'{row["period_end"]} is the {row["revenue_basis"] if row["revenue_basis"] != "reported" else row["operating_income_basis"]}'
+                                 for row in derived))
+    if concepts:
+        notes.append('Balance-sheet concepts: ' + ', '.join(f'{name.replace("_", " ")} us-gaap:{concept}'
+                                                             for name, concept in concepts.items()))
+    ttm = quarterly.get('trailing_twelve_months')
+    if ttm:
+        notes.append(f'Trailing twelve months to {ttm["period"]["end_date"]}: revenue {_money(ttm["revenue"])}, operating '
+                     f'income {_money(ttm["operating_income"])}, operating margin {_pct(ttm["operating_margin"])}')
+    if markdown:
+        lines = ['', caption, '', '| Measure | ' + ' | '.join(f'{row["period_end"]} {label(row)}' for row in rows) + ' |',
+                 '|---|' + '---:|' * len(rows)]
+        for name, cell in measures:
+            lines.append(f'| {name[0].upper() + name[1:]} | ' + ' | '.join(cell(row) for row in rows) + ' |')
+        return '\n'.join(lines + ([''] + ['- ' + note + '.' for note in notes] if notes else []))
+    lines = [caption, 'quarter end | fiscal quarter | ' + ' | '.join(name for name, _ in measures)]
+    lines += [' | '.join([row['period_end'], label(row)] + [cell(row) for _, cell in measures]) for row in rows]
+    if notes:
+        lines.append('Quarterly notes:')
+        lines.extend('- ' + note + '.' for note in notes)
+    return '\n'.join(lines)
+
+
 def render_roic(baseline, source_id=None):
     """The return-on-capital table alone: caption, header, one row per year, then 'ROIC basis:' notes."""
     rows = (baseline or {}).get('rows') or []
@@ -1113,16 +1320,20 @@ def _roic_lines(rows, ref):
               ('ROIC with intangibles capitalized | ' if adjusted else '') + '3-year incremental ROIC | NOPAT tax rate')
     lines = ['', f'Return on invested capital{ref}, Mauboussin and Callahan method (Counterpoint Global, October 2022); '
              'computed by Python from reported values, billions of the reporting currency.', header]
+    tags = {'split': ' (split)', 'one_line': ' (one line)'}
     for row in rows:
         turnover = row.get('capital_turnover')
         incremental = row.get('incremental_return')
+        status = row.get('incremental_return_status')
         cells = [row['fiscal_year_end'], _money(row.get('nopat')), _pct(row.get('nopat_margin')),
                  _money(row.get('invested_capital')), _money(row.get('average_invested_capital')),
                  'n/a' if turnover is None else f'{turnover:.2f}x', _return(row, 'return_on_invested_capital'),
                  _return(row, 'return_excluding_acquired')]
         if adjusted:
-            cells.append(_return(row, 'adjusted_return'))
-        cells += ['n/m (capital fell or unchanged)' if incremental is None and row.get('incremental_capital_change') is not None
+            value = _return(row, 'adjusted_return')
+            cells.append(value + (tags.get(row.get('intangibles_basis'), '') if value != 'n/a' else ''))
+        cells += ['n/m (capital change under a tenth of capital)' if status == 'small_capital_change' else
+                  'n/m (capital fell or unchanged)' if incremental is None and row.get('incremental_capital_change') is not None
                   else _pct(incremental),
                   _pct(row.get('nopat_tax_rate')) + ('' if row.get('nopat_tax_basis') in (None, 'cash') else
                                                      f' ({row["nopat_tax_basis"]})')]
@@ -1132,9 +1343,33 @@ def _roic_lines(rows, ref):
     status = rows[-1].get('intangibles_capitalization')
     absent = {'no_split': 'the method applies separate shares to selling and marketing and to G&A, which the filings '
                           'do not report apart',
+              'no_sga': 'no SG&A line is reported',
               'no_rnd': 'no R&D line is reported, and the method does not take a missing line as zero',
               'short_history': 'the reported history is shorter than the six-year R&D life'}
+    bases = {row.get('intangibles_basis') for row in rows
+             if row.get('adjusted_return') is not None or row.get('adjusted_return_unbounded')}
+    capitalization = []
+    if 'split' in bases:
+        capitalization.append('Years marked (split), where selling and marketing and G&A are reported apart, use the '
+                              'company method the paper applies to Microsoft: 100% of R&D is treated as investment over six '
+                              'years, and 70% of selling and marketing and 20% of G&A over two years each.')
+    if 'one_line' in bases:
+        capitalization.append('Years marked (one line), where SG&A is one line, use the shares of Peters and Taylor that '
+                              'Mauboussin and Callahan state ("ROIC and Intangible Assets", November 2022): 100% of R&D over '
+                              'six years and 30% of SG&A, taken as non-R&D SG&A, over two years.')
     marked = any(row.get('ebit_basis') not in (None, 'operating income') for row in rows)
+    rates = [row.get('nopat_tax_rate') for row in rows[-3:]]
+    tax = []
+    if len(rates) == 3 and all(isinstance(rate, (int, float)) for rate in rates):
+        median = sorted(rates)[1]
+        latest = rows[-1]
+        if abs(rates[-1] - median) > TAX_RATE_NOTE_GAP:
+            roic_at_median = (latest['return_on_invested_capital'] * (1 - median) / (1 - rates[-1])
+                              if isinstance(latest.get('return_on_invested_capital'), (int, float)) and rates[-1] < 1 else None)
+            tax.append(f'- The latest NOPAT tax rate, {_pct(rates[-1])} for the year ending {latest["fiscal_year_end"]}, '
+                       f'differs from its three-year median of {_pct(median)} by more than {TAX_RATE_NOTE_GAP * 100:.0f} '
+                       'points' + (f'; at the median rate that year\'s ROIC would be {_pct(roic_at_median)}'
+                                   if roic_at_median is not None else '') + '.')
     lines += ['ROIC basis:',
               *(['- * No operating income is reported: EBIT is pretax income plus net interest expense, so other '
                  'non-operating items stay in it.'] if marked else []),
@@ -1147,11 +1382,13 @@ def _roic_lines(rows, ref):
               'ROIC divides NOPAT by the average of opening and closing invested capital.',
               '- Incremental ROIC is the NOPAT change over three years divided by the change in invested capital over the '
               'three years ending a year earlier. It is noisy; the method warns against comparing it directly with the cost '
-              'of capital.',
-              ('- With intangibles capitalized: 100% of R&D is treated as investment over six years, and 70% of selling '
-               'and marketing and 20% of G&A over two years each, straight line from the year after the spending; NOPAT '
-               'adds the year\'s investment less its amortization and invested capital adds the unamortized balance.'
-               if adjusted else
+              'of capital. It is not meaningful (n/m) when capital fell, or rose by less than a tenth of the average of the '
+              'two capital figures.',
+              *tax,
+              ('- Intangibles capitalized. ' + ' '.join(capitalization) + ' Amortization is straight line from the year '
+               'after the spending; NOPAT adds the year\'s investment less its amortization and invested capital adds the '
+               'unamortized balance. The lives are the company method\'s; the November 2022 paper sets them by industry.'
+               if adjusted and capitalization else
                '- ROIC with intangibles capitalized is not shown: ' + absent.get(status, 'the inputs are incomplete') + '.'),
               '- No adjustment is made for restructuring charges, impairments or one-time tax items, which the paper '
               'removes; years that contain them are shown as reported (a tax rate outside 0-50% falls back as noted).',
