@@ -20,16 +20,19 @@ from .companyfacts import normalize_companyfacts
 
 BASE = 'https://openrouter.ai/api/v1'
 # The newest generation in each slot, checked against the OpenRouter catalog on
-# 2026-11-15; the tier follows the job. Check the catalog again before changing a
+# 2026-11-26; the tier follows the job. Check the catalog again before changing a
 # slot: a same-evidence Microsoft test (2026-11-15) found the then-default Sonnet 4.6
-# writer both dearer and weaker than the newer Claude models.
+# writer both dearer and weaker than the newer Claude models. GPT-6.2 Sol replaced
+# GPT-5.6 Sol as the balanced reviewer on 2026-11-26 at half the listed price.
 MODELS = {'economy': ('deepseek/deepseek-v4.1-flash-1017', 'deepseek/deepseek-v4-pro-0813'),
           'balanced': ('anthropic/claude-haiku-5.5', 'anthropic/claude-opus-5.5'),
           # Pipeline testing only: the whole flow for well under a dollar. Not for research.
           'dev': ('anthropic/claude-haiku-5.5', 'anthropic/claude-haiku-5.5')}
 # Full-memo reviewers come from a different model family than the author, so a
 # review is not the author's own judgment returned to it. --review-model overrides.
-REVIEWERS = {'economy': 'moonshotai/kimi-k3.1-pro', 'balanced': 'openai/gpt-5.6-sol', 'dev': 'openai/gpt-5.6-luna'}
+REVIEWERS = {'economy': 'moonshotai/kimi-k3.1-pro', 'balanced': 'openai/gpt-6.2-sol', 'dev': 'openai/gpt-6-luna'}
+# OpenAI generations that take explicit prompt caching (cache writes cost 1.25x).
+OPENAI_EXPLICIT_CACHE = ('openai/gpt-5.6', 'openai/gpt-6')
 # Extended thinking for the draft. OpenRouter counts reasoning inside the
 # output limit, so the budget is added on top of the stage's output tokens.
 # The budget is a target, not a cap: a live plan call (2026-11-14) spent all
@@ -270,10 +273,10 @@ def _cache_write_cap(pricing):
 
 # Long shared prefixes (the evidence, and for the reviewer the valuation and
 # draft) are sent first and marked for caching. OpenRouter turns the Anthropic
-# marker into a GPT-5.6 cache breakpoint; the TTL applies to Anthropic only.
+# marker into a GPT-5.6 or GPT-6 cache breakpoint; the TTL applies to Anthropic only.
 # No stage reused a cache before (investigation, 2026-11-15): every prompt
 # opened with its own instructions.
-CACHE_MARKER_MODELS = ('anthropic/', 'openai/gpt-5.6')
+CACHE_MARKER_MODELS = ('anthropic/',) + OPENAI_EXPLICIT_CACHE
 
 
 def cache_markers_supported(model):
@@ -355,8 +358,8 @@ class Router:
             'max_tokens': max_tokens,
             'provider': {'allow_fallbacks': True, 'max_price': {'prompt': pin * 1e6, 'completion': pout * 1e6}},
             'usage': {'include': True}}
-        if model.startswith('openai/gpt-5.6'):
-            # GPT-5.6 charges 1.25x for automatic cache writes; only marked prefixes are cached.
+        if model.startswith(OPENAI_EXPLICIT_CACHE):
+            # GPT-5.6 and GPT-6 charge 1.25x for automatic cache writes; only marked prefixes are cached.
             payload['prompt_cache_options'] = {'mode': 'explicit'}
         session = getattr(self, 'session', None)
         if isinstance(session, str) and session:

@@ -46,8 +46,8 @@ completion promise. They are not observed provider bills or research-quality evi
 
 The economy profile uses open-weight DeepSeek V4.1 Flash for extraction/search,
 DeepSeek V4 Pro for analysis and Kimi K3.1 Pro for review. Balanced uses Claude Haiku
-5.5 for easy work, Claude Opus 5.5 for analysis and GPT-5.6 Sol for review (newest
-generation in each slot, checked 2026-11-15). The runs recorded above used the earlier
+5.5 for easy work, Claude Opus 5.5 for analysis and GPT-6.2 Sol for review (newest
+generation in each slot, checked 2026-11-26). The runs recorded above used the earlier
 Qwen, Claude Sonnet 4.6 and GPT-5.4 routing. The default reviewer differs from
 the author model. An explicit review-model override can name any model and is saved
 with the run. Prices and availability are checked

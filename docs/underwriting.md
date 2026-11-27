@@ -631,7 +631,7 @@ longer re-type them.
 The evidence is sent first in every Claude stage, marked for one-hour provider caching,
 and the review and its finding check share one prefix of evidence, valuation and the
 draft between markers, so later stages read the evidence at the cache price. GPT-5.6
-caching is explicit, each run keeps one provider through a session id, and reservations
+and GPT-6 caching is explicit, each run keeps one provider through a session id, and reservations
 count the prefix at the cache-write price. A plan repair that returns the rejected plan
 unchanged ends the loop, and repair reasons are saved with the run.
 
@@ -719,7 +719,7 @@ difference between value and price. An answer other than a plain yes counts as n
 partly. Either answer short of yes, with no other material finding, becomes a major
 finding, so the draft goes back for revision. A review that gives neither answer gets
 a minor finding and can pass; the memo then shows the assessment as not stated. The
-default reviewer is a different model from the author: GPT-5.6 Sol for `balanced`
+default reviewer is a different model from the author: GPT-6.2 Sol for `balanced`
 and Kimi K3.1 Pro for `economy`. When `--strong-model` names the default reviewer, the
 profile's default author reviews instead. `--review-model` can name any model,
 including the author, and is saved with the run; a run folder saved before the

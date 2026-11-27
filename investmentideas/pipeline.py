@@ -40,7 +40,7 @@ from .companyfacts import CONCEPT_SELECTION_SHA256
 VERSION = 'full-2'
 # The allowance is a ceiling, not the expected bill. Each call reserves its prompt
 # bytes at the model's highest price tier before it is sent; with GPT-5.6 Sol a
-# review reserves about $5, so a run with one revision needs about $15 of headroom
+# review reserved about $5 (GPT-6.2 Sol, the default since 2026-11-26, about half), so a run with one revision needs about $15 of headroom
 # although it is expected to cost about $4.50 (Opus review, 2026-11-15).
 DEFAULT_BUDGET = 20.0
 SECTIONS = '''Write these sections, in this order, as prose around the computed valuation summary that

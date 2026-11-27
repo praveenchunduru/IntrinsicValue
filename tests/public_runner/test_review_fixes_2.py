@@ -969,3 +969,15 @@ class DataReviewFixTests(unittest.TestCase):
         self.assertNotIn(6099, inputs.BANK_SIC)
         self.assertNotIn('NVIDIA', inputs.AFS_POLICY)
         self.assertIn('6211', pipeline.FINANCIAL_SIC_NEEDING_OPERATING_INCOME)
+
+
+class ReviewerGenerationTests(unittest.TestCase):
+    """The balanced reviewer is the newest OpenAI generation (catalog check, 2026-11-26)."""
+
+    def test_defaults_and_cache_markers(self):
+        from investmentideas import core
+        self.assertEqual(core.REVIEWERS['balanced'], 'openai/gpt-6.2-sol')
+        self.assertEqual(core.REVIEWERS['dev'], 'openai/gpt-6-luna')
+        for model in ('openai/gpt-6.2-sol', 'openai/gpt-6-luna', 'openai/gpt-5.6-sol', 'anthropic/claude-opus-5.5'):
+            self.assertTrue(core.cache_markers_supported(model), model)
+        self.assertFalse(core.cache_markers_supported('moonshotai/kimi-k3.1-pro'))
