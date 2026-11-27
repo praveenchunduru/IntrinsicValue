@@ -212,8 +212,27 @@ def completion_timeout(max_tokens):
     return min(900, max(180, 60 + max_tokens // 20))
 
 
+PRICE_CONDITIONS = ('min_prompt_tokens', 'utc_days', 'utc_start', 'utc_end')
+UTC_DAYS = frozenset(('monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'))
+
+
+def _valid_price_condition(name, value):
+    if name == 'utc_days':
+        return (isinstance(value, list) and bool(value) and
+                all(isinstance(day, str) and day in UTC_DAYS for day in value))
+    if isinstance(value, bool) or not isinstance(value, int):
+        return False
+    # Clock bounds are UTC hours and minutes as HHMM (2026-11-26 catalog: 0, 100 ... 1600).
+    return value >= 0 if name == 'min_prompt_tokens' else 0 <= value <= 2400 and value % 100 < 60
+
+
 def _text_price_caps(pricing):
-    """Conservative token prices across every declared context-length tier.
+    """Conservative token prices across every declared override tier.
+
+    An override applies above a prompt length (``min_prompt_tokens``) or in a UTC
+    window (``utc_days``, ``utc_start``, ``utc_end``; deepseek-v4.1-flash-1017
+    on 2026-11-26). The reservation takes the highest listed price whatever the
+    condition, so it holds at any prompt length and any hour.
 
     Cache and multimodal prices are inactive for these uncached text requests;
     web search has its separate reservation below. Unknown paid dimensions
@@ -230,14 +249,14 @@ def _text_price_caps(pricing):
     for tier in overrides:
         if not isinstance(tier, dict):
             raise ValueError(error)
-        threshold = tier.get('min_prompt_tokens')
-        if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < 0:
+        conditions = [name for name in PRICE_CONDITIONS if name in tier]
+        if not conditions or not all(_valid_price_condition(name, tier[name]) for name in conditions):
             raise ValueError(error)
     prompt_rates, completion_rates = [], []
     for index, rates in enumerate([pricing, *overrides]):
         parsed = {}
         for name, raw in rates.items():
-            if (index == 0 and name == 'overrides') or (index > 0 and name == 'min_prompt_tokens'):
+            if (index == 0 and name == 'overrides') or (index > 0 and name in PRICE_CONDITIONS):
                 continue
             try:
                 if isinstance(raw, bool):

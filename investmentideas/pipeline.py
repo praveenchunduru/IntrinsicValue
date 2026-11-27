@@ -355,13 +355,62 @@ def _default_reviewer(profile, strong):
     return strong
 
 
+def _evidence_day(sources):
+    """UTC calendar date of the run's latest source retrieval, never after today; None if none is recorded."""
+    days=[]
+    for source in sources if isinstance(sources,list) else []:
+        stamp=source.get('retrieved_at') if isinstance(source,dict) else None
+        # One accepted form on every Python: 3.11 widened fromisoformat. Seconds' fractions never change the date.
+        stamp=re.sub(r'(:\d{2})\.\d+',r'\1',stamp.strip()) if isinstance(stamp,str) else ''
+        if not re.fullmatch(r'\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})?)?',stamp):
+            continue
+        try:
+            moment=datetime.fromisoformat(stamp.replace('Z','+00:00'))
+        except ValueError:
+            continue
+        days.append((moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).date())
+    return min(max(days),datetime.now(timezone.utc).date()).isoformat() if days else None
+
+
+def _date_by_evidence(plan, sources):
+    """Date a model-authored plan at the run's evidence date; return the plan and the recorded changes.
+
+    The valuation date sets the fact cutoff and the first-year stub, so a model's
+    date would move the value (MSFT, 2026-11-27: about 6 cents a share per day).
+    A model writing the US calendar day of a run retrieved after midnight UTC also
+    dropped coverage. Every quote, rate and filing in the evidence was observed by
+    its retrieval, so the evidence date satisfies each dated-input rule.
+    """
+    day=_evidence_day(sources)
+    if day is None or not isinstance(plan,dict):
+        return plan,[]
+    plan=copy.deepcopy(plan)
+    changes=[]
+    reason='the valuation is dated at the run\'s latest evidence retrieval (UTC calendar date), not a model-written date'
+    if plan.get('valuation_date',day)!=day:
+        changes.append({'field':'valuation_date','previous':plan['valuation_date'],'pinned':day,'source_refs':[],'reason':reason})
+    plan['valuation_date']=day
+    rate=plan.get('discount_rate')
+    if isinstance(rate,dict):
+        if rate.get('as_of',day)!=day:
+            changes.append({'field':'discount_rate.as_of','previous':rate['as_of'],'pinned':day,'source_refs':[],'reason':reason})
+        rate['as_of']=day
+    return plan,changes
+
+
 def _lock_and_value(candidate, state, *, apply_conventions=True, prior=None):
     """Lock reported inputs and conventions into one plan, then value it.
 
     Shared by the plan stage and the review-correction stage so both apply the
-    same pins, coverage check, source check and requested counterfactuals.
+    same pins, coverage check, source check and requested counterfactuals. A
+    model-authored plan (current conventions) is dated by the evidence; a
+    supplied plan keeps its own valuation date.
     """
+    dated=[]
+    if apply_conventions:
+        candidate,dated=_date_by_evidence(candidate,state['sources'])
     locked,changes=_lock_plan(candidate,state['sources'],apply_conventions=apply_conventions)
+    changes[:0]=dated
     if not locked['reported_inputs']['coverage'].get('complete'):
         raise ValueError('Reported-input coverage is incomplete')
     _validate_plan_sources(locked,state['sources'])
@@ -2172,11 +2221,16 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
         valuation_day = datetime.now(timezone.utc).date().isoformat()
     if not isinstance(valuation_day, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', valuation_day):
         raise ValueError('valuation_date must be YYYY-MM-DD')
-    if date.fromisoformat(valuation_day) > datetime.now(timezone.utc).date():
-        raise ValueError('valuation_date cannot be in the future')
+    today=datetime.now(timezone.utc).date()
+    if date.fromisoformat(valuation_day) > today:
+        raise ValueError(f'valuation_date cannot be in the future: {valuation_day} is after {today.isoformat()} (UTC)')
     reported=canonical_reported_inputs(sources, as_of=valuation_day)
     if not reported['coverage'].get('complete'):
-        raise ValueError('Essential reported inputs lack complete primary coverage')
+        coverage,evidence=reported['coverage'],_evidence_day(sources)
+        detail=('; '.join(coverage.get('conflicts') or []) or ', '.join(coverage.get('missing_fields') or [])
+                or str(coverage.get('status')))
+        raise ValueError(f'Essential reported inputs lack complete primary coverage at valuation date {valuation_day}'+
+                         (f' (sources retrieved through {evidence}, UTC)' if evidence else '')+': '+detail)
     proposal=copy.deepcopy(plan)
     # Review dispositions belong to the audit trail, not forecast assumptions.
     # Feeding old allegations back as model data anchors later reviews.

@@ -115,9 +115,10 @@ def _record(spec, name, as_of):
     value = _number(record.get('value'), name + '.value')
     _, observation, _ = _observation_period(record, name)
     if observation > as_of:
-        raise ValueError(f'{name}.observed_at is after as_of; future observations are invalid')
+        raise ValueError(f'{name}.observed_at is after as_of ({observation.isoformat()} > {as_of.isoformat()}); '
+                         'future observations are invalid')
     if 'publication_date' in record and _date(record['publication_date'], name + '.publication_date') > as_of:
-        raise ValueError(f'{name}.publication_date is after as_of')
+        raise ValueError(f'{name}.publication_date is after as_of ({record["publication_date"]} > {as_of.isoformat()})')
     refs = record.get('source_refs')
     if (not isinstance(refs, list) or not refs or
             any(not isinstance(ref, str) or not ref.strip() for ref in refs)):
