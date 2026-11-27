@@ -517,10 +517,12 @@ def render_note(panel, ref_label=lambda ref: f'[{ref}]'):
     tables = [ref for ref in reference.get('table_refs') or [] if ref]
     filings = ' '.join(ref_label(ref) for ref in reference.get('source_refs') or [] if ref not in tables)
     us = reference.get('us_premium')
-    lines = [f'Country risk row: reported revenue by geography for the fiscal year ending {reference.get("fiscal_year_end")}'
-             + (f' {filings}' if filings else '') + ' and Damodaran\'s country and regional premiums'
-             + ''.join(f' {ref_label(ref)}' for ref in tables) + ', each measured over the US premium'
-             + (f' of {us * 100:.2f} points' if isinstance(us, (int, float)) else '') + ':']
+    # The shares and premiums below are Python's arithmetic on the cited sources, so they are
+    # cited as computed from them (review of the merged code, 2026-11-27).
+    cited = ' '.join([*([filings] if filings else []), *(ref_label(ref) for ref in tables)])
+    lines = ['Country risk row' + (f', computed from {cited}' if cited else '') + ': shares of revenue by geography for the '
+             f'fiscal year ending {reference.get("fiscal_year_end")} and Damodaran\'s country and regional premiums, each '
+             'over the US premium' + (f' of {us * 100:.2f} points' if isinstance(us, (int, float)) else '') + ':']
     for item in reference.get('exposures') or []:
         where = item.get('mapped_to')
         lines.append(f'- {item["label"]}: {item["share_of_revenue"]:.1%} of revenue, {item["premium_over_us"] * 100:+.2f} points'

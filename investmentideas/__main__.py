@@ -41,8 +41,11 @@ def main():
             if args.revalue.stat().st_size > 1_000_000:
                 raise ValueError('Assumptions file must be at most 1 MB')
             from .valuation import evaluate, save_valuation
+            # The same diagnostics as a pipeline run (continuity checks, base rates), so a
+            # revalued valuation.json carries what the run's own one does.
+            from .pipeline import attach_diagnostics
             assumptions = json.loads(args.revalue.read_text(encoding='utf-8'))
-            results = evaluate(assumptions)
+            results = attach_diagnostics(assumptions, evaluate(assumptions))
             folder = Path(args.output)
             folder.mkdir(parents=True, exist_ok=True)
             save_valuation(folder, assumptions, results)

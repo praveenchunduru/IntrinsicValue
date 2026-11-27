@@ -473,8 +473,13 @@ class ForecastReturnOnCapitalTests(unittest.TestCase):
                          (1e9, '2025-12-31', ['S2']))
         rows[-1]['invested_capital'] = None
         self.assertIsNone(pipeline.forecast_capital_reference(source))
-        locked, _ = lock(operating_plan(), sources=[dict(source[0], historical_baseline={'rows': rows[:1]})])
+        # Changed 2026-11-27: the history's last year must be the revenue anchor year.
+        value = operating_plan()
+        anchored = [dict(rows[0], revenue=value['actuals']['revenue'])]
+        locked, _ = lock(value, sources=[dict(source[0], historical_baseline={'rows': anchored})])
         self.assertEqual(locked['invested_capital_reference']['invested_capital'], 9e8)
+        locked, _ = lock(value, sources=[dict(source[0], historical_baseline={'rows': [dict(anchored[0], revenue=1.0)]})])
+        self.assertNotIn('invested_capital_reference', locked)
 
     def test_the_memo_prints_the_line_under_the_forecast(self):
         value = steady(constant_plan())

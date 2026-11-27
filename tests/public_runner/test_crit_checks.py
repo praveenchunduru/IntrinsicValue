@@ -30,33 +30,94 @@ def facts(**concepts):
                                   for name, rows in concepts.items()}}}
 
 
+# Every filing of each period, so the year-earlier comparatives are there.
 NVIDIA = facts(
-    Revenues=[('2021-02-01', '2021-05-02', 5661e6, '2021-05-26', '10-Q'), ('2021-02-01', '2021-08-01', 12168e6, '2021-08-20', '10-Q'),
-              ('2021-05-03', '2021-08-01', 6507e6, '2021-08-20', '10-Q'), ('2021-02-01', '2021-10-31', 19271e6, '2021-11-22', '10-Q'),
-              ('2021-08-02', '2021-10-31', 7103e6, '2021-11-22', '10-Q'), ('2021-02-01', '2022-01-30', 26914e6, '2022-03-18', '10-K'),
-              ('2022-01-31', '2022-05-01', 8288e6, '2022-05-27', '10-Q'), ('2022-01-31', '2022-07-31', 14992e6, '2022-08-31', '10-Q'),
-              ('2022-05-02', '2022-07-31', 6704e6, '2022-08-31', '10-Q'), ('2022-01-31', '2022-10-30', 20923e6, '2022-11-18', '10-Q'),
-              ('2022-08-01', '2022-10-30', 5931e6, '2022-11-18', '10-Q'), ('2022-01-31', '2023-01-29', 26974e6, '2023-02-24', '10-K'),
-              ('2023-01-30', '2023-04-30', 7192e6, '2023-05-26', '10-Q'), ('2023-01-30', '2023-07-30', 20699e6, '2023-08-28', '10-Q'),
-              ('2023-05-01', '2023-07-30', 13507e6, '2023-08-28', '10-Q'), ('2023-01-30', '2023-10-29', 38819e6, '2023-11-21', '10-Q'),
-              ('2023-07-31', '2023-10-29', 18120e6, '2023-11-21', '10-Q')],
-    # The fiscal 2022 annual total is tagged as contract revenue; its 10-Qs tag Revenues.
-    RevenueFromContractWithCustomerExcludingAssessedTax=[('2021-02-01', '2022-01-30', 26914e6, '2022-03-18', '10-K')],
-    OperatingIncomeLoss=[('2021-02-01', '2021-05-02', 1956e6, '2021-05-26', '10-Q'), ('2021-02-01', '2021-08-01', 4400e6, '2021-08-20', '10-Q'),
-                         ('2021-05-03', '2021-08-01', 2444e6, '2021-08-20', '10-Q'), ('2021-02-01', '2021-10-31', 7071e6, '2021-11-22', '10-Q'),
-                         ('2021-08-02', '2021-10-31', 2671e6, '2021-11-22', '10-Q'), ('2021-02-01', '2022-01-30', 10041e6, '2022-03-18', '10-K'),
-                         ('2022-01-31', '2022-05-01', 1868e6, '2022-05-27', '10-Q'), ('2022-01-31', '2022-07-31', 2367e6, '2022-08-31', '10-Q'),
-                         ('2022-05-02', '2022-07-31', 499e6, '2022-08-31', '10-Q'), ('2022-01-31', '2022-10-30', 2968e6, '2022-11-18', '10-Q'),
-                         ('2022-08-01', '2022-10-30', 601e6, '2022-11-18', '10-Q'), ('2022-01-31', '2023-01-29', 4224e6, '2023-02-24', '10-K'),
-                         ('2023-01-30', '2023-04-30', 2140e6, '2023-05-26', '10-Q'), ('2023-01-30', '2023-07-30', 8941e6, '2023-08-28', '10-Q'),
-                         ('2023-05-01', '2023-07-30', 6800e6, '2023-08-28', '10-Q'), ('2023-01-30', '2023-10-29', 19358e6, '2023-11-21', '10-Q'),
-                         ('2023-07-31', '2023-10-29', 10417e6, '2023-11-21', '10-Q')],
-    InventoryNet=[(None, '2022-01-30', 2605e6, '2022-03-18', '10-K'), (None, '2022-05-01', 3163e6, '2022-05-27', '10-Q'),
-                  (None, '2022-07-31', 3889e6, '2022-08-31', '10-Q'), (None, '2022-10-30', 4454e6, '2022-11-18', '10-Q'),
-                  (None, '2023-01-29', 5159e6, '2023-02-24', '10-K'), (None, '2023-04-30', 4611e6, '2023-05-26', '10-Q'),
-                  (None, '2023-07-30', 4319e6, '2023-08-28', '10-Q'), (None, '2023-10-29', 4779e6, '2023-11-21', '10-Q')],
-    ContractWithCustomerLiabilityCurrent=[(None, '2023-01-29', 354e6, '2023-02-24', '10-K'), (None, '2023-04-30', 367e6, '2023-05-26', '10-Q'),
-                                          (None, '2023-07-30', 421e6, '2023-08-28', '10-Q'), (None, '2023-10-29', 513e6, '2023-11-21', '10-Q')])
+    Revenues=[
+        ('2021-02-01', '2021-05-02', 5661e6, '2021-05-26', '10-Q'),
+        ('2021-02-01', '2021-05-02', 5661e6, '2022-05-27', '10-Q'),
+        ('2021-02-01', '2021-08-01', 12168e6, '2021-08-20', '10-Q'),
+        ('2021-02-01', '2021-08-01', 12168e6, '2022-08-31', '10-Q'),
+        ('2021-05-03', '2021-08-01', 6507e6, '2021-08-20', '10-Q'),
+        ('2021-05-03', '2021-08-01', 6507e6, '2022-08-31', '10-Q'),
+        ('2021-02-01', '2021-10-31', 19271e6, '2021-11-22', '10-Q'),
+        ('2021-02-01', '2021-10-31', 19271e6, '2022-11-18', '10-Q'),
+        ('2021-08-02', '2021-10-31', 7103e6, '2021-11-22', '10-Q'),
+        ('2021-08-02', '2021-10-31', 7103e6, '2022-11-18', '10-Q'),
+        ('2021-02-01', '2022-01-30', 26914e6, '2022-03-18', '10-K'),
+        ('2021-02-01', '2022-01-30', 26914e6, '2023-02-24', '10-K'),
+        ('2022-01-31', '2022-05-01', 8288e6, '2022-05-27', '10-Q'),
+        ('2022-01-31', '2022-05-01', 8288e6, '2023-05-26', '10-Q'),
+        ('2022-01-31', '2022-07-31', 14992e6, '2022-08-31', '10-Q'),
+        ('2022-01-31', '2022-07-31', 14992e6, '2023-08-28', '10-Q'),
+        ('2022-05-02', '2022-07-31', 6704e6, '2022-08-31', '10-Q'),
+        ('2022-05-02', '2022-07-31', 6704e6, '2023-08-28', '10-Q'),
+        ('2022-01-31', '2022-10-30', 20923e6, '2022-11-18', '10-Q'),
+        ('2022-01-31', '2022-10-30', 20923e6, '2023-11-21', '10-Q'),
+        ('2022-08-01', '2022-10-30', 5931e6, '2022-11-18', '10-Q'),
+        ('2022-08-01', '2022-10-30', 5931e6, '2023-11-21', '10-Q'),
+        ('2022-01-31', '2023-01-29', 26974e6, '2023-02-24', '10-K'),
+        ('2023-01-30', '2023-04-30', 7192e6, '2023-05-26', '10-Q'),
+        ('2023-01-30', '2023-07-30', 20699e6, '2023-08-28', '10-Q'),
+        ('2023-05-01', '2023-07-30', 13507e6, '2023-08-28', '10-Q'),
+        ('2023-01-30', '2023-10-29', 38819e6, '2023-11-21', '10-Q'),
+        ('2023-07-31', '2023-10-29', 18120e6, '2023-11-21', '10-Q')
+    ],
+    RevenueFromContractWithCustomerExcludingAssessedTax=[
+        ('2021-02-01', '2022-01-30', 26914e6, '2022-03-18', '10-K')
+    ],
+    OperatingIncomeLoss=[
+        ('2021-02-01', '2021-05-02', 1956e6, '2021-05-26', '10-Q'),
+        ('2021-02-01', '2021-05-02', 1956e6, '2022-05-27', '10-Q'),
+        ('2021-02-01', '2021-08-01', 4400e6, '2021-08-20', '10-Q'),
+        ('2021-02-01', '2021-08-01', 4400e6, '2022-08-31', '10-Q'),
+        ('2021-05-03', '2021-08-01', 2444e6, '2021-08-20', '10-Q'),
+        ('2021-05-03', '2021-08-01', 2444e6, '2022-08-31', '10-Q'),
+        ('2021-02-01', '2021-10-31', 7071e6, '2021-11-22', '10-Q'),
+        ('2021-02-01', '2021-10-31', 7071e6, '2022-11-18', '10-Q'),
+        ('2021-08-02', '2021-10-31', 2671e6, '2021-11-22', '10-Q'),
+        ('2021-08-02', '2021-10-31', 2671e6, '2022-11-18', '10-Q'),
+        ('2021-02-01', '2022-01-30', 10041e6, '2022-03-18', '10-K'),
+        ('2021-02-01', '2022-01-30', 10041e6, '2023-02-24', '10-K'),
+        ('2022-01-31', '2022-05-01', 1868e6, '2022-05-27', '10-Q'),
+        ('2022-01-31', '2022-05-01', 1868e6, '2023-05-26', '10-Q'),
+        ('2022-01-31', '2022-07-31', 2367e6, '2022-08-31', '10-Q'),
+        ('2022-01-31', '2022-07-31', 2367e6, '2023-08-28', '10-Q'),
+        ('2022-05-02', '2022-07-31', 499e6, '2022-08-31', '10-Q'),
+        ('2022-05-02', '2022-07-31', 499e6, '2023-08-28', '10-Q'),
+        ('2022-01-31', '2022-10-30', 2968e6, '2022-11-18', '10-Q'),
+        ('2022-01-31', '2022-10-30', 2968e6, '2023-11-21', '10-Q'),
+        ('2022-08-01', '2022-10-30', 601e6, '2022-11-18', '10-Q'),
+        ('2022-08-01', '2022-10-30', 601e6, '2023-11-21', '10-Q'),
+        ('2022-01-31', '2023-01-29', 4224e6, '2023-02-24', '10-K'),
+        ('2023-01-30', '2023-04-30', 2140e6, '2023-05-26', '10-Q'),
+        ('2023-01-30', '2023-07-30', 8941e6, '2023-08-28', '10-Q'),
+        ('2023-05-01', '2023-07-30', 6800e6, '2023-08-28', '10-Q'),
+        ('2023-01-30', '2023-10-29', 19358e6, '2023-11-21', '10-Q'),
+        ('2023-07-31', '2023-10-29', 10417e6, '2023-11-21', '10-Q')
+    ],
+    InventoryNet=[
+        (None, '2021-05-02', 1992e6, '2021-05-26', '10-Q'), (None, '2021-08-01', 2114e6, '2021-08-20', '10-Q'),
+        (None, '2021-10-31', 2233e6, '2021-11-22', '10-Q'), (None, '2022-01-30', 2605e6, '2022-03-18', '10-K'),
+        (None, '2022-01-30', 2605e6, '2022-05-27', '10-Q'), (None, '2022-01-30', 2605e6, '2022-08-31', '10-Q'),
+        (None, '2022-01-30', 2605e6, '2022-11-18', '10-Q'), (None, '2022-01-30', 2605e6, '2023-02-24', '10-K'),
+        (None, '2022-05-01', 3163e6, '2022-05-27', '10-Q'), (None, '2022-07-31', 3889e6, '2022-08-31', '10-Q'),
+        (None, '2022-10-30', 4454e6, '2022-11-18', '10-Q'), (None, '2023-01-29', 5159e6, '2023-02-24', '10-K'),
+        (None, '2023-01-29', 5159e6, '2023-05-26', '10-Q'), (None, '2023-01-29', 5159e6, '2023-08-28', '10-Q'),
+        (None, '2023-01-29', 5159e6, '2023-11-21', '10-Q'), (None, '2023-04-30', 4611e6, '2023-05-26', '10-Q'),
+        (None, '2023-07-30', 4319e6, '2023-08-28', '10-Q'), (None, '2023-10-29', 4779e6, '2023-11-21', '10-Q')
+    ],
+    ContractWithCustomerLiabilityCurrent=[
+        (None, '2021-05-02', 333e6, '2021-05-26', '10-Q'), (None, '2021-08-01', 301e6, '2021-08-20', '10-Q'),
+        (None, '2021-10-31', 298e6, '2021-11-22', '10-Q'), (None, '2022-01-30', 300e6, '2022-03-18', '10-K'),
+        (None, '2022-01-30', 300e6, '2022-05-27', '10-Q'), (None, '2022-01-30', 300e6, '2022-08-31', '10-Q'),
+        (None, '2022-01-30', 300e6, '2022-11-18', '10-Q'), (None, '2022-01-30', 300e6, '2023-02-24', '10-K'),
+        (None, '2022-05-01', 334e6, '2022-05-27', '10-Q'), (None, '2022-07-31', 359e6, '2022-08-31', '10-Q'),
+        (None, '2022-10-30', 338e6, '2022-11-18', '10-Q'), (None, '2023-01-29', 354e6, '2023-02-24', '10-K'),
+        (None, '2023-01-29', 354e6, '2023-05-26', '10-Q'), (None, '2023-01-29', 354e6, '2023-08-28', '10-Q'),
+        (None, '2023-01-29', 354e6, '2023-11-21', '10-Q'), (None, '2023-04-30', 367e6, '2023-05-26', '10-Q'),
+        (None, '2023-07-30', 421e6, '2023-08-28', '10-Q'), (None, '2023-10-29', 513e6, '2023-11-21', '10-Q')
+    ],
+)
 # Four quarters to October 2023: fiscal 2023 less nine months, then three reported quarters.
 NVIDIA_TTM_MARGIN = (4224 - 2968 + 2140 + 6800 + 10417) / (26974 - 20923 + 7192 + 13507 + 18120)
 # Nvidia's reported annual operating margins for fiscal 2019-2023, as filed by 2023-12-15.
@@ -70,6 +131,40 @@ COSTCO = facts(
     OperatingIncomeLoss=[('2024-09-02', '2024-11-24', 2196e6, '2024-12-19', '10-Q'), ('2024-09-02', '2025-02-16', 4512e6, '2025-03-13', '10-Q'),
                          ('2024-11-25', '2025-02-16', 2316e6, '2025-03-13', '10-Q'), ('2024-09-02', '2025-05-11', 7042e6, '2025-06-05', '10-Q'),
                          ('2025-02-17', '2025-05-11', 2530e6, '2025-06-05', '10-Q'), ('2024-09-02', '2025-08-31', 10383e6, '2025-10-08', '10-K')])
+# Johnson & Johnson as filed by 2023-11-26: its October 2023 10-Q restated the nine months of 2022 without
+# Kenvue (USD 60,051 million against 71,237 million first filed).
+JOHNSON = facts(
+    RevenueFromContractWithCustomerExcludingAssessedTax=[
+        ('2021-01-04', '2021-04-04', 22321e6, '2021-04-30', '10-Q'),
+        ('2021-01-04', '2021-04-04', 22321e6, '2022-04-29', '10-Q'),
+        ('2021-01-04', '2021-07-04', 45633e6, '2021-07-29', '10-Q'),
+        ('2021-01-04', '2021-07-04', 45633e6, '2022-07-29', '10-Q'),
+        ('2021-04-05', '2021-07-04', 23312e6, '2021-07-29', '10-Q'),
+        ('2021-04-05', '2021-07-04', 23312e6, '2022-07-29', '10-Q'),
+        ('2021-01-04', '2021-10-03', 68971e6, '2021-10-29', '10-Q'),
+        ('2021-01-04', '2021-10-03', 68971e6, '2022-10-27', '10-Q'),
+        ('2021-07-05', '2021-10-03', 23338e6, '2021-10-29', '10-Q'),
+        ('2021-07-05', '2021-10-03', 23338e6, '2022-10-27', '10-Q'),
+        ('2021-01-04', '2022-01-02', 93775e6, '2022-02-17', '10-K'),
+        ('2021-01-04', '2022-01-02', 93775e6, '2023-02-16', '10-K'),
+        ('2022-01-03', '2022-04-03', 23426e6, '2022-04-29', '10-Q'),
+        ('2022-01-03', '2022-04-03', 23426e6, '2023-04-28', '10-Q'),
+        ('2022-01-03', '2022-07-03', 47446e6, '2022-07-29', '10-Q'),
+        ('2022-01-03', '2022-07-03', 47446e6, '2023-07-31', '10-Q'),
+        ('2022-04-04', '2022-07-03', 24020e6, '2022-07-29', '10-Q'),
+        ('2022-04-04', '2022-07-03', 24020e6, '2023-07-31', '10-Q'),
+        ('2022-01-03', '2022-10-02', 71237e6, '2022-10-27', '10-Q'),
+        ('2022-01-03', '2022-10-02', 60051e6, '2023-10-27', '10-Q'),
+        ('2022-07-04', '2022-10-02', 23791e6, '2022-10-27', '10-Q'),
+        ('2022-07-04', '2022-10-02', 19996e6, '2023-10-27', '10-Q'),
+        ('2022-01-03', '2023-01-01', 94943e6, '2023-02-16', '10-K'),
+        ('2023-01-02', '2023-04-02', 24746e6, '2023-04-28', '10-Q'),
+        ('2023-01-02', '2023-07-02', 50276e6, '2023-07-31', '10-Q'),
+        ('2023-04-03', '2023-07-02', 25530e6, '2023-07-31', '10-Q'),
+        ('2023-01-02', '2023-10-01', 63764e6, '2023-10-27', '10-Q'),
+        ('2023-07-03', '2023-10-01', 21351e6, '2023-10-27', '10-Q')
+    ],
+)
 UBER_MARGINS = (('2021-12-31', -.21965053), ('2022-12-31', -.05747090), ('2023-12-31', .02977388), ('2024-12-31', .06364546),
                 ('2025-12-31', .10698426))
 UBER_TTM = {'period': {'start_date': '2025-10-01', 'end_date': '2026-09-30'}, 'revenue': 56526e6, 'operating_income': 7034e6,
@@ -210,10 +305,11 @@ class MarginCeilingTests(unittest.TestCase):
         reference = pipeline.cost_path_reference(history(margins), operating(180, .20))
         self.assertAlmostEqual(reference['final_year_margin_ceilings']['base'], .39)
 
-    def test_uber_has_no_bear_ceiling_while_its_average_is_negative(self):
+    def test_uber_bear_is_held_to_its_peak_while_its_average_is_negative(self):
+        # Changed 2026-11-27 (data review): with no bear ceiling a bear above the base ceiling passed.
         reference = pipeline.cost_path_reference(history(UBER_MARGINS, {'rows': [], 'trailing_twelve_months': UBER_TTM}))
         self.assertLess(reference['average_operating_margin'], 0)
-        self.assertNotIn('bear', reference['final_year_margin_ceilings'])
+        self.assertAlmostEqual(reference['final_year_margin_ceilings']['bear'], .10698426)
         self.assertAlmostEqual(reference['final_year_margin_ceilings']['base'], UBER_TTM['operating_margin'] * 1.4)
         value = plan()
         for name, margin in (('bear', .05), ('base', .15), ('bull', .17)):
@@ -221,10 +317,30 @@ class MarginCeilingTests(unittest.TestCase):
         value['cost_path_reference'] = reference
         result = pipeline._evaluate(value)
         pipeline._check_continuity(value, result, SOURCES)
-        self.assertIn('bear 5.0% (no ceiling)', '\n'.join(pipeline._continuity_exhibit(result)))
+        self.assertIn('bear 5.0% (ceiling 10.7%)', '\n'.join(pipeline._continuity_exhibit(result)))
+        value['scenarios']['bear']['ebit_margins'] = [.12] * 10
+        with self.assertRaisesRegex(ValueError, r'bear 12\.0% against the reported five-year peak \(the five-year average '
+                                                r'is not positive\) of 10\.7%'):
+            pipeline._check_continuity(value, pipeline._evaluate(value), SOURCES)
+        value['scenarios']['bear']['ebit_margins'] = [.05] * 10
         value['scenarios']['bull']['ebit_margins'] = [.18] * 10
         with self.assertRaisesRegex(ValueError, 'bull 18.0% against the operating margin for the twelve months to 2026-09-30'):
             pipeline._check_continuity(value, pipeline._evaluate(value), SOURCES)
+
+    def test_a_twelve_month_span_with_a_53_week_year_is_labelled(self):
+        ttm = dict(UBER_TTM, days=371, operating_margin=.30)
+        reference = pipeline.cost_path_reference(history(UBER_MARGINS, {'rows': [], 'trailing_twelve_months': ttm}))
+        self.assertIn('twelve months to 2026-09-30 (371 days)', pipeline._margin_ceiling('base', reference)[1])
+
+    def test_references_need_the_history_to_end_at_the_revenue_anchor_year(self):
+        rows = [dict(row, revenue=row['revenue']) for row in APPLE]
+        self.assertIsNotNone(pipeline.reinvestment_reference(sources(rows), 478834e6))
+        self.assertIsNone(pipeline.reinvestment_reference(sources(rows), 416161e6))
+        margins = [{'fiscal_year_end': row['fiscal_year_end'], 'revenue': row['revenue'], 'operating_margin': .3} for row in rows]
+        self.assertIsNotNone(pipeline.cost_path_reference(sources(margins), None, 478834e6))
+        self.assertIsNone(pipeline.cost_path_reference(sources(margins), None, 416161e6))
+        self.assertIsNone(pipeline.forecast_capital_reference(sources(rows), 416161e6))
+        self.assertEqual(pipeline.forecast_capital_reference(sources(rows), 478834e6)['fiscal_year_end'], '2026-09-26')
 
     def test_every_ceiling_that_applies_leaves_room_for_a_positive_final_margin(self):
         for margins in (UBER_MARGINS, NVIDIA_MARGINS, (('2023-12-31', -.3), ('2024-12-31', -.1), ('2025-12-31', .001)),
@@ -345,6 +461,178 @@ class ReturnOnCapitalTests(unittest.TestCase):
         latest = historical_baseline(payload, years=1)['rows'][-1]
         self.assertEqual(latest['research_and_development'], 14665e6)
         self.assertAlmostEqual(latest['research_and_development_to_revenue'], 14665 / 94193)
+
+
+def quarter_facts(lengths):
+    """Revenue for two fiscal years of quarters with the given day counts, each 10-Q also reporting the year before."""
+    from datetime import date, timedelta
+    rows, start = [], date(2023, 1, 1)
+    years = []
+    for year in lengths:
+        ends, day = [], start
+        for days in year:
+            day = day + timedelta(days=days)
+            ends.append(day - timedelta(days=1))
+        years.append((start, ends))
+        start = ends[-1] + timedelta(days=1)
+    for index, (fiscal_start, ends) in enumerate(years):
+        filed = lambda end: (end + timedelta(days=30)).isoformat()
+        for number, end in enumerate(ends[:3]):
+            rows.append((fiscal_start.isoformat(), end.isoformat(), 100e9 * (number + 1) * (1 + .1 * index), filed(end), '10-Q'))
+        rows.append((fiscal_start.isoformat(), ends[3].isoformat(), 400e9 * (1 + .1 * index), filed(ends[3]), '10-K'))
+    return facts(Revenues=rows, OperatingIncomeLoss=[(row[0], row[1], row[2] / 5, row[3], row[4]) for row in rows])
+
+
+class QuarterlyReviewFixTests(unittest.TestCase):
+    def test_quarters_of_different_length_show_no_growth(self):
+        # A 53-week year: a 14-week fourth quarter against 13 weeks a year earlier.
+        table = quarterly_table(quarter_facts([(91, 91, 91, 91), (91, 91, 91, 98)]))
+        last = table['rows'][-1]
+        self.assertEqual((last['days'], last['prior_days'], last['revenue_growth']), (98, 91, None))
+        text = render_quarterly({'quarterly': table}, 'S2')
+        self.assertIn('n/m (98 vs 91 days)', text)
+        self.assertIn('compares quarters of different length', text)
+        self.assertEqual(table['rows'][-2]['days'], 91)
+
+    def test_a_derived_quarter_pairs_figures_from_one_vintage(self):
+        # Johnson & Johnson as of 2023-11-26: 2022 less the original nine months, not the restated ones.
+        rows = {row['period_end']: row for row in quarterly_table(JOHNSON, as_of='2023-11-26')['rows']}
+        fourth = rows['2023-01-01']
+        self.assertEqual(fourth['revenue_basis'], 'fiscal year less nine months')
+        self.assertAlmostEqual(fourth['revenue'], 94943e6 - 71237e6)
+        # Growth from the same two filings for both years: the 10-K's two years less the third-quarter 10-Q's two nine months.
+        self.assertEqual(fourth['revenue_growth_basis'], 'same_filings')
+        self.assertAlmostEqual(fourth['revenue_growth'], (94943 - 71237) / (93775 - 68971) - 1)
+        # A reported quarter's growth comes from the filing that reports both years.
+        self.assertEqual(rows['2023-10-01']['revenue_growth_basis'], 'same_filing')
+        self.assertAlmostEqual(rows['2023-10-01']['revenue_growth'], 21351 / 19996 - 1)
+
+    def test_growth_needs_both_years_in_the_same_filings(self):
+        payload = copy.deepcopy(JOHNSON)
+        series = payload['facts']['us-gaap']['RevenueFromContractWithCustomerExcludingAssessedTax']['units']['USD']
+        # Keep only first filings: no 10-Q then reports the year-earlier quarter.
+        first = {}
+        for row in series:
+            key = (row.get('start'), row['end'])
+            if key not in first or row['filed'] < first[key]['filed']:
+                first[key] = row
+        payload['facts']['us-gaap']['RevenueFromContractWithCustomerExcludingAssessedTax']['units']['USD'] = list(first.values())
+        rows = quarterly_table(payload, as_of='2023-11-26')['rows']
+        self.assertTrue(all(row['revenue_growth'] is None for row in rows))
+        self.assertIn('n/a where no filing reports both years', render_quarterly({'quarterly': {'rows': rows}}, 'S2'))
+
+
+class PipelineReviewFixTests(unittest.TestCase):
+    def test_the_median_rate_regime_value_traces_and_the_monthly_pairs_do_not(self):
+        from tests.public_runner.test_crit_exhibits import history_plan
+        from investmentideas import quality
+        # The middle month is neither the lowest nor the highest row, so only the plan's list holds its rates.
+        value = history_plan([['2021-08-01', .0123, .0431], ['2023-08-01', .03337, .04771], ['2026-03-01', .045, .045]])
+        result = evaluate(value)
+        median = result['convention_panel']['rate_history']['median_per_share_value']
+        _, _, pool = quality.trace_pools([], (value, result))
+        self.assertIn(round(abs(median), 6), [round(item, 6) for item in pool])
+        self.assertNotIn(.04771, pool)
+        self.assertNotIn(.03337, pool)
+
+    def test_a_sentence_that_only_reports_the_benchmark_is_not_a_gap_cause(self):
+        from investmentideas import quality
+        self.assertFalse(quality._assigns_gap_cause('Under the same conventions the index benchmark is worth 0.78 of its '
+                                                    'price, a discount to the price that rests on the premium.'))
+        self.assertTrue(quality._assigns_gap_cause('Under the same conventions the index benchmark is worth 0.78 of its '
+                                                   'price, so the difference between value and price is largely explained '
+                                                   'by the house conventions.'))
+        self.assertIn('not a cause of the difference between value and price', pipeline.SECTIONS)
+        self.assertIn('A convention step is a row of the convention panel', pipeline.SECTIONS)
+
+    def test_the_largest_horizon_and_rate_regime_rows_print_as_exhibits(self):
+        from tests.public_runner.test_crit_exhibits import history_plan
+        value = history_plan()
+        result = evaluate(value)
+        summary = pipeline.computed_summary(value, result)
+        line = next(item for item in summary.split('\n') if item.startswith('Largest exhibit rows'))
+        self.assertIn('not convention steps', line)
+        self.assertIn('horizon, ', line)
+        self.assertIn('rate regime, ', line)
+        panel = '\n'.join(pipeline._market_consistency_exhibits(result, 'USD'))
+        self.assertIn('Largest exhibit rows', panel)
+
+    def test_minor_wording_fixes(self):
+        self.assertIn('base-rate tables may be cited', pipeline.FORECAST_SCHEMA)
+        self.assertIn('a list of one ratio per forecast year', pipeline.FORECAST_SCHEMA)
+        self.assertIn('latest twelve-month operating margin', pipeline.UNDERWRITING_GUIDANCE)
+        self.assertIn('the five-year peak where that average is not positive', pipeline.UNDERWRITING_GUIDANCE)
+        view = pipeline._proposal_view({'scenarios': {'base': {'rnd_share_path': [.1], 'rnd_basis': 'x', 'tax_rate': .2}}})
+        self.assertEqual(view['scenarios']['base'], {'tax_rate': .2})
+        contract = pipeline._workflow_contract()['implementation']
+        self.assertTrue(contract)
+        import inspect
+        source = inspect.getsource(pipeline._workflow_contract)
+        for name in ('cap_fade.py', 'roic.py', 'macro.py'):
+            self.assertIn(name, source)
+
+    def test_net_cash_reads_as_plus_net_cash(self):
+        value = plan()
+        value['actuals']['net_debt'] = -50.0
+        value['net_debt_bridge'] = dict(value['net_debt_bridge'], debt=0.0, net_debt=-50.0)
+        result = evaluate(value)
+        text = '\n'.join(pipeline._equity_bridge_exhibit(value, result, 'USD'))
+        self.assertIn('Plus net cash', text)
+        self.assertNotIn('Less net debt', text)
+
+    def test_the_repair_message_counts_acquisitions_and_offers_the_cited_basis(self):
+        rows = [dict(row, acquisitions=2e9) for row in MICROSOFT]
+        value = plan()
+        value['reinvestment_reference'] = pipeline.reinvestment_reference(sources(rows))
+        for scenario in value['scenarios'].values():
+            scenario['sales_to_capital'] = 5.0
+        with self.assertRaises(ValueError) as caught:
+            pipeline._check_continuity(value, pipeline._evaluate(value), SOURCES)
+        message = str(caught.exception)
+        self.assertIn('Both rates count the 6.0 billion paid in cash for acquisitions', message)
+        self.assertIn('capital_efficiency_basis', message)
+        self.assertIn('acquisitions the forecast does not repeat', message)
+        self.assertNotIn('Set sales_to_capital from the reported rate', message)
+
+    def test_goodwill_from_stock_deals_does_not_collapse_the_invested_capital_rate(self):
+        # Goodwill and acquired intangibles grow by 100 billion while 30 billion is paid in cash.
+        rows = copy.deepcopy(MICROSOFT)
+        for index, row in enumerate(rows):
+            acquired = 50e9 + (100e9 if index == 3 else 0)
+            row['invested_capital_excluding_acquired'] = row['invested_capital'] - acquired
+            row['acquisitions'] = 30e9 if index == 3 else 0
+        reference = pipeline.reinvestment_reference(sources(rows))
+        growth = 331839e6 - 211915e6
+        self.assertEqual(reference['invested_capital_measure'], 'stock_deals_excluded')
+        self.assertAlmostEqual(reference['acquired_intangibles_not_paid_in_cash'], 70e9)
+        self.assertAlmostEqual(reference['invested_capital_sales_to_capital'], growth / (492223.8e6 - 196171.3e6 - 70e9))
+        self.assertIn('70.0 billion of it is left out here', reference['basis'])
+        # Paid in cash, or with no deal (the balance amortizing), the capital change is as reported.
+        for row in rows:
+            row['acquisitions'] = 100e9 if row is rows[3] else 0
+        self.assertEqual(pipeline.reinvestment_reference(sources(rows))['invested_capital_measure'], 'as_reported')
+        # With no acquisitions line at all the payment is unknown: as reported.
+        for row in rows:
+            row.pop('acquisitions')
+        self.assertEqual(pipeline.reinvestment_reference(sources(rows))['invested_capital_measure'], 'as_reported')
+        self.assertEqual(pipeline.reinvestment_reference(sources(APPLE))['invested_capital_measure'], 'as_reported')
+
+    def test_missing_and_non_positive_net_reinvestment_read_differently(self):
+        apple = pipeline.reinvestment_reference(sources(APPLE))
+        self.assertEqual(apple['net_reinvestment_status'], 'not_positive')
+        bare = [{key: row[key] for key in ('fiscal_year_end', 'revenue', 'invested_capital')} for row in APPLE]
+        missing = pipeline.reinvestment_reference(sources(bare))
+        self.assertEqual(missing['net_reinvestment_status'], 'not_reported')
+        value = plan()
+        value['reinvestment_reference'] = missing
+        text = pipeline._reinvestment_text(pipeline._evaluate(value)['reinvestment_continuity'])
+        self.assertIn('not reported for every year', text)
+
+    def test_revalue_carries_the_pipeline_diagnostics(self):
+        value = plan()
+        value['cost_path_reference'] = pipeline.cost_path_reference(history(UBER_MARGINS))
+        result = pipeline.attach_diagnostics(value, evaluate(copy.deepcopy(value)))
+        self.assertIn('cost_path_continuity', result)
 
 
 class ReviewAssessmentTests(unittest.TestCase):

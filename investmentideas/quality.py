@@ -401,6 +401,22 @@ _CAUSE = re.compile(r'\b(?:(?:gap|difference|disagreement|divergence)\b[^.;]{0,4
                     r'price and (?:the )?value|(?:to|from) (?:the )?(?:market )?price|value[- ]to[- ]price)|discount to the price|'
                     r'premium to the price)\b[^.;]{0,90}?\b(?:primarily|principally|almost entirely|mainly|largely|'
                     r'rests? (?:on|in)|lies? in|sits? in|is driven by|driven by|explained by|attributable to)\b', re.I)
+# A sentence that reports the index benchmark's own discount or premium to its price
+# ("the S&P 500 is worth 0.78 of its price under these conventions, a discount to the
+# price that rests on ...") is context, not a cause of the company's gap.
+_BENCHMARK = re.compile(r'\b(?:index benchmark|S&P 500|the index)\b', re.I)
+
+
+def _assigns_gap_cause(line):
+    matches = list(_CAUSE.finditer(line))
+    if not matches:
+        return False
+    if _BENCHMARK.search(line) and all(re.match(r'(?:discount|premium) to the price', match.group(0), re.I)
+                                       for match in matches):
+        return False
+    return True
+
+
 # A rising word with a falling pair, or the reverse ("a further increase" from
 # USD 678 billion to USD 677 billion, 2026-11-15).
 _UNIT = r'\s*(?P<{0}>%|percent|points?|bps|billion|bn|million|mm|thousand|trillion)?'
@@ -415,16 +431,20 @@ _ADDITIVE = re.compile(r'\b(?:together|combined|in total|cumulative(?:ly)?|add u
 _PANEL = re.compile(r'\b(?:convention|panel|step|one[- ]at[- ]a[- ]time|terminal return|rate path)\b', re.I)
 
 
-# Left out of the figure trace: the plan's rate_history holds 240 monthly rates, which
-# would let almost any small percentage in a draft pass as traced.
-_UNTRACED_KEYS = frozenset({'rate_history'})
+# Left out of the figure trace: the monthly pairs in the plan's rate_history.months,
+# up to 240 rates that would let almost any small percentage in a draft pass as traced.
+# Only that list: the convention panel's rate_history summary (months computed, the
+# median value) is computed output and stays traceable (review of the merged code,
+# 2026-11-27: a median rate-regime value the memo quoted was flagged as untraced).
+def _untraced(parent, key, item):
+    return parent == 'rate_history' and key == 'months' and isinstance(item, list)
 
 
-def _numeric_leaves(value, out):
+def _numeric_leaves(value, out, parent=None):
     if isinstance(value, dict):
         for key, item in value.items():
-            if key not in _UNTRACED_KEYS:
-                _numeric_leaves(item, out)
+            if not _untraced(parent, key, item):
+                _numeric_leaves(item, out, key)
     elif isinstance(value, list):
         for item in value:
             _numeric_leaves(item, out)
@@ -532,7 +552,7 @@ def prereview_checks(memo, sources, computed=()):
         cited = set(re.findall(r'S\d+', ' '.join(re.findall(r'\[([^\]]*S\d[^\]]*)\]', line))))
         if _ADDITIVE.search(line) and _PANEL.search(line):
             additive.append(line[:300])
-        if _CAUSE.search(line):
+        if _assigns_gap_cause(line):
             causes.append(line[:300])
         for match in _DIRECTION.finditer(line):
             if _YEAR.fullmatch(match.group('a')) and _YEAR.fullmatch(match.group('b')):

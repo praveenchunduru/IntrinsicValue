@@ -448,8 +448,9 @@ class PanelRowTests(unittest.TestCase):
         self.assertIn('overstates the adjustment against the market benchmark', row['label'])
         text = '\n'.join(pipeline._market_consistency_exhibits(result, 'USD'))
         self.assertIn(row['label'], text)
-        self.assertIn('Country risk row: reported revenue by geography for the fiscal year ending 2025-12-31 [S4] and '
-                      'Damodaran\'s country and regional premiums [S40] [S41]', text)
+        # Changed 2026-11-27: the note cites its figures as computed from the sources.
+        self.assertIn('Country risk row, computed from [S4] [S40] [S41]: shares of revenue by geography for the fiscal '
+                      'year ending 2025-12-31 and Damodaran\'s country and regional premiums', text)
         self.assertIn('- Europe: 40.0% of revenue, +1.88 points; Western Europe', text)
         self.assertIn('every discount rate rises by', text)
         self.assertNotIn('\u2014', country_risk.render_note(result['convention_panel']) + row['label'])
