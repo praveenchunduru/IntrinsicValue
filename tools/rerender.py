@@ -18,7 +18,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from investmentideas import pipeline  # noqa: E402
+from investmentideas import memo_html, pipeline  # noqa: E402
 
 
 class RerenderStopped(Exception):
@@ -102,6 +102,7 @@ def main(argv=None):
         temp = target.with_name(target.name + '.tmp')
         temp.write_text(text, encoding='utf-8')
         temp.replace(target)
+        html = memo_html.write_for(target) if target.suffix.lower() == '.md' else None
     except RerenderStopped as exc:
         print(f'rerender stopped: {exc}', file=sys.stderr)
         return 1
@@ -113,6 +114,8 @@ def main(argv=None):
     for note in warnings(state):
         print(f'rerender warning: {note}', file=sys.stderr)
     print(argv[1])
+    if html:
+        print(html)
     return 0
 
 

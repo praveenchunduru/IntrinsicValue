@@ -42,7 +42,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from investmentideas import core, pipeline, settings  # noqa: E402
+from investmentideas import core, memo_html, pipeline, preflight, settings  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import consensus_check  # noqa: E402  (tools/, beside this script)
 from investmentideas.valuation import SCENARIOS  # noqa: E402
@@ -641,6 +641,12 @@ def _replay(args, key):
             print(scorecard(target))
         except (OSError, ValueError, KeyError, TypeError):
             pass
+        try:
+            html = memo_html.write_beside(target)  # the readable copy, as a fresh run writes it
+            if html:
+                print(html)
+        except OSError:
+            pass
     return target
 
 
@@ -671,6 +677,7 @@ def main():
         key = os.environ.get('OPENROUTER_API_KEY', '').strip()
         if not key:
             raise ReplayStopped('Set OPENROUTER_API_KEY, or save it with --setup; a replay pays for the stages it reruns')
+        preflight.check_key(key)  # one free call: a mistyped key stops here, before any folder is made
         _replay(args, key)
     except core.HTTPFailure as exc:
         # The provider's own status, such as a rejected key (401) or no credit (402).

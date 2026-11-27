@@ -2886,7 +2886,7 @@ def main():
         from .pipeline import attach_diagnostics  # the pipeline's diagnostics, as for --revalue
         results = attach_diagnostics(assumptions, evaluate(assumptions))
         paths = save_valuation(args.output or args.assumptions.parent, assumptions, results)
-        print(f"{results['currency']} {results['weighted_per_share_value']:.2f} per share (scenario weighted)")
+        print(f"{results['currency']} {results['weighted_per_share_value']:.2f} per share (headline value)")
         for warning in results.get('input_warnings', []) + results.get('value_warnings', []):
             print('Warning: ' + warning, file=sys.stderr)
         print(paths['valuation.json'])

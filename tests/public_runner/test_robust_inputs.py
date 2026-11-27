@@ -328,12 +328,25 @@ class ReplayToolTests(unittest.TestCase):
         (folder / 'state.json').write_text(json.dumps(state), encoding='utf-8')
         return folder
 
-    def main(self, *argv, key='sk-test'):
+    def main(self, *argv, key='sk-test', key_check=None):
+        # The free key check is a network call in real use; here it is replaced, accepting the key by default.
         with patch.object(sys, 'argv', ['replay.py', *argv]), patch.dict('os.environ', {'OPENROUTER_API_KEY': key}), \
+                patch.object(replay.preflight, 'check_key', key_check or (lambda key: {})), \
                 contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaises(SystemExit) as caught:
                 replay.main()
         return str(caught.exception.code)
+
+    def test_a_rejected_key_stops_before_any_folder_is_made(self):
+        def rejected(key):
+            raise replay.preflight.PreflightError('That key was rejected by OpenRouter; nothing was charged.', 'key')
+
+        state = {'version': pipeline.VERSION, 'ticker': 'WMT', 'sources': [{'id': 'S1'}], 'stages': {}, 'ledger': []}
+        with tempfile.TemporaryDirectory() as directory:
+            saved, output = self.saved(directory, state), Path(directory) / 'out'
+            message = self.main(str(saved), str(output), '--from', 'review', key_check=rejected)
+            self.assertIn('Replay stopped: That key was rejected by OpenRouter', message)
+            self.assertFalse(output.exists())
 
     def test_a_failed_start_leaves_nothing_and_a_retry_gives_the_same_reason(self):
         state = {'version': pipeline.VERSION, 'ticker': 'WMT', 'sources': [{'id': 'S1'}], 'stages': {}, 'ledger': []}
