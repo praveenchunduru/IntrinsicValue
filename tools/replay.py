@@ -62,15 +62,41 @@ def first_draft_cut(saved, folder, *, keep_all=False):
     return sources, plan
 
 
-def seed(saved_folder, target, *, start):
-    saved = json.loads((saved_folder / 'state.json').read_text())
+class ReplayStopped(ValueError):
+    """A plain reason the replay did not start or stopped; printed without a traceback."""
+
+
+def load_saved(folder):
+    """The saved run's state.json as an object, or ReplayStopped naming the file and what is wrong."""
+    folder = Path(folder)
+    path = folder / 'state.json'
+    if not folder.is_dir():
+        raise ReplayStopped(f'{folder} is not a folder; give the saved full run folder that holds state.json')
+    if not path.is_file():
+        raise ReplayStopped(f'{path} does not exist; give the saved full run folder that holds state.json')
+    try:
+        state = json.loads(path.read_text(encoding='utf-8-sig'))
+    except UnicodeDecodeError:
+        raise ReplayStopped(f'{path} is not UTF-8 text') from None
+    except json.JSONDecodeError as exc:
+        raise ReplayStopped(f'{path} is empty' if not exc.doc.strip() else
+                            f'{path} is not valid JSON ({exc.msg} at line {exc.lineno}); it may be cut short') from None
+    except (OSError, RecursionError) as exc:
+        raise ReplayStopped(f'{path} cannot be read ({exc})') from None
+    if not isinstance(state, dict):
+        raise ReplayStopped(f'{path} holds a JSON {type(state).__name__}; a saved run state is an object')
+    for field, shape in (('ticker', str), ('version', str), ('sources', list), ('stages', dict)):
+        if not isinstance(state.get(field), shape):
+            raise ReplayStopped(f'{path} has no valid {field}; it is not a complete saved full run')
+    if any(not isinstance(item, dict) or not isinstance(item.get('id'), str) for item in state['sources']):
+        raise ReplayStopped(f'{path}: every entry in sources must be an object with an id such as "S1"')
+    return state
+
+
+def _seed_state(saved, saved_folder, *, start):
+    """The replay's starting state, checked before anything is written."""
     # A review of the saved current draft needs every source that draft cites.
     sources, plan = first_draft_cut(saved, saved_folder, keep_all=(start == 'review'))
-    if target.exists():
-        raise ValueError(f'{target} already exists; choose a new output directory')
-    target.mkdir(parents=True)
-    if (saved_folder / 'sources_raw').is_dir():
-        shutil.copytree(saved_folder / 'sources_raw', target / 'sources_raw')
     keep = ('web_',) + (('valuation_plan',) if start in ('draft', 'review') else ()) + (('full_draft',) if start == 'review' else ())
     plan_notes = set(saved.get('plan_gap_notes', []))
     state = {'version': saved['version'], 'ticker': saved['ticker'], 'ledger': [],
@@ -84,17 +110,35 @@ def seed(saved_folder, target, *, start):
                                'state_sha256': hashlib.sha256((saved_folder / 'state.json').read_bytes()).hexdigest()}}
     if start == 'review':
         if not saved.get('current_memo') or not saved.get('plan'):
-            raise ValueError('The saved run has no draft and plan to review')
+            raise ReplayStopped(f'{saved_folder / "state.json"} has no draft and plan to review; replay it '
+                                '--from plan instead')
         plan = saved['plan']
         state['current_memo'] = saved['current_memo']
     if start in ('draft', 'review'):
         if not plan:
-            raise ValueError('The saved run has no plan to keep')
+            raise ReplayStopped(f'{saved_folder / "state.json"} has no plan to keep; replay it --from plan instead')
         state['plan'] = plan
         state['plan_conventions'] = saved.get('plan_conventions')
         carry_consensus(saved, state)
-    core.save(target / 'state.json', state)
-    core.save(target / 'run-identity.json', {'id': 'replay'})
+    return state
+
+
+def seed(saved_folder, target, *, start):
+    """Create ``target`` from the saved run; a failed start leaves no folder behind."""
+    saved_folder = Path(saved_folder)
+    saved = load_saved(saved_folder)
+    state = _seed_state(saved, saved_folder, start=start)
+    if target.exists():
+        raise ReplayStopped(f'{target} already exists; choose a new output directory, or pass --resume to continue it')
+    try:
+        target.mkdir(parents=True)
+        if (saved_folder / 'sources_raw').is_dir():
+            shutil.copytree(saved_folder / 'sources_raw', target / 'sources_raw')
+        core.save(target / 'state.json', state)
+        core.save(target / 'run-identity.json', {'id': 'replay'})
+    except BaseException:
+        shutil.rmtree(target, ignore_errors=True)
+        raise
     return state
 
 
@@ -444,10 +488,10 @@ def _report(root, saved_folder, samples, budget, models, stopped):
 def sample_plans(saved_folder, output, *, samples, key, easy, strong, reviewer, budget, resume=False, progress=print):
     """Request the forecast plan ``samples`` times on one frozen prompt; see the module docstring."""
     saved_folder = Path(saved_folder).resolve()
-    saved = json.loads((saved_folder / 'state.json').read_text())
+    saved = load_saved(saved_folder)
     if not 1 <= samples <= 50:
         raise ValueError('--plan-samples must be 1 to 50')
-    if not 0 < budget <= 100:
+    if not math.isfinite(budget) or not 0 < budget <= 100:
         raise ValueError('Budget must be greater than zero and at most $100')
     root = Path(output).resolve() / saved['ticker'] / 'plan-samples'
     if root.exists() and not resume:
@@ -536,7 +580,7 @@ def sample_plans(saved_folder, output, *, samples, key, easy, strong, reviewer, 
 
 def consensus_only(saved_folder, output, *, samples, progress=print):
     """The consensus of the first ``samples`` saved plan samples; no request is made."""
-    saved = json.loads((Path(saved_folder).resolve() / 'state.json').read_text())
+    saved = load_saved(Path(saved_folder).resolve())
     root = Path(output).resolve() / saved['ticker'] / 'plan-samples'
     if not root.is_dir():
         raise ValueError(f'{root} has no saved plan samples; run --plan-samples first')
@@ -545,6 +589,59 @@ def consensus_only(saved_folder, output, *, samples, progress=print):
     progress(consensus_check.table(result))
     progress(f'consensus check: {root / "plan-consensus-check.json"}')
     return result
+
+
+def _check_limits(args):
+    """The budget and revision count, checked before anything is created or requested."""
+    if not math.isfinite(args.budget) or not 0 < args.budget <= 100:
+        raise ReplayStopped(f'--budget {args.budget:g} is not allowed; give a total in dollars greater than zero and at most 100')
+    if not 0 <= args.max_revisions <= 8:
+        raise ReplayStopped(f'--max-revisions {args.max_revisions} is not allowed; give a whole number from 0 to 8')
+
+
+def _replay(args, key):
+    saved_folder = Path(args.saved).resolve()
+    saved = load_saved(saved_folder)
+    if args.plan_samples is not None:
+        if args.start != 'plan':
+            raise ReplayStopped('--plan-samples replays from the plan; omit --from')
+        easy, strong = core.MODELS[args.profile]
+        strong = args.strong_model or strong
+        sample_plans(saved_folder, args.output, samples=args.plan_samples, key=key, easy=easy, strong=strong,
+                     reviewer=args.review_model or pipeline._default_reviewer(args.profile, strong),
+                     budget=args.budget, resume=args.resume)
+        return None
+    target = Path(args.output).resolve() / saved['ticker'] / 'full-replay'
+    if args.resume and target.exists():
+        if not (target / 'state.json').is_file():
+            raise ReplayStopped(f'{target} has no state.json, so there is nothing to resume (an earlier start stopped '
+                                'before it was seeded). Delete that folder and run again without --resume.')
+        state = load_saved(target)
+        origin = state.get('replay_origin') or {}
+        if origin.get('from') != args.start:
+            raise ReplayStopped(f'This replay started from {origin.get("from")!r}; resume it with --from {origin.get("from")}')
+        if state.get('workflow_contract') != pipeline._workflow_contract():
+            # A replay compares prompts on frozen inputs: a code change since the
+            # last attempt must not discard and re-pay its plan or draft.
+            print('Code changed since this replay started; its saved stages are kept (contract re-stamped).')
+            state['workflow_contract'] = pipeline._workflow_contract()
+            core.save(target / 'state.json', state)
+    else:
+        seed(saved_folder, target, start=args.start)
+    easy, strong = core.MODELS[args.profile]
+    strong = args.strong_model or strong
+    reviewer = args.review_model or pipeline._default_reviewer(args.profile, strong)
+    try:
+        with pipeline._lock(target):
+            pipeline._run(target, saved['ticker'], key, easy, strong, args.budget, '', print, args.max_revisions, '', [],
+                          None, None, args.review_model, None, None, default_reviewer=reviewer,
+                          plan_samples=pipeline.default_plan_samples(args.profile))
+    finally:
+        try:
+            print(scorecard(target))
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    return target
 
 
 def main():
@@ -563,59 +660,25 @@ def main():
     parser.add_argument('--consensus-only', action='store_true',
                         help='with --plan-samples N: report the consensus of the first N saved samples, with no request')
     args = parser.parse_args()
-    if args.consensus_only:
-        if args.plan_samples is None:
-            raise SystemExit('--consensus-only needs --plan-samples N')
-        try:
+    try:
+        if args.consensus_only:
+            if args.plan_samples is None:
+                raise ReplayStopped('--consensus-only needs --plan-samples N')
             consensus_only(args.saved, args.output, samples=args.plan_samples)
-        except ValueError as exc:
-            raise SystemExit(str(exc)) from None
-        return
-    try:
-        settings.apply_env_file()  # the same `.env` the main command reads
-    except ValueError as exc:
-        raise SystemExit(str(exc)) from None
-    key = os.environ.get('OPENROUTER_API_KEY', '').strip()
-    if not key:
-        raise SystemExit('Set OPENROUTER_API_KEY, or put it in a .env file in this folder')
-    saved_folder = Path(args.saved).resolve()
-    saved = json.loads((saved_folder / 'state.json').read_text())
-    if args.plan_samples is not None:
-        if args.start != 'plan':
-            raise SystemExit('--plan-samples replays from the plan; omit --from')
-        easy, strong = core.MODELS[args.profile]
-        strong = args.strong_model or strong
-        try:
-            sample_plans(saved_folder, args.output, samples=args.plan_samples, key=key, easy=easy, strong=strong,
-                         reviewer=args.review_model or pipeline._default_reviewer(args.profile, strong),
-                         budget=args.budget, resume=args.resume)
-        except ValueError as exc:
-            raise SystemExit(str(exc)) from None
-        return
-    target = Path(args.output).resolve() / saved['ticker'] / 'full-replay'
-    if args.resume and target.exists():
-        state = json.loads((target / 'state.json').read_text())
-        origin = state.get('replay_origin') or {}
-        if origin.get('from') != args.start:
-            raise SystemExit(f'This replay started from {origin.get("from")!r}; resume it with --from {origin.get("from")}')
-        if state.get('workflow_contract') != pipeline._workflow_contract():
-            # A replay compares prompts on frozen inputs: a code change since the
-            # last attempt must not discard and re-pay its plan or draft.
-            print('Code changed since this replay started; its saved stages are kept (contract re-stamped).')
-            state['workflow_contract'] = pipeline._workflow_contract()
-            core.save(target / 'state.json', state)
-    else:
-        seed(saved_folder, target, start=args.start)
-    easy, strong = core.MODELS[args.profile]
-    strong = args.strong_model or strong
-    reviewer = args.review_model or pipeline._default_reviewer(args.profile, strong)
-    try:
-        with pipeline._lock(target):
-            pipeline._run(target, saved['ticker'], key, easy, strong, args.budget, '', print, args.max_revisions, '', [],
-                          None, None, args.review_model, None, None, default_reviewer=reviewer,
-                          plan_samples=pipeline.default_plan_samples(args.profile))
-    finally:
-        print(scorecard(target))
+            return
+        _check_limits(args)
+        settings.apply_env_file()  # the same `.env` the main command reads; a bad file raises ValueError
+        key = os.environ.get('OPENROUTER_API_KEY', '').strip()
+        if not key:
+            raise ReplayStopped('Set OPENROUTER_API_KEY, or save it with --setup; a replay pays for the stages it reruns')
+        _replay(args, key)
+    except core.HTTPFailure as exc:
+        # The provider's own status, such as a rejected key (401) or no credit (402).
+        raise SystemExit(f'Replay stopped: {exc}') from None
+    except KeyboardInterrupt:
+        raise SystemExit('Replay stopped by the user; rerun the same command with --resume to continue') from None
+    except (ValueError, RuntimeError, OSError, KeyError, TypeError) as exc:
+        raise SystemExit(f'Replay stopped: {exc}') from None
 
 
 if __name__ == '__main__':

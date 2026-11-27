@@ -5253,6 +5253,68 @@ def _plan_samples_stage(folder, state, call, checkpoint, progress, prompt, prefi
     save_valuation(folder, chosen['plan'], chosen['result'])
 
 
+def _saved_json(path, kind):
+    """A saved run file as a JSON object, or a ValueError naming the file and the way on.
+
+    The program's own saves replace the file in one step (core.save), so a damaged file
+    comes from outside it: a sync client, a copy cut short or a manual edit.
+    """
+    try:
+        value = json.loads(path.read_text(encoding='utf-8-sig'))
+        reason = None if isinstance(value, dict) else f'it holds a JSON {type(value).__name__}, not an object'
+    except UnicodeDecodeError:
+        reason = 'it is not UTF-8 text'
+    except json.JSONDecodeError as exc:
+        reason = ('it is empty' if not exc.doc.strip() else
+                  f'it is not valid JSON ({exc.msg} at line {exc.lineno}), probably cut short')
+    except (OSError, RecursionError, ValueError) as exc:
+        reason = f'it cannot be read ({exc})'
+    if kind == 'state' and reason is None:
+        shapes = {'ledger': list, 'stages': dict, 'sources': list, 'gaps': list}
+        wrong = [field for field, shape in shapes.items() if field in value and not isinstance(value[field], shape)]
+        if wrong or not all(field in value for field in ('ledger', 'stages', 'sources')):
+            reason = 'its ledger, stages or sources are missing or of the wrong type'
+    if reason is None:
+        return value
+    folder = path.parent
+    raise ValueError(f'The saved {"run state" if kind == "state" else "run marker"} {path} is damaged: {reason}. '
+                     f'To start this run again, move the folder {folder} out of {folder.parent} or delete it, or rerun '
+                     'with --output set to a new folder. Its recorded charges are then no longer counted toward --budget.')
+
+
+def _coverage_stop_text(coverage, gate, gaps, snapshot):
+    """(message, recovery) for a run stopped by the reported-input preflight, naming the real cause."""
+    def clean(text):
+        return re.sub(r'\s+', ' ', text).strip().rstrip('.;')
+    fields = ', '.join(coverage.get('missing_fields', [])) or 'the reported inputs'
+    if gate.get('refused'):
+        return ('Reported-input preflight stopped before paid research: ' + clean(gate['message']) + '.',
+                'This issuer needs a financial-institution valuation model, which this tool does not provide')
+    if not coverage.get('recognized_primary_source_ids'):
+        # Nothing primary was collected: the cause is access, never the filings themselves.
+        no_contact = any('SEC contact email required' in str(gap) for gap in gaps)
+        cause = ('the supplied snapshot holds no SEC company facts or filings' if snapshot else
+                 'no SEC contact email was set' if no_contact else
+                 'the SEC could not be reached (check the network connection to sec.gov)')
+        recovery = ('Supply a snapshot that includes the SEC company facts and filings, or start a fresh run without '
+                    '--snapshot' if snapshot else
+                    'Set SEC_CONTACT_EMAIL or pass --sec-contact you@example.com, then rerun the same command' if no_contact
+                    else 'Rerun the same command once sec.gov is reachable; collection is retried')
+        return (f'Reported-input preflight stopped before paid research: no SEC data could be fetched, because {cause}, '
+                f'so {fields} could not be taken from the filings.', recovery + ', or supply primary disclosures with --sources')
+    conflicts = [clean(item) for item in coverage.get('conflicts', []) if clean(item)]
+    notes = [clean(item) for item in coverage.get('notes', []) if clean(item)]
+    message = 'Reported-input preflight stopped before paid research: ' + ('; '.join(conflicts) if conflicts else
+        'SEC data was fetched, but it gives no usable figure for ' + fields) + '.'
+    if notes:
+        message += ' ' + '. '.join(note[0].upper() + note[1:] for note in notes) + '.'
+    elif not conflicts:
+        message += (' This tool reads US-GAAP figures, so a filer reporting under IFRS (Form 20-F) is not covered.')
+    recovery = ('Supply reviewed primary disclosures with --sources' +
+                (', or start a fresh run without --snapshot' if snapshot else ''))
+    return message, recovery
+
+
 def run(ticker, key, *, profile='balanced', budget=DEFAULT_BUDGET, directory='research-output', evidence='',
         easy_model=None, strong_model=None, progress=lambda message: None, max_revisions=DEFAULT_MAX_REVISIONS, review_notes='', extra_sources=None, counterfactuals=None, draft=None, review_model=None,
         source_snapshot=None, forecast_plan=None, plan_samples=None):
@@ -5270,6 +5332,11 @@ def run(ticker, key, *, profile='balanced', budget=DEFAULT_BUDGET, directory='re
                     not all(field in source for field in ('title','kind','data'))):
                 raise ValueError('Source snapshot records require consecutive S1… IDs, title, kind and data')
         parse_json(json.dumps(source_snapshot))
+        # Before any paid stage: a snapshot of one company must not become another's memo.
+        from .inputs import snapshot_entity_conflict
+        mismatch=snapshot_entity_conflict(ticker,source_snapshot)
+        if mismatch:
+            raise ValueError(mismatch)
     if forecast_plan is not None:
         if not isinstance(forecast_plan, dict) or len(json.dumps(forecast_plan).encode()) > 150000:
             raise ValueError('Provided forecast plan must be a JSON object within 150 KB')
@@ -5312,13 +5379,24 @@ def run(ticker, key, *, profile='balanced', budget=DEFAULT_BUDGET, directory='re
             folder=legacy
         elif base.is_dir():
             for marker in sorted(base.glob('full-*/run-identity.json')):
-                if json.loads(marker.read_text()).get('id')==identity:
+                try:
+                    found=_saved_json(marker,'marker').get('id')
+                except ValueError:
+                    # Another run's damaged marker must not block this one.
+                    progress(f'Skipped {marker}: it is not a readable run marker.')
+                    continue
+                if found==identity:
                     folder=marker.parent
                     break
     folder.mkdir(parents=True,exist_ok=True)
     with _lock(folder):
         marker_path=folder/'run-identity.json'
-        marker=json.loads(marker_path.read_text()) if marker_path.exists() else {}
+        try:
+            marker=_saved_json(marker_path,'marker') if marker_path.exists() else {}
+        except ValueError:
+            # The marker only records this folder's identity, which is rewritten below.
+            progress(f'Rewrote {marker_path}: it was not a readable run marker.')
+            marker={}
         marker['id']=identity
         if folder.name=='full-'+_digest(identity_parts+[core.SYSTEM])[:16]:
             # The legacy folder digest itself establishes which SYSTEM was
@@ -5335,10 +5413,10 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         raise ValueError(f'plan_samples must be an integer from 1 to {MAX_PLAN_SAMPLES}')
     notes_reopened=False
     state_path=folder/'state.json'
-    state=json.loads(state_path.read_text()) if state_path.exists() else {
+    state=_saved_json(state_path,'state') if state_path.exists() else {
         'version':VERSION,'ticker':ticker,'ledger':[],'stages':{},'sources':[], 'gaps':[],
         'iteration':0,'review_history':[],'quality_status':'in_progress','complete':False}
-    marker=json.loads((folder/'run-identity.json').read_text())
+    marker=_saved_json(folder/'run-identity.json','marker')
     if marker.get('legacy_stage_system_sha256'):
         state['legacy_stage_system_sha256']=marker['legacy_stage_system_sha256']
     def checkpoint():
@@ -5576,13 +5654,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         state.pop('valuation',None)
         state['complete']=False
         state['quality_status']='missing_valuation'
-        details='; '.join(coverage.get('conflicts',[])) or ', '.join(coverage.get('missing_fields',[]))
-        notes='; '.join(coverage.get('notes',[]))
-        message='Reported-input preflight stopped before paid research: '+details+'. '+notes
-        recovery=('This issuer needs a financial-institution valuation model, which this tool does not provide'
-            if gate.get('refused') else
-            'Supply primary disclosures with --sources, or start a fresh non-snapshot run with --sec-contact'
-            if source_snapshot is not None else 'Supply primary disclosures with --sources or retry SEC access with --sec-contact')
+        message,recovery=_coverage_stop_text(coverage,gate,state['gaps'],source_snapshot is not None)
         (folder/'memo.md').write_text('# '+ticker+': financial input coverage incomplete\n\n'+message+
             '\n\n'+recovery+'. '
             'No paid research was started for this attempt.\n',encoding='utf-8')
