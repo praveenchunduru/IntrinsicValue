@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import hashlib
+import html
 from html.parser import HTMLParser
 import re
 import time
@@ -110,6 +111,32 @@ _EXCERPT_HEADINGS = (
     ('balance sheet', r'(?im)^\s*consolidated balance sheets\s*$'),
     ('cash flow', r'(?im)^\s*consolidated statements of cash flows\s*$'),
 )
+# An earnings release titles its statements in its own words and puts them
+# after its narrative: "CONDENSED CONSOLIDATED STATEMENTS OF OPERATIONS
+# (Unaudited)" (Apple), "INCOME STATEMENTS" and "BALANCE SHEETS" (Microsoft),
+# "STATEMENTS OF EARNINGS" (Home Depot), "Consolidated Earnings Information"
+# (P&G), "statement of earnings" (Johnson & Johnson). Comprehensive income is
+# not the income statement.
+_STATEMENT_PREFIX = r'(?i)(?:condensed\s+)?(?:consolidated\s+)?'
+_STATEMENT_SUFFIX = r'(?:\s*\(unaudited\))?'
+RELEASE_STATEMENT_HEADINGS = (
+    ('operating results', _STATEMENT_PREFIX + r'(?:statements?\s+of\s+(?:operations|income|earnings)|income\s+statements?|'
+                          r'earnings\s+information)' + _STATEMENT_SUFFIX),
+    ('balance sheet', _STATEMENT_PREFIX + r'(?:balance\s+sheets?|statements?\s+of\s+financial\s+position)' + _STATEMENT_SUFFIX),
+    ('cash flow', _STATEMENT_PREFIX + r'(?:statements?\s+of\s+cash\s+flows?|cash\s+flows?\s+statements?)' + _STATEMENT_SUFFIX),
+)
+# Statements that end a window without one of their own: Amazon's statement of
+# operations is followed by its statement of comprehensive income.
+RELEASE_STATEMENT_BOUNDARY = (_STATEMENT_PREFIX + r'(?:statements?\s+of\s+comprehensive\s+(?:income|loss|earnings)(?:\s+\(loss\))?|'
+                              r'comprehensive\s+income\s+statements?|statements?\s+of\s+(?:changes\s+in\s+)?'
+                              r'(?:stockholders|shareholders|shareowners)[’\']?\s+equity)' + _STATEMENT_SUFFIX)
+# Each statement window runs from its heading to the next statement heading,
+# within these widths. Release statements measured 750 to 2,700 characters
+# (16 issuers, 2026-11-27); the widths sum to 8,200, so the narrative opening
+# keeps at least 7,800 of the 16,000-character excerpt bound.
+RELEASE_STATEMENT_CHARS = {'operating results': 3000, 'balance sheet': 2600, 'cash flow': 2600}
+_STATEMENT_STARTS = frozenset({'condensed', 'consolidated', 'statement', 'statements', 'income', 'balance', 'cash',
+                               'earnings', 'comprehensive'})
 
 
 def _heading_lines(text):
@@ -128,12 +155,15 @@ def _heading_lines(text):
         start += len(line) + 1
 
 
-def _matched_headings(headings, pattern):
-    """Match lines, allowing a bounded heading split by HTML block breaks."""
+def _matched_headings(headings, pattern, starts=frozenset()):
+    """Match lines, allowing a bounded heading split by HTML block breaks.
+
+    ``starts`` adds first words that may begin a split heading.
+    """
     beginning = {'business', 'risk', "management's", 'management’s', 'management',
                  'segment', 'consolidated', 'note', 'research', 'r', 'r&',
                  'provision', 'income', 'taxation', 'leases', 'lease', 'commitments',
-                 'contractual', 'property', 'property,'}
+                 'contractual', 'property', 'property,'} | starts
     expression = re.compile(pattern)
     for index, (start, end, line) in enumerate(headings):
         if expression.fullmatch(line):
@@ -154,25 +184,64 @@ def _matched_headings(headings, pattern):
                 break
 
 
-def select_excerpts(text, max_chars=MAX_EXCERPT_CHARS, opening_chars=1200):
+def release_statement_windows(text, headings=None):
+    """(label, start, end) of a release's income statement, balance sheet and cash flow statement.
+
+    The first heading of each statement is used; its window ends at the next
+    statement heading of any kind (comprehensive income and equity included),
+    within ``RELEASE_STATEMENT_CHARS``. A statement the release does not
+    contain has no window.
+    """
+    headings = list(_heading_lines(text)) if headings is None else headings
+    first = {}
+    boundaries = {start for start, _, _ in _matched_headings(headings, RELEASE_STATEMENT_BOUNDARY, _STATEMENT_STARTS)}
+    for label, pattern in RELEASE_STATEMENT_HEADINGS:
+        matches = [start for start, _, _ in _matched_headings(headings, pattern, _STATEMENT_STARTS)]
+        boundaries.update(matches)
+        if matches:
+            first[label] = matches[0]
+    windows = []
+    for label, _ in RELEASE_STATEMENT_HEADINGS:
+        if label in first:
+            start = first[label]
+            end = min([len(text), start + RELEASE_STATEMENT_CHARS[label]] + [b for b in boundaries if b > start])
+            windows.append((label, start, end))
+    return windows
+
+
+def select_excerpts(text, max_chars=MAX_EXCERPT_CHARS, opening_chars=1200, statements=False):
     """Exact text windows; selection is not a claim of complete filing coverage.
 
     ``opening_chars`` sizes the first window. An earnings release puts its
     results, quotes and guidance first: with the 1,200-character filing opening,
     Walmart's and Meta's releases kept 2,800 characters, all but the headline
     being a segment table.
+
+    ``statements`` (earnings releases) keeps the release's income statement,
+    balance sheet and cash flow statement whole after the opening, which ends
+    where the first statement begins or where the statements would no longer
+    fit. Without it, 8 of 15 releases collected on 2026-11-26 had neither an
+    income statement nor a balance sheet window: their headings did not match
+    the filing patterns and the statements sat after the 10,000-character opening.
     """
     if not isinstance(text, str) or not text.strip():
         raise ValueError('Official document contains no readable text')
     if len(text) <= max_chars:
         return [{'excerpt_id': 'E1', 'label': 'complete cleaned document',
                  'start_char': 0, 'end_char': len(text), 'text': text}]
-    windows = [('document opening', 0, min(opening_chars, len(text)))]
+    headings = list(_heading_lines(text))
+    statement_windows = release_statement_windows(text, headings) if statements else []
+    opening_end = min(opening_chars, len(text))
+    if statement_windows:
+        opening_end = min([opening_end, max_chars - sum(end - start for _, start, end in statement_windows)] +
+                          [start for _, start, _ in statement_windows])
+    windows = [('document opening', 0, opening_end)] + statement_windows
     widths = {'business': 2400, 'risks': 1800, 'management discussion': 2400,
               'segment disclosure': 1600, 'operating results': 2200,
               'balance sheet': 2200, 'cash flow': 2200}
-    headings = list(_heading_lines(text))
     for label, pattern in _EXCERPT_HEADINGS:
+        if statement_windows and label in RELEASE_STATEMENT_CHARS:
+            continue
         matches = [start for start, _, _ in _matched_headings(headings, pattern)]
         if matches:
             # Filings often repeat headings in the contents before the section.
@@ -357,7 +426,8 @@ def archive_focus_excerpts(document):
     return excerpts
 
 
-def _source(title, url, document, *, kind, source_tier, metadata, max_chars=MAX_EXCERPT_CHARS, opening_chars=1200):
+def _source(title, url, document, *, kind, source_tier, metadata, max_chars=MAX_EXCERPT_CHARS, opening_chars=1200,
+            statements=False):
     if not isinstance(document, str) or len(document.encode()) > MAX_DOCUMENT_BYTES:
         raise RuntimeError('Official source is missing or exceeds its archive size limit')
     text = html_to_text(document)
@@ -365,7 +435,7 @@ def _source(title, url, document, *, kind, source_tier, metadata, max_chars=MAX_
         raise RuntimeError('Official source returned an access-control page instead of the document')
     if len(text) < 200:
         raise RuntimeError('Official source has insufficient readable text')
-    excerpts = select_excerpts(text, max_chars, opening_chars)
+    excerpts = select_excerpts(text, max_chars, opening_chars, statements)
     return {'title': title, 'url': url, 'kind': kind, 'source_tier': source_tier,
             'retrieved_at': datetime.now(timezone.utc).isoformat(),
             'raw_document': document,
@@ -464,28 +534,90 @@ class _FilingIndex(HTMLParser):
             self.row = None
 
 
+_EXHIBIT_DOCUMENT = re.compile(r'[A-Za-z0-9_.-]+\.(?:htm|html|txt)')
+
+
+def _exhibit_kind(value):
+    """'EX-99.1' for EX-99.1 or EX-99.01, 'EX-99.2' for EX-99.2, 'EX-99' for EX-99; None for anything else."""
+    match = re.fullmatch(r'(?i)(?:ex|exhibit)[-\s]*(?:no\.?\s*)?99(?:\.0*(\d{1,2}))?', ' '.join(str(value).split()))
+    if not match:
+        return None
+    return 'EX-99' + ('.' + match.group(1) if match.group(1) else '')
+
+
+def _folder_document(href, cik, accession):
+    """A document name inside the filing's own folder, or None for any other link."""
+    href = (href or '').strip()
+    if href.startswith('/ix?doc='):
+        href = href[len('/ix?doc='):]
+    if href.startswith('https://' + SEC_HOST + '/'):
+        href = href[len('https://' + SEC_HOST):]
+    folder = f'/Archives/edgar/data/{cik}/{accession}/'
+    if href.startswith(folder):
+        href = href[len(folder):]
+    # A bare name is relative to the index page or 8-K, both in the filing folder.
+    return href if _EXHIBIT_DOCUMENT.fullmatch(href) else None
+
+
+def _index_exhibits(index_html, cik, accession):
+    """[(exhibit type, document name)] of the exhibit-99 documents in a filing index table."""
+    parser = _FilingIndex()
+    parser.feed(index_html)
+    found = []
+    for row in parser.rows:
+        kind = next((kind for kind in map(_exhibit_kind, row['cells']) if kind), None)
+        name = _folder_document(row['href'], cik, accession)
+        if kind and name and kind not in dict(found):
+            found.append((kind, name))
+    return found
+
+
+def _header_exhibits(headers_html):
+    """[(exhibit type, document name)] from a filing's index-headers page.
+
+    The page reprints the submission header, one <TYPE>, <SEQUENCE> and
+    <FILENAME> per document. Walmart's 2026-11-19 8-K index page rendered an
+    empty document table while this page listed its EX-99.1.
+    """
+    text = html.unescape(headers_html)
+    found = []
+    for kind, name in re.findall(r'(?i)<TYPE>\s*([^\s<]{1,40})\s*<SEQUENCE>\s*\d{1,4}\s*<FILENAME>\s*([^\s<]{1,200})', text):
+        kind = _exhibit_kind(kind)
+        if kind and _EXHIBIT_DOCUMENT.fullmatch(name) and kind not in dict(found):
+            found.append((kind, name))
+    return found
+
+
+def _primary_exhibits(document, cik, accession):
+    """[(exhibit type, document name)] linked from an 8-K's own exhibit index (a row numbered 99.1)."""
+    parser = _FilingIndex()
+    parser.feed(document)
+    found = []
+    for row in parser.rows:
+        number = next((cell for cell in row['cells'] if re.fullmatch(r'(?i)(?:exhibit\s+)?99(?:\.\d{1,2})?', cell)), None)
+        kind = _exhibit_kind('EX-' + number.split()[-1]) if number else None
+        name = _folder_document(row['href'], cik, accession)
+        if kind and name and kind not in dict(found):
+            found.append((kind, name))
+    return found
+
+
+def _release_choice(exhibits):
+    """(exhibit type, document name) of the release: EX-99.1, else a lone EX-99; or None."""
+    named = dict(exhibits)
+    for kind in ('EX-99.1', 'EX-99'):
+        if kind in named:
+            return kind, named[kind]
+    return None
+
+
 def _release_exhibit(index_html, cik, accession):
     """(exhibit type, document name) of the earnings release in a filing index, or None.
 
     EX-99.1 is preferred; a filing whose only press-release exhibit is EX-99 or
     EX-99.01 is accepted. The link must stay inside the filing's own folder.
     """
-    parser = _FilingIndex()
-    parser.feed(index_html)
-    folder = f'/Archives/edgar/data/{cik}/{accession}/'
-    found = {}
-    for row in parser.rows:
-        kind = next((cell.upper() for cell in row['cells'] if re.fullmatch(r'EX-99(?:\.0?1)?', cell, re.I)), None)
-        href = row['href'] or ''
-        if href.startswith('/ix?doc='):
-            href = href[len('/ix?doc='):]
-        name = href[len(folder):] if href.startswith(folder) else ''
-        if kind and re.fullmatch(r'[A-Za-z0-9_.-]+\.(?:htm|html|txt)', name):
-            found.setdefault(kind.replace('EX-99.01', 'EX-99.1'), name)
-    for kind in ('EX-99.1', 'EX-99'):
-        if kind in found:
-            return kind, found[kind]
-    return None
+    return _release_choice(_index_exhibits(index_html, cik, accession))
 
 
 _SUCCESSOR = re.compile(r'(?i)\bsuccessor\s+(?:registrant|issuer)\b|\bRule\s+12g-3\b')
@@ -513,8 +645,9 @@ def gather_primary(ticker, fetch_json, fetch_text=None):
     """Return public primary source records and specific unresolved retrieval gaps.
 
     At most two SEC filings are retrieved, plus the exhibit-99.1 earnings release
-    of the latest 8-K reporting results (Item 2.02), for every issuer; no
-    fabricated per-company URLs are used. The SEC industry code (SIC) from the
+    of the latest 8-K reporting results (Item 2.02), for every issuer, whether
+    or not it is newer than the latest 10-Q; no fabricated per-company URLs are
+    used. The SEC industry code (SIC) from the
     submission history is kept in each record's metadata.
     The caller assigns final source IDs, archives ``raw_document`` outside model
     context, and may request supplementary research for gaps reported here.
@@ -571,43 +704,119 @@ def gather_primary(ticker, fetch_json, fetch_text=None):
             gaps.append('No 8-K reporting results of operations (Item 2.02) is in the recent SEC filing history; '
                         'no issuer earnings release was reviewed.')
         else:
-            sources_before = len(sources)
             try:
-                sources.extend(_earnings_release(release, cik, issuer, submissions_url, fetch_text, industry))
-            except (RuntimeError, ValueError, OSError, TypeError):
-                pass
-            if len(sources) == sources_before:
+                release_sources, release_gaps = _earnings_release(release, cik, issuer, submissions_url, fetch_text, industry)
+                sources.extend(release_sources)
+                gaps.extend(release_gaps)
+            except (RuntimeError, ValueError, OSError, TypeError) as error:
                 gaps.append(f'The 8-K earnings release filed {release["filingDate"]} was identified but its exhibit was '
-                            'unavailable; it was not reviewed.')
+                            f'unavailable ({_reason(error)}); it was not reviewed.')
     except (RuntimeError, ValueError, KeyError, TypeError, StopIteration, OSError):
         gaps.append('SEC filing history could not be retrieved or the issuer was not mapped; annual and quarterly filings were not reviewed.')
     return sources, gaps
 
 
+def _reason(error):
+    """One bounded line naming why a retrieval failed."""
+    return ' '.join(str(error).split())[:300] or type(error).__name__
+
+
+def _release_location(record, cik, fetch_text):
+    """(exhibit type, document name, how it was located, every exhibit-99 document) of an 8-K's release.
+
+    The filing index table is read first, then the index-headers page, then
+    the 8-K's own exhibit index. Walmart's 2026-11-19 8-K (59 documents) had an
+    index page with an empty document table, so its release was reported
+    unavailable and the run cited it only from unverified web excerpts. The
+    error names what each page showed.
+    """
+    accession = record['accessionNumber'].replace('-', '')
+    folder = f'https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/'
+    pages = (('filing index', f'{folder}{record["accessionNumber"]}-index.htm',
+              lambda page: _index_exhibits(page, cik, accession)),
+             ('filing index headers', f'{folder}{record["accessionNumber"]}-index-headers.html', _header_exhibits),
+             ('8-K exhibit index', folder + record['primaryDocument'],
+              lambda page: _primary_exhibits(page, cik, accession)))
+    findings = []
+    for located_by, url, parse in pages:
+        try:
+            time.sleep(.15)
+            exhibits = parse(fetch_text(url))
+        except (RuntimeError, ValueError, OSError, TypeError) as error:
+            findings.append(f'{located_by}: {_reason(error)}')
+            continue
+        choice = _release_choice(exhibits)
+        if choice:
+            return choice[0], choice[1], located_by, exhibits
+        findings.append(f'{located_by}: no exhibit 99.1 or 99 document')
+    raise RuntimeError('; '.join(findings))
+
+
+def _statement_labels(document):
+    """Labels of the statements a release document contains (see ``release_statement_windows``)."""
+    return [label for label, _, _ in release_statement_windows(html_to_text(document))]
+
+
+def _exhibit_number(kind):
+    return int(kind.split('.', 1)[1]) if '.' in kind else 0
+
+
+# Other exhibit-99 documents read when the release holds neither an income
+# statement nor a balance sheet; Johnson & Johnson and AT&T file theirs as
+# EX-99.2 (2026-10-13 and 2026-10-21).
+RELEASE_STATEMENT_EXHIBITS = 2
+
+
 def _earnings_release(record, cik, issuer, submissions_url, fetch_text, industry):
-    """The earnings-release exhibit of one 8-K as an issuer-primary source (a list of at most one).
+    """(issuer-primary sources, gaps) for the earnings release of one 8-K.
 
     A release is the issuer's own dated statement of results: issuer primary,
     not regulatory primary, and bounded like other primary excerpts. A live
     Microsoft run (2026-11-15) had its earnings release only as an unverified
-    web excerpt.
+    web excerpt. Its excerpts keep the income statement, balance sheet and cash
+    flow statement whole. When the release holds neither of the first two, the
+    first other exhibit-99 document of the same 8-K that does is a second
+    source. Raises RuntimeError when the release itself is unavailable.
     """
+    kind, name, located_by, exhibits = _release_location(record, cik, fetch_text)
     accession = record['accessionNumber'].replace('-', '')
-    index_url = f'https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{record["accessionNumber"]}-index.htm'
-    time.sleep(.15)
-    exhibit = _release_exhibit(fetch_text(index_url), cik, accession)
-    if exhibit is None:
-        return []
-    kind, name = exhibit
-    url = f'https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/{name}'
-    time.sleep(.15)
-    document = fetch_text(url)
+    folder = f'https://www.sec.gov/Archives/edgar/data/{cik}/{accession}/'
+    index_url = f'{folder}{record["accessionNumber"]}-index.htm'
     metadata = dict(record, issuer=issuer, cik=cik, exhibit=kind, document=name, filing_index_url=index_url,
-                    source_url=submissions_url, published_at=record['filingDate'],
+                    exhibit_located_by=located_by, source_url=submissions_url, published_at=record['filingDate'],
                     interpretation=RELEASE_INTERPRETATION, **industry)
-    return [_source(f'{issuer} earnings release (8-K Item 2.02, {kind}); filed {record["filingDate"]}', url, document,
-                    kind='issuer_release', source_tier='issuer_primary', metadata=metadata, max_chars=MAX_EXCERPT_CHARS,
-                    opening_chars=RELEASE_OPENING_CHARS)]
+    try:
+        time.sleep(.15)
+        document = fetch_text(folder + name)
+        source = _source(f'{issuer} earnings release (8-K Item 2.02, {kind}); filed {record["filingDate"]}', folder + name,
+                         document, kind='issuer_release', source_tier='issuer_primary',
+                         metadata=dict(metadata, statements=_statement_labels(document)),
+                         max_chars=MAX_EXCERPT_CHARS, opening_chars=RELEASE_OPENING_CHARS, statements=True)
+    except (RuntimeError, ValueError, OSError, TypeError) as error:
+        raise RuntimeError(f'{kind} {name}: {_reason(error)}') from None
+    sources, gaps = [source], []
+    metadata = source['data']['metadata']
+    if {'operating results', 'balance sheet'} & set(metadata['statements']):
+        return sources, gaps
+    others = sorted((other for other in exhibits if other[0] not in {'EX-99', 'EX-99.1'}),
+                    key=lambda other: _exhibit_number(other[0]))
+    for other_kind, other_name in others[:RELEASE_STATEMENT_EXHIBITS]:
+        try:
+            time.sleep(.15)
+            other = fetch_text(folder + other_name)
+            statements = _statement_labels(other)
+            if not {'operating results', 'balance sheet'} & set(statements):
+                continue
+            sources.append(_source(
+                f'{issuer} earnings release financial statements (8-K Item 2.02, {other_kind}); filed {record["filingDate"]}',
+                folder + other_name, other, kind='issuer_release', source_tier='issuer_primary',
+                metadata=dict(metadata, exhibit=other_kind, document=other_name, statements=statements, release_exhibit=kind),
+                max_chars=MAX_EXCERPT_CHARS, statements=True))
+            break
+        except (RuntimeError, ValueError, OSError, TypeError) as error:
+            gaps.append(f'{other_kind} ({other_name}) of the 8-K earnings release filed {record["filingDate"]} was '
+                        f'unavailable ({_reason(error)}); its statements were not reviewed.')
+    return sources, gaps
 
 
 # Selected concepts are not interchangeable: e.g. weighted-average shares are
