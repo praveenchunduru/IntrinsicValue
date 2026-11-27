@@ -75,7 +75,9 @@ def check_conditions(case, memo, result, plan):
     if ('| Gross profit (' in computed) != operating:
         failures.append(f'{case}: gross-profit column does not match the plan type')
     forecast_samples = bool(result.get('forecast_consensus')) or bool(plan.get('forecast_consensus'))
-    if '**Forecast samples**' in computed and not forecast_samples and 'combines' not in computed:
+    # A run that asked for several samples but lost their record (an early replay) says so; that note is true.
+    if ('**Forecast samples**' in computed and not forecast_samples and 'combines' not in computed
+            and 'record of those samples is not available' not in computed):
         failures.append(f'{case}: forecast-sample notes without a sample record')
     # Comparison rows carry matching periods: a history total names as many years as the forecast columns cover.
     for match in re.finditer(r'\| Net reinvestment, forecast years 1-(\d+) \([^)]*\) \| ([^|]+)\|', computed):
