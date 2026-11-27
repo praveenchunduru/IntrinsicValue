@@ -27,7 +27,7 @@ from .inputs import canonical_reported_inputs, operating_company_gate, pin_repor
 from .quality import (WRITING_STANDARD, dollar_amounts, style_added, DIAGNOSTIC_SCOPE, HOUSE_ATTRIBUTION, RUBRIC, TRADING_TERMS, assessment_findings, claim_ledger,
                       inspect_memo, parse_json, parse_review, prereview_checks, prose_words, trace_pools, untraced_figures)
 from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_breakdown_facts, inline_facts, archive_focus_excerpts
-from .evidence_tables import (breakdown_markdown, breakdown_tables, filing_supplement_for, historical_baseline,
+from .evidence_tables import (breakdown_markdown, breakdown_tables, scale_of, filing_supplement_for, historical_baseline,
                               quarterly_markdown, render_baseline, render_roic, render_breakdowns, render_quarterly)
 from .macro import gather_us_calibration
 from .roic import _consecutive as roic_consecutive
@@ -3160,6 +3160,22 @@ def memo_title(plan, result, sources=(), ticker=''):
     return f'# {company}: intrinsic value'+(f', {when}' if when else '')
 
 
+def _beside_price(value, price, style, bare=False):
+    """A per-share value at three figures, or to the cent where rounding would make it read equal to the price or on its other side."""
+    text=memo_style.bare_per_share(value) if bare else style.per_share(value)
+    if _finite_number(value) and _finite_number(price) and value!=price:
+        shown=float(memo_style.bare_per_share(abs(value)).replace(',',''))*(1 if value>=0 else -1)
+        if (value<price)!=(shown<price) or shown==price:
+            text=f'{value:,.2f}' if bare else style.price(value)
+    return text
+
+
+def _ratio_text(ratio):
+    """Value / price to two decimals; three where two would read as exactly 1.00."""
+    text=f'{ratio:.2f}'
+    return f'{ratio:.3f}' if text=='1.00' and ratio!=1 else text
+
+
 def computed_summary(plan, result):
     """The first page: one sentence, the scenario table and two short tables.
 
@@ -3176,33 +3192,37 @@ def computed_summary(plan, result):
     quoted=((dates.get('market_price') or {}).get('observed_at') or '')[:10]
     price=result.get('market_price')
     lead=['## Summary','',style.header()]
+    def value(amount):
+        return _beside_price(amount,price,style)
+    def bare(amount):
+        return _beside_price(amount,price,style,bare=True)
     values={name:(scenarios.get(name) or {}).get('per_share_value') for name in ('bear','base','bull')}
     if headline:
-        sentence=f'The base-case value is {style.per_share(values["base"])} a share'
+        sentence=f'The base-case value is {value(values["base"])} a share'
         ratio=(scenarios.get('base') or {}).get('value_to_price')
     else:
-        sentence=f'The probability-weighted value is {style.per_share(result.get("weighted_per_share_value"))} a share'
+        sentence=f'The probability-weighted value is {value(result.get("weighted_per_share_value"))} a share'
         ratio=result.get('weighted_value_to_price')
     if _finite_number(price):
         sentence+=(f' against a price of {style.price(price)}'+(f' on {quoted}' if quoted else '')+
-                   (f', a value / price of {ratio:.2f}' if _finite_number(ratio) else ''))
+                   (f', a value / price of {_ratio_text(ratio)}' if _finite_number(ratio) else ''))
     if headline:
-        sentence+=(f'; the bear and bull stress cases give {style.per_share(values["bear"])} and '
-                   f'{style.per_share(values["bull"])}.')
+        sentence+=(f'; the bear and bull stress cases give {value(values["bear"])} and '
+                   f'{value(values["bull"])}.')
     else:
-        sentence+=(f'; the bear, base and bull cases give {style.per_share(values["bear"])}, '
-                   f'{style.per_share(values["base"])} and {style.per_share(values["bull"])}.')
+        sentence+=(f'; the bear, base and bull cases give {value(values["bear"])}, '
+                   f'{value(values["base"])} and {value(values["bull"])}.')
     lead+=['',sentence,'']
     header=['Scenario']+([] if headline else ['Probability'])+[f'Value per share ({style.unit("")})','Value / price']
     rows=[]
     for name in ('bear','base','bull'):
         row=scenarios[name]
         rows.append([name.title()]+([] if headline else [f'{row.get("probability",0):.0%}'])+
-                    [memo_style.bare_per_share(row['per_share_value']),
-                     f'{row["value_to_price"]:.2f}' if _finite_number(row.get('value_to_price')) else 'n/a'])
+                    [bare(row['per_share_value']),
+                     _ratio_text(row['value_to_price']) if _finite_number(row.get('value_to_price')) else 'n/a'])
     if not headline:
-        rows.append(['Weighted','100%',memo_style.bare_per_share(result.get('weighted_per_share_value')),
-                     f'{result["weighted_value_to_price"]:.2f}' if _finite_number(result.get('weighted_value_to_price')) else 'n/a'])
+        rows.append(['Weighted','100%',bare(result.get('weighted_per_share_value')),
+                     _ratio_text(result['weighted_value_to_price']) if _finite_number(result.get('weighted_value_to_price')) else 'n/a'])
     benchmark=result.get('index_benchmark') or {}
     if _finite_number(benchmark.get('value_to_price')):
         rows.append(['S&P 500, same conventions']+([] if headline else [''])+['',f'{benchmark["value_to_price"]:.2f}'])
@@ -3234,7 +3254,7 @@ def computed_summary(plan, result):
         lines+=['','**Conventions that move the value most.** Each row changes one house convention in the base case.','']
         lines+=_table(['Convention changed',f'Value per share ({style.unit("")})',f'Change ({style.unit("")})'],
                       _panel_rows(top,style))
-    return '\n'.join(lines)+'\n'
+    return memo_style.compact('\n'.join(lines)+'\n',style)
 
 
 def _transition_step(result, money):
@@ -3343,7 +3363,9 @@ def _equity_bridge_parts(plan, result, style):
     def money(value):
         # The raw amount is kept beside each money line, so a line rounds to 0 only when it is not exactly zero.
         amounts.append(value or 0)
-        return memo_style.scaled(value or 0,scale,decimals)
+        text=memo_style.scaled(value or 0,scale,decimals)
+        # A line too small for the table's unit carries its own: $30.0M in a $B bridge.
+        return style.amount(value) if text=='0' and value else text
     rows=[['Enterprise value',money(base['enterprise_value']),'present value of base-case free cash flow']]
     if _finite_number(base.get('net_debt')) and base['net_debt']<0:
         rows.append(['Plus net cash',money(-base['net_debt']),f'cash less debt on {day}'+_cite(refs.get('net_debt'))])
@@ -3603,7 +3625,7 @@ def _implied_parts(result, style):
             if row['status']=='solved':
                 outcome='reaches the price'
             elif row['status']=='not_reachable':
-                outcome=(f'closest {style.per_share(row.get("closest_value"))}, '
+                outcome=(f'closest {_beside_price(row.get("closest_value"),result.get("market_price"),style)}, '
                          f'{"above" if row.get("direction")=="above" else "below"} the price')
             else:
                 outcome,change='not calculated',''
@@ -3958,7 +3980,7 @@ def _notes_lines(groups, heading=NOTES_HEADING):
 def valuation_section(plan, result):
     """The valuation detail with its method notes, as the reviewer and the fix call see it."""
     lines,groups=_valuation_parts(plan,result)
-    return '\n'.join(lines+_notes_lines(groups,'### Notes on the valuation'))+'\n'
+    return memo_style.compact('\n'.join(lines+_notes_lines(groups,'### Notes on the valuation'))+'\n',_style(plan,result))
 
 
 # Plain-text history labels and the memo's labels, with units in the label.
@@ -3985,7 +4007,7 @@ CELL_NOTES = {'n/m (capital change under a tenth of capital)': 'n/m', 'n/m (capi
               'n/m (capital at or below zero)': 'n/m'}
 
 
-def _history_table(names, columns, style, notes):
+def _history_table(names, columns, style, notes, letter='B'):
     """A transposed Markdown table: one row per measure, one column per period. Rows with no data are dropped."""
     lines=['| Measure | '+' | '.join(columns[0])+' |','|---|'+'---:|'*len(columns[0])]
     empty=[]
@@ -3999,7 +4021,7 @@ def _history_table(names, columns, style, notes):
                               'n/m (capital at or below zero)': 'ROIC is n/m where invested capital is at or below zero.'}[cell])
         cells=[CELL_NOTES.get(cell,cell) for cell in cells]
         label=HISTORY_LABELS.get(name.strip(),name.strip()[:1].upper()+name.strip()[1:])
-        label=label.replace('{B}',style.unit('B')).replace('{U}',style.unit(''))
+        label=label.replace('{B}',style.unit(letter)).replace('{U}',style.unit(''))
         if all(cell=='n/a' for cell in cells):
             empty.append(label.split(' (')[0].lower())
             continue
@@ -4035,25 +4057,29 @@ def _reported_parts(sources):
         ref=_cite(source.get('id'))
         if baseline and baseline.get('rows'):
             style=memo_style.Style((baseline['rows'][-1] or {}).get('currency'))
-            text=render_baseline(baseline,source.get('id'),include_roic=False).split('\n')
+            letter,divisor=scale_of(value for row in baseline['rows'] for value in
+                                    (row.get('revenue'),row.get('repurchases'),row.get('dividends')))
+            text=render_baseline(baseline,source.get('id'),include_roic=False,scale=divisor).split('\n')
             basis=text[text.index('Basis notes:'):] if 'Basis notes:' in text else []
             text=text[:len(text)-len(basis)]
             header,rows=text[1].split(' | '),[row.split(' | ') for row in text[2:] if row.strip()]
             lines+=['','### Annual results','',f'Fiscal years ending on the dates shown{ref}. Ratios are computed from '
                     'reported values; n/a means not reported on a comparable basis.','']
-            lines+=_history_table(header[1:],([row[0] for row in rows],rows),style,notes)
+            lines+=_history_table(header[1:],([row[0] for row in rows],rows),style,notes,letter)
             notes+=[_billions_in_text(note[2:].rstrip('.'),style)+'.' for note in basis[1:] if note.startswith('- ')]
             quarterly,quarterly_notes=quarterly_markdown(baseline,source.get('id'))
             if quarterly:
                 lines+=['','### Quarters','']+quarterly
                 notes+=quarterly_notes
-            returns=render_roic(baseline,source.get('id')).split('\n')
+            letter,divisor=scale_of(value for row in baseline['rows'] for value in
+                                    (row.get('nopat'),row.get('invested_capital'),row.get('average_invested_capital')))
+            returns=render_roic(baseline,source.get('id'),scale=divisor).split('\n')
             if len(returns)>2:
                 cut=returns.index('ROIC basis:') if 'ROIC basis:' in returns else len(returns)
                 header,rows=returns[1].split(' | '),[row.split(' | ') for row in returns[2:cut] if row.strip()]
                 lines+=['','### Return on invested capital','',
                         f'Mauboussin and Callahan method (Counterpoint Global, October 2022), computed from reported values{ref}.','']
-                lines+=_history_table(header[1:],([row[0] for row in rows],rows),style,notes)
+                lines+=_history_table(header[1:],([row[0] for row in rows],rows),style,notes,letter)
                 notes+=[note[2:] for note in returns[cut+1:] if note.startswith('- ')]
         breakdowns=source.get('breakdown_tables') or data.get('breakdown_tables')
         if breakdowns:
@@ -4066,7 +4092,8 @@ def _reported_parts(sources):
 def reported_tables_section(sources):
     """The reported history with its basis notes, as the reviewer sees it (a list of lines)."""
     lines,notes=_reported_parts(sources)
-    return lines+_notes_lines([('Reported history',notes)],'### Notes on the reported history') if lines else []
+    out=lines+_notes_lines([('Reported history',notes)],'### Notes on the reported history') if lines else []
+    return memo_style.compact('\n'.join(out)).split('\n') if out else []
 
 
 def _strip_model_frame(memo):
@@ -4104,8 +4131,10 @@ def reader_view(memo, sources, plan, result, ticker=''):
     groups=groups+[('Forecast samples',consensus.method_notes(_consensus_record(result),_style(plan,result))),
                    ('Reported history',history_notes),
                    ('Review',['Software checks and model reviews do not establish investment truth or forecast accuracy.'])]
-    return _label_unverified(_with_summary(memo,plan,result,sources,ticker).rstrip()+'\n'+'\n'.join(detail)+
-                             '\n'+'\n'.join(history+_notes_lines(groups)),sources)
+    style=_style(plan,result)
+    computed='\n'.join(detail)+'\n'+'\n'.join(history+_notes_lines(groups))
+    return _label_unverified(_with_summary(memo,plan,result,sources,ticker).rstrip()+'\n'+memo_style.compact(computed,style),
+                             sources)
 
 
 def _render(memo, sources, gaps, plan, result, state):

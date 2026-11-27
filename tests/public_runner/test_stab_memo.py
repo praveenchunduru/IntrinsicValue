@@ -325,3 +325,173 @@ class BridgeTests(unittest.TestCase):
         self.assertNotRegex(bridge, r'\| 0 \|')
         notes = memo[memo.index('## Method notes'):]
         self.assertIn('Bridge lines with nothing to add or deduct:', notes)
+
+
+class ModelTextRestyleTests(unittest.TestCase):
+    """Model-written labels Python prints in computed sections follow the number style (smoke run, 2026-11-27).
+
+    A live review raised a seven-digit share count in the repurchases table twice; no edit
+    round could change it because Python prints the plan's label.
+    """
+
+    def test_long_numbers_and_usd_in_labels_are_restyled(self):
+        style = memo_style.Style('USD')
+        self.assertEqual(memo_style.compact('2,735,053 shares at an average USD 87.40', style), '2.74M shares at an average $87.40')
+        self.assertEqual(memo_style.compact('$85,800,000,000 spent; 14532300000 shares', style), '$85.8B spent; 14.5B shares')
+        self.assertEqual(memo_style.compact('on 2026-11-27, 1,970.7 [S1234567]', style), 'on 2026-11-27, 1,970.7 [S1234567]')
+
+    def test_a_repurchase_label_prints_restyled_and_still_traces(self):
+        value = headline_plan()
+        result = evaluate(value)
+        label = '10-Q total of 2,735,053 shares at an average USD 87.40'
+        result.setdefault('computed_diagnostics', {})['repurchase_tests'] = [{
+            'label': label, 'interpretation': 'historical_retrospective_conditional', 'source_refs': ['S1'],
+            'amount': 239e6, 'price': 87.40, 'shares_repurchased': 2735053, 'post_repurchase_weighted_per_share_value': 24.0,
+            'weighted_value_change': {'dollar_delta': -0.1}}]
+        value['repurchase_tests'] = [{'label': label}]
+        view = pipeline.reader_view(PROSE, SOURCES, value, result, 'EXMP')
+        self.assertIn('10-Q total of 2.74M shares at an average $87.40 [S1]', view)
+        pools = quality.trace_pools(SOURCES, (result, value))
+        self.assertEqual(quality.untraced_figures('The label says 2.74M shares.', pools), [])
+
+    def test_style_rules_cover_the_prose_sections_only(self):
+        self.assertIn('for the eight prose sections only', quality.WRITING_STANDARD)
+        value = headline_plan()
+        result = evaluate(value)
+        view = pipeline.reader_view(PROSE.replace('below the price', 'below the price — by USD 4'), SOURCES, value, result, 'EXMP')
+        # A computed section with a long number or "USD" raises nothing; the prose does.
+        planted = view.replace('## Method notes', '## Method notes\n\n- Planted USD 1,234,567 — note, not prose.')
+        ids = {item['id'] for item in quality.prereview_checks(planted, SOURCES, (result, value))}
+        self.assertIn('currency-code', ids)
+        self.assertNotIn('long-number', ids)
+        clean = pipeline.reader_view(PROSE, SOURCES, value, result, 'EXMP')
+        planted = clean.replace('## Method notes', '## Method notes\n\n- Planted USD 1,234,567 — note, not prose.')
+        ids = {item['id'] for item in quality.prereview_checks(planted, SOURCES, (result, value))}
+        self.assertFalse(ids & {'currency-code', 'long-number', 'em-dash', 'contrast-formula'})
+
+
+def saved_runs():
+    """Saved run folders named in INTRINSICVALUE_SAVED_RUNS (os.pathsep-separated globs), if any."""
+    import glob
+    import os
+    patterns = [part for part in os.environ.get('INTRINSICVALUE_SAVED_RUNS', '').split(os.pathsep) if part]
+    return sorted({path for pattern in patterns for path in glob.glob(pattern)
+                   if (Path(path) / 'state.json').is_file()})
+
+
+class SavedRunGuardTests(unittest.TestCase):
+    """Rendered saved runs carry no "USD" and no seven-digit number outside prose, sources and review status.
+
+    Saved runs are large and live outside the repository; set INTRINSICVALUE_SAVED_RUNS to their folders.
+    """
+
+    def test_outside_the_prose_there_is_no_usd_and_no_long_number(self):
+        import importlib.util
+        runs = saved_runs()
+        if not runs:
+            self.skipTest('INTRINSICVALUE_SAVED_RUNS names no saved run')
+        spec = importlib.util.spec_from_file_location('rerender', Path(__file__).resolve().parents[2] / 'tools' / 'rerender.py')
+        tool = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(tool)
+        for folder in runs:
+            with self.subTest(run=Path(folder).name):
+                memo = tool.rerender(folder)
+                prose = memo.index('\n## Summary')
+                start = memo.index('\n## ', prose + 5)
+                end, sources = memo.index('\n## Valuation detail'), memo.index('\n## Sources')
+                computed = memo[:start] + memo[end:sources]
+                self.assertNotRegex(computed, r'\bUSD\b')
+                self.assertNotRegex(computed, LONG_NUMBER)
+
+
+def outside_prose(memo):
+    """The memo without its prose sections, sources and review status."""
+    start = memo.index('\n## ', memo.index('\n## Summary') + 5)
+    return memo[:start] + memo[memo.index('\n## Valuation detail'):memo.index('\n## Sources')]
+
+
+def history_source(currency, scale):
+    """A sec_facts source with a two-year history and a segment breakdown, amounts times ``scale``."""
+    def row(end, revenue):
+        return {'fiscal_year_end': end, 'currency': currency, 'revenue': revenue * scale, 'revenue_growth': .1,
+                'gross_margin': .6, 'operating_margin': .3, 'research_and_development_to_revenue': .1,
+                'selling_general_administrative_to_revenue': .1, 'effective_tax_rate': .2,
+                'capital_expenditure_to_revenue': .05, 'depreciation_amortization_to_revenue': .04,
+                'stock_compensation_to_revenue': .02, 'repurchases': 5 * scale, 'average_repurchase_price': 41.25,
+                'dividends': 2 * scale, 'diluted_eps': 3.0, 'nopat': 30 * scale, 'invested_capital': 120 * scale,
+                'average_invested_capital': 110 * scale}
+    breakdown = {'segment': {'fiscal_year_ends': ['2025-12-31', '2024-12-31'], 'members': [
+        {'label': 'Beverages', 'revenue': [300 * scale, 270 * scale], 'revenue_growth': [.111, None]},
+        {'label': 'Snacks', 'revenue': [100 * scale, 95 * scale], 'revenue_growth': [.053, None]}]}}
+    return {'id': 'S1', 'kind': 'sec_facts', 'title': 'SEC company facts: SMALL FOODS INC', 'source_tier': 'regulatory_primary',
+            'url': 'https://example.test/facts', 'retrieved_at': '2026-03-31T00:00:00Z', 'data': {},
+            'historical_baseline': {'rows': [row('2024-12-31', 364), row('2025-12-31', 400)], 'concepts': {}},
+            'breakdown_tables': breakdown}
+
+
+class EdgeFilerGuardTests(unittest.TestCase):
+    """The guard also holds for a company under $1B of revenue and for a non-dollar filer (review, 2026-11-27)."""
+
+    def render(self, value, currency, scale):
+        result = evaluate(value)
+        state = {'ticker': 'SMLL', 'quality_status': 'reviewed_draft', 'complete': True, 'review_history': []}
+        return pipeline._render(PROSE, [history_source(currency, scale)], [], value, result, state)
+
+    def test_a_small_company_scales_every_table(self):
+        value = headline_plan()
+        value['actuals'].update(revenue=400e6, net_debt=30e6, shares_outstanding=40e6)
+        value['net_debt_bridge'].update(debt=60e6, selected_cash_and_nonoperating_investments=30e6, net_debt=30e6)
+        memo = self.render(value, 'USD', 1e6)
+        computed = outside_prose(memo)
+        self.assertNotRegex(computed, r'\bUSD\b')
+        self.assertNotRegex(computed, LONG_NUMBER)
+        self.assertIn('| Revenue ($M) | 364 | 400 |', computed)
+        self.assertIn('| 2025 ($M) | 2024 ($M) |', computed)
+        self.assertIn('| Year | Revenue ($M) |', computed)
+        self.assertNotIn('| 0.0 |', computed)
+
+    def test_a_non_dollar_filer_uses_its_symbol(self):
+        value = glide_plan(glide=False, timing=False)
+        value.pop('discount_rate')
+        for name, scenario in value['scenarios'].items():
+            scenario.update(wacc=.09, terminal_growth=.03, probability=1.0 if name == 'base' else 0.0)
+        value['currency'] = 'EUR'
+        value['actuals'].update(revenue=1000e9, net_debt=50e9, shares_outstanding=100e9)
+        value['net_debt_bridge'].update(debt=100e9, selected_cash_and_nonoperating_investments=50e9, net_debt=50e9)
+        memo = self.render(value, 'EUR', 1e9)
+        computed = outside_prose(memo)
+        self.assertIn('Euros; €B is billions and €M is millions.', computed)
+        self.assertIn('| Revenue (€B) |', computed)
+        self.assertNotRegex(computed, LONG_NUMBER)
+        self.assertNotRegex(computed, r'\bUSD\b|\$')
+
+
+class EdgeDisplayTests(unittest.TestCase):
+    def test_usd_restyle_leaves_rates_coupons_years_and_quotes(self):
+        for text in ('Microsoft issued USD 2.5% notes due 2030.', 'The USD 2030 notes.', 'A EUR/USD 1.08 rate.',
+                     'USD 1 = EUR 0.92 at year end.', 'The 8-K is titled "USD 500 million Senior Notes".',
+                     'Debt is USD-denominated.'):
+            self.assertEqual(quality.dollar_amounts(text), text)
+            self.assertEqual(quality.style_findings(text), [])
+        self.assertEqual(quality.dollar_amounts('USD -2.4 billion of other income'), '-$2.4B of other income')
+
+    def test_units_and_decimals_follow_the_rounded_value(self):
+        style = memo_style.Style('USD')
+        self.assertEqual([style.per_share(v) for v in (99.96, 9.996, 0.9996)], ['$100', '$10.0', '$1.00'])
+        self.assertEqual([style.amount(v) for v in (999.6e6, 99.96e9, 999999.6)], ['$1.0B', '$100B', '$1.0M'])
+
+    def test_a_value_just_below_the_price_reads_below_it(self):
+        value = headline_plan()
+        result = evaluate(value)
+        price = result['market_price']
+        result['scenarios']['base'].update(per_share_value=price - 0.004, value_to_price=(price - 0.004) / price)
+        sentence = next(line for line in pipeline.computed_summary(value, result).split('\n') if line.startswith('The base'))
+        self.assertIn(f'value is ${price - 0.004:,.2f} a share', sentence)
+        self.assertIn('a value / price of 1.000', sentence)
+
+    def test_a_small_bridge_line_keeps_its_own_unit(self):
+        value = headline_plan()
+        value['actuals']['net_debt'] = 30e6
+        value['net_debt_bridge'].update(debt=80e6, selected_cash_and_nonoperating_investments=50e6, net_debt=30e6)
+        lines, _ = pipeline._equity_bridge_parts(value, evaluate(value), memo_style.Style('USD'))
+        self.assertIn('| Less net debt | $30.0M |', '\n'.join(lines))

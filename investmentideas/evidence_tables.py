@@ -28,7 +28,7 @@ import hashlib
 from pathlib import Path
 import re
 
-from . import roic
+from . import memo_style, roic
 
 ANNUAL_FORMS = {'10-K', '10-K/A', '20-F', '20-F/A', '40-F', '40-F/A'}
 REVENUE = ('RevenueFromContractWithCustomerExcludingAssessedTax', 'RevenueFromContractWithCustomerIncludingAssessedTax',
@@ -1165,10 +1165,18 @@ def breakdown_tables(facts, years=3):
     return output
 
 
-def _money(value):
+def _money(value, scale=1e9):
+    """An amount in billions (prompts), or in the memo table's own scale: one decimal in billions, whole below."""
     if value is None:
         return 'n/a'
-    return f'{float(value) / 1e9:,.1f}'
+    text = f'{float(value) / scale:,.{1 if scale >= 1e9 else 0}f}'
+    return '0' if scale < 1e9 and not text.strip('-0.,') else text
+
+
+def scale_of(values):
+    """(letter, divisor) for a memo table, by memo_style.table_scale."""
+    letter, divisor, _ = memo_style.table_scale([float(value) for value in values if isinstance(value, (int, float))])
+    return letter, divisor
 
 
 def _pct(value):
@@ -1283,7 +1291,7 @@ def _attach_roic(table, gaap, as_of):
         row['intangibles_capitalization'] = status
 
 
-def render_baseline(baseline, source_id=None, include_roic=True):
+def render_baseline(baseline, source_id=None, include_roic=True, scale=1e9):
     rows = (baseline or {}).get('rows') or []
     if not rows:
         return ''
@@ -1310,25 +1318,25 @@ def render_baseline(baseline, source_id=None, include_roic=True):
         if price is not None and (row.get('average_repurchase_price_tolerance') or 0) > .005:
             price_text = '~' + price_text
         lines.append(' | '.join([
-            row['fiscal_year_end'], _money(row['revenue']), _pct(row['revenue_growth']), _pct(row['gross_margin']),
+            row['fiscal_year_end'], _money(row['revenue'], scale), _pct(row['revenue_growth']), _pct(row['gross_margin']),
             _pct(row['operating_margin']), _pct(row.get('operating_income_growth')),
             _pct(row['research_and_development_to_revenue']),
             _pct(row['selling_general_administrative_to_revenue']), _pct(row['effective_tax_rate']),
             _pct(row['capital_expenditure_to_revenue']), _pct(row['depreciation_amortization_to_revenue']),
-            _pct(row['stock_compensation_to_revenue']), _money(row['repurchases']),
-            price_text, _money(row['dividends']),
+            _pct(row['stock_compensation_to_revenue']), _money(row['repurchases'], scale),
+            price_text, _money(row['dividends'], scale),
             'n/a' if eps is None else f'{eps:,.2f}', _pct(row.get('diluted_eps_growth')),
             shares, _shares(row.get('net_share_change'), signed=True),
-            _shares(row.get('shares_repurchased')), _money(row.get('acquisitions')),
-            _money(row.get('finance_lease_additions'))]))
+            _shares(row.get('shares_repurchased')), _money(row.get('acquisitions'), scale),
+            _money(row.get('finance_lease_additions'), scale)]))
     notes = _basis_notes(rows, source_id, baseline.get('supplement_source'))
     if notes:
         lines.append('Basis notes:')
         lines.extend('- ' + note + '.' for note in notes)
-    return '\n'.join(lines + (_roic_lines(rows, ref) if include_roic else []))
+    return '\n'.join(lines + (_roic_lines(rows, ref, scale) if include_roic else []))
 
 
-def render_quarterly(baseline, source_id=None, markdown=False, notes_out=None):
+def render_quarterly(baseline, source_id=None, markdown=False, notes_out=None, scale=1e9, letter='B'):
     """The quarterly rate-of-change table: one row per quarter, or with ``markdown`` one column per quarter."""
     quarterly = (baseline or {}).get('quarterly') or {}
     rows = quarterly.get('rows') or []
@@ -1340,13 +1348,13 @@ def render_quarterly(baseline, source_id=None, markdown=False, notes_out=None):
         if row.get('revenue_growth_basis') == 'unequal_length':
             return f'n/m ({row.get("days")} vs {row.get("prior_days")} days)'
         return _pct(row.get('revenue_growth'))
-    measures = [('revenue', lambda row: _money(row.get('revenue'))),
+    measures = [('revenue', lambda row: _money(row.get('revenue'), scale)),
                 ('growth on the year-earlier quarter', growth),
                 ('operating margin', lambda row: _pct(row.get('operating_margin')))]
     if 'inventory' in concepts:
-        measures.append(('inventory at quarter end', lambda row: _money(row.get('inventory'))))
+        measures.append(('inventory at quarter end', lambda row: _money(row.get('inventory'), scale)))
     if 'deferred_revenue' in concepts:
-        measures.append(('deferred revenue at quarter end', lambda row: _money(row.get('deferred_revenue'))))
+        measures.append(('deferred revenue at quarter end', lambda row: _money(row.get('deferred_revenue'), scale)))
     def label(row):
         derived = row.get('revenue_basis') not in (None, 'reported') or row.get('operating_income_basis') not in (None, 'reported')
         return f'Q{row["fiscal_quarter"]}' + (' (derived)' if derived else '')
@@ -1377,9 +1385,9 @@ def render_quarterly(baseline, source_id=None, markdown=False, notes_out=None):
                      f'income {_money(ttm["operating_income"])}, operating margin {_pct(ttm["operating_margin"])}')
     if notes_out is not None:
         # The memo's layout: units in the row labels, notes collected for the method notes.
-        unit = _unit_symbol(quarterly.get('currency', ''))
-        names = {'revenue': f'Revenue ({unit}B)', 'inventory at quarter end': f'Inventory, quarter end ({unit}B)',
-                 'deferred revenue at quarter end': f'Deferred revenue, quarter end ({unit}B)'}
+        unit = memo_style.Style(quarterly.get('currency', '')).unit(letter)
+        names = {'revenue': f'Revenue ({unit})', 'inventory at quarter end': f'Inventory, quarter end ({unit})',
+                 'deferred revenue at quarter end': f'Deferred revenue, quarter end ({unit})'}
         notes_out.extend(note + '.' for note in notes)
         lines = [f'Fiscal quarters ending on the dates shown{ref}. Ratios are computed from reported values; n/a means '
                  'not reported.', '', '| Measure | ' + ' | '.join(f'{row["period_end"]} {label(row)}' for row in rows) + ' |',
@@ -1403,24 +1411,18 @@ def render_quarterly(baseline, source_id=None, markdown=False, notes_out=None):
 
 
 def quarterly_markdown(baseline, source_id=None):
-    """The memo's quarterly table: (lines, notes); notes go to the memo's method notes."""
+    """The memo's quarterly table in its own scale: (lines, notes); notes go to the memo's method notes."""
     notes = []
-    text = render_quarterly(baseline, source_id, notes_out=notes)
+    rows = ((baseline or {}).get('quarterly') or {}).get('rows') or []
+    letter, divisor = scale_of(row.get('revenue') for row in rows)
+    text = render_quarterly(baseline, source_id, notes_out=notes, scale=divisor, letter=letter)
     return (text.split('\n') if text else []), notes
 
 
-# Currency symbols for table headers; codes without one print as the code.
-_SYMBOLS = {'USD': '$', 'EUR': '€', 'GBP': '£', 'JPY': '¥'}
-
-
-def _unit_symbol(currency):
-    return _SYMBOLS.get(currency, (currency + ' ') if currency else '')
-
-
-def render_roic(baseline, source_id=None):
+def render_roic(baseline, source_id=None, scale=1e9):
     """The return-on-capital table alone: caption, header, one row per year, then 'ROIC basis:' notes."""
     rows = (baseline or {}).get('rows') or []
-    return '\n'.join(_roic_lines(rows, f' [{source_id}]' if source_id else '')[1:])
+    return '\n'.join(_roic_lines(rows, f' [{source_id}]' if source_id else '', scale)[1:])
 
 
 def _return(row, key):
@@ -1429,7 +1431,7 @@ def _return(row, key):
     return _pct(row.get(key))
 
 
-def _roic_lines(rows, ref):
+def _roic_lines(rows, ref, scale=1e9):
     """Return on invested capital table, Mauboussin and Callahan method."""
     if not any(row.get('nopat') is not None or row.get('invested_capital') is not None for row in rows):
         return []
@@ -1444,8 +1446,8 @@ def _roic_lines(rows, ref):
         turnover = row.get('capital_turnover')
         incremental = row.get('incremental_return')
         status = row.get('incremental_return_status')
-        cells = [row['fiscal_year_end'], _money(row.get('nopat')), _pct(row.get('nopat_margin')),
-                 _money(row.get('invested_capital')), _money(row.get('average_invested_capital')),
+        cells = [row['fiscal_year_end'], _money(row.get('nopat'), scale), _pct(row.get('nopat_margin')),
+                 _money(row.get('invested_capital'), scale), _money(row.get('average_invested_capital'), scale),
                  'n/a' if turnover is None else f'{turnover:.2f}x', _return(row, 'return_on_invested_capital'),
                  _return(row, 'return_excluding_acquired')]
         if adjusted:
@@ -1565,16 +1567,17 @@ def breakdown_markdown(tables, source_id=None, currency='USD'):
         ends = table['fiscal_year_ends']
         years = [end[:4] for end in ends]
         currency = table.get('currency') or currency or 'USD'
-        unit = _unit_symbol(currency)
         members = table['members']
+        letter, scale = scale_of(value for entry in members for value in entry['revenue'] + (entry.get('operating_income') or []))
+        unit = memo_style.Style(currency).unit(letter)
         lines += ['', f'### {titles.get(axis, axis)}', '', f'Fiscal years ending {", ".join(ends)}{ref}.', '']
-        lines += ['| Member | ' + ' | '.join(f'{year} ({unit}B)' for year in years) + ' | ' +
+        lines += ['| Member | ' + ' | '.join(f'{year} ({unit})' for year in years) + ' | ' +
                   ' | '.join(f'Growth {year}' for year in years[:-1]) + ' |',
                   '|---|' + '---:|' * (2 * len(years) - 1)]
         for entry in members:
             growth = (entry['revenue_growth'][:-1] or [None]) if len(years) > 1 else []
             growth = (growth + [None] * (len(years) - 1))[:len(years) - 1]
-            lines.append(f'| {_reader_label(entry["label"])} | ' + ' | '.join(_money(v) for v in entry['revenue']) + ' | ' +
+            lines.append(f'| {_reader_label(entry["label"])} | ' + ' | '.join(_money(v, scale) for v in entry['revenue']) + ' | ' +
                          ' | '.join(_pct(v) for v in growth) + ' |')
         margins = [entry for entry in members if 'gross_margin' in entry or 'operating_margin' in entry]
         if margins:
@@ -1588,10 +1591,10 @@ def breakdown_markdown(tables, source_id=None, currency='USD'):
                         ([_pct(v) for v in entry.get('operating_margin') or [None] * len(years)] if operating else [])
                 lines.append(f'| {_reader_label(entry["label"])} | ' + ' | '.join(cells) + ' |')
             if operating:
-                lines += ['', '| Member | ' + ' | '.join(f'Operating income {year} ({unit}B)' for year in years) + ' |',
+                lines += ['', '| Member | ' + ' | '.join(f'Operating income {year} ({unit})' for year in years) + ' |',
                           '|---|' + '---:|' * len(years)]
                 for entry in margins:
                     if 'operating_income' in entry:
                         lines.append(f'| {_reader_label(entry["label"])} | ' +
-                                     ' | '.join(_money(v) for v in entry['operating_income']) + ' |')
+                                     ' | '.join(_money(v, scale) for v in entry['operating_income']) + ' |')
     return lines, notes

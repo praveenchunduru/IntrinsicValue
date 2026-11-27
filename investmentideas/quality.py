@@ -380,7 +380,8 @@ def _rules(severity):
 # writer and judged by the reviewer as wording (N2); the free checks below count the
 # mechanical ones.
 WRITING_STANDARD = (
-    'Writing standard (rule N2). Open each section with its conclusion. Write short declarative sentences that state '
+    'Writing standard (rule N2), for the eight prose sections only: the first page, computed tables, labels Python '
+    'prints and the method notes are not graded for style. Open each section with its conclusion. Write short declarative sentences that state '
     'the positive claim. Never use "X, not Y" or any other contrast formula, and end no paragraph on a summary '
     'sentence. Use concrete nouns, never consultant abstractions or metaphors. State a limit once, plainly, with '
     'no commentary on what the evidence does or does not prove. Do not restate the first page\'s tables. State a '
@@ -664,7 +665,6 @@ _NARRATION = re.compile(
     r'\b(?:the\s+)?(?:computed\s+)?(?:summary|exhibit|table|panel|diagnostics?|rows?|output)\s+(?:above\s+|below\s+)?'
     r'(?:places?|puts?|shows?|gives?|states?|reports?|records?|lists?|sets?|computes?|explains?)\b'
     r'|\baccording to the (?:computed|summary|exhibit|table)', re.I)
-_CODE_USD = re.compile(r'\bUSD\b')
 # Seven or more digits, with or without thousands separators; citations and links excluded.
 _LONG_NUMBER = re.compile(r'(?<![\w,.])\d{1,3}(?:,\d{3}){2,}(?![\d,])|(?<![\w,.])\d{7,}(?![\d,])')
 
@@ -674,24 +674,13 @@ def _sentences(text):
     return [part.strip() for part in re.split(r'(?<=[.!?])\s+|\n+', clean) if part.strip() and not part.startswith('#')]
 
 
-_USD_SCALED = re.compile(r'\bUSD\s?(-?\d[\d,]*(?:\.\d+)?)\s?(billion|bn|million|mn|mm|trillion)\b', re.I)
-_USD_PLAIN = re.compile(r'\bUSD\s?(-?\d[\d,]*(?:\.\d+)?)')
-
-
-def dollar_amounts(text):
-    """'USD 36.3 billion' as '$36.3B', 'USD 850 million' as '$850M', 'USD 12.40' as '$12.40'; figures unchanged."""
-    def scaled(match):
-        unit = match.group(2).lower()
-        if unit == 'trillion':
-            return f'${match.group(1)} trillion'
-        return f'${match.group(1)}' + ('B' if unit in ('billion', 'bn') else 'M')
-    return _USD_PLAIN.sub(lambda match: f'${match.group(1)}', _USD_SCALED.sub(scaled, text))
+from .memo_style import dollar_amounts, usd_amount_count  # noqa: E402  (shared with the renderer)
 
 
 def style_counts(text, dollars=True):
     """Raw counts of the style rules in a passage, for comparing an edit's replacement with its quote."""
     clean = re.sub(r'\[[^\]\n]*\]|https?://\S+', '', text or '')
-    return {'currency-code': len(_CODE_USD.findall(clean)) if dollars else 0,
+    return {'currency-code': usd_amount_count(clean) if dollars else 0,
             'long-number': len(_LONG_NUMBER.findall(clean)), 'em-dash': clean.count('\u2014'),
             'contrast-formula': len(_ANTITHESIS.findall(clean)), 'exhibit-narration': len(_NARRATION.findall(clean))}
 
@@ -719,7 +708,7 @@ def style_findings(prose, dollars=True):
     """(id, issue, fix, sentences) for each counted style rule the prose breaks."""
     sentences = _sentences(prose)
     found = []
-    usd = [line[:300] for line in sentences if _CODE_USD.search(line)] if dollars else []
+    usd = [line[:300] for line in sentences if usd_amount_count(line)] if dollars else []
     if usd:
         found.append(('currency-code', f'{len(usd)} sentences write "USD" for a dollar filer; the first page names the '
                       'currency once.', 'Write $139 a share, $34.3B or $850M; keep quoted prices as quoted.', usd))
