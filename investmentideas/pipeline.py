@@ -162,6 +162,7 @@ five-year average operating margin (the five-year peak where that average is not
 bull at most the higher of the reported five-year peak and the latest twelve-month operating margin,
 plus 5 points (less for low-margin businesses, as in the year-1 check).
 Use aggregate_ebit_margins mode without gross margins/expenses if only category revenues are supported.
+Where the evidence supports more than one structure, use the most detailed it supports (an operating_model over the reported segments, in gross_profit_less_expenses mode when segment gross profit or cost of revenue is reported), so repeated plans share one structure.
 Omit main scenario growth_rates and, in gross mode, ebit_margins: Python derives them.
 When the evidence includes the matched risk-free rate and implied equity risk premium, a dated
 discount_rate is required (rates.py schema). You supply unlevered_beta, pretax_cost_of_debt and
@@ -4423,15 +4424,17 @@ def _inspected_text(memo, sources, plan, result, ticker=''):
     return _label_unverified(_with_summary(memo,plan,result,sources,ticker),sources)
 
 
-def reader_view(memo, sources, plan, result, ticker=''):
+def reader_view(memo, sources, plan, result, ticker='', state=None):
     """The delivered memo up to the sources: title, first page, prose, valuation detail, reported history, method notes.
 
     The reviewer and the finding check read this same text, so a finding quotes
     what the reader sees (memo layout joined to the review loop, 2026-11-27).
     """
+    state=state or {}
     detail,groups=_valuation_parts(plan,result)
     history,history_notes=_reported_parts(sources)
-    groups=groups+[('Forecast samples',consensus.method_notes(_consensus_record(result),_style(plan,result))),
+    groups=groups+[('Forecast samples',consensus.method_notes(consensus.enrich(_consensus_record(result),state.get('plan_consensus')),
+                                                              _style(plan,result),requested=_requested_samples(state))),
                    ('Reported history',history_notes),
                    ('Review',['Software checks and model reviews do not establish investment truth or forecast accuracy.'])]
     style=_style(plan,result)
@@ -4476,7 +4479,7 @@ def _render(memo, sources, gaps, plan, result, state):
         note+=(f"\n\nReview model: {latest['review_model']}"+
                (f"; author model: {latest['author_model']}" if latest.get('author_model') else '')+
                ('. The same model wrote and reviewed this memo.' if same else '.'))
-    body=reader_view(memo,sources,plan,result,state.get('ticker',''))
+    body=reader_view(memo,sources,plan,result,state.get('ticker',''),state)
     limits=('\n\nRetrieval gaps:\n'+'\n'.join('- '+g for g in gaps)) if gaps else '\n\nNo retrieval gap is recorded.'
     return (body+'\n\n## Sources\n'+refs+limits+
             '\n\n## Review status\n'+state.get('quality_status','in_progress')+'\n\n'+note+'\n')
@@ -4575,18 +4578,7 @@ def _discard_plan_stages(state, checkpoint):
 
 def _consensus_summary(report):
     """The part of the consensus report saved with the valuation."""
-    keys = ('method', 'sector_weight_method', 'requested_samples', 'sample_count', 'plan_used', 'representative_sample',
-            'structure_decision', 'consensus_values', 'sample_value_range', 'dropped', 'fallback',
-            'bases_from_other_samples', 'plan_fingerprint', 'notes')
-    summary = {key: copy.deepcopy(report[key]) for key in keys if key in report}
-    summary['samples'] = [{'sample': row['sample'], 'values': row.get('values'), 'in_consensus': row.get('in_consensus')}
-                          for row in report.get('samples', [])]
-    impact = (report.get('value_impact') or {}).get('groups') or []
-    summary['value_impact'] = [{key: row[key] for key in ('group', 'min_base_value', 'max_base_value', 'range')}
-                               for row in impact]
-    summary['basis'] = ('Each sample is the same plan request sent again in one cache session; the plan valued combines '
-                        'the valid samples input by input (plan-consensus.json). Nothing in it reads the market price.')
-    return summary
+    return consensus.summary(report)
 
 
 def _attach_consensus(state, plan=None, result=None):
@@ -4607,6 +4599,13 @@ def _attach_consensus(state, plan=None, result=None):
         summary['current_values'] = {name: ((result.get('scenarios') or {}).get(name) or {}).get('per_share_value')
                                      for name in SCENARIO_NAMES}
     result['forecast_consensus'] = summary
+
+
+def _requested_samples(state):
+    """How many forecast plan samples the run asked for, from its budget record; None when not recorded."""
+    preflight = state.get('budget_preflight') if isinstance(state.get('budget_preflight'), dict) else {}
+    value = preflight.get('plan_samples')
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _consensus_record(result):
@@ -5727,7 +5726,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                 fixed[f'{iteration}:{memo_key}'].update(cycle=state.get('revision_base',0),
                     remaining_sha256=_digest([issue for issue in issues if issue['id']!='length']))
                 checkpoint()
-        visible=reader_view(memo,state['sources'],plan,result,ticker)
+        visible=reader_view(memo,state['sources'],plan,result,ticker,state)
         (revisions/f'memo-{iteration}.md').write_text(visible,encoding='utf-8')
         # A review can fail after a new draft/model is saved. Keep the reader
         # download consistent with those artifacts even before review succeeds.

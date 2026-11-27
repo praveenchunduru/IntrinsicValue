@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
 import hashlib
 import json
 import math
@@ -91,8 +92,39 @@ def seed(saved_folder, target, *, start):
             raise ValueError('The saved run has no plan to keep')
         state['plan'] = plan
         state['plan_conventions'] = saved.get('plan_conventions')
+        carry_consensus(saved, state)
     core.save(target / 'state.json', state)
     core.save(target / 'run-identity.json', {'id': 'replay'})
+    return state
+
+
+def carry_consensus(saved, state):
+    """Keep the saved run's forecast-sample record with the plan it describes.
+
+    The run re-values the kept plan, and the record is re-attached to that
+    valuation; a plan the saved run corrected after review is marked edited by
+    its fingerprint. A replay from the plan draws new samples and a new record.
+    """
+    if isinstance(saved.get('plan_consensus'), dict):
+        state['plan_consensus'] = copy.deepcopy(saved['plan_consensus'])
+    return state
+
+
+def restore_consensus(folder):
+    """A replay folder's state with the record it lost restored from its origin run; nothing is written.
+
+    Replays made before records were carried (2026-11-27) dropped it. The origin
+    is the folder named in ``replay_origin``; its record is used only when the
+    replay kept that run's plan.
+    """
+    state = json.loads((Path(folder) / 'state.json').read_text())
+    origin = state.get('replay_origin') or {}
+    if state.get('plan_consensus') or origin.get('from') not in ('draft', 'review'):
+        return state
+    saved = json.loads((Path(origin['folder']) / 'state.json').read_text())
+    carry_consensus(saved, state)
+    if state.get('plan_consensus') and state.get('valuation') is not None:
+        pipeline._attach_consensus(state)
     return state
 
 

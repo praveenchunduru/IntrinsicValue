@@ -227,7 +227,7 @@ class LockTests(unittest.TestCase):
         plan, report = consensus.consensus_plan(copy.deepcopy(plans), valuations=[self.result(p) for p in plans])
         consensus.lock_consensus(plan, report, lambda item: (self.result(item), None), plans)
         self.assertEqual(consensus.method_note(report, 'USD'),
-                         'The forecast averages three forecasts written independently from the same evidence, input by '
+                         'The forecast averages three samples of the same forecast request, input by '
                          'input, with the median of their industry weights for the beta; their base values ranged from '
                          '70.00 to 80.00 USD a share.')
 
@@ -445,7 +445,7 @@ class PipelineSamplingTests(unittest.TestCase):
         self.assertIn('was left out', report['method_note'])
         style = pipeline.memo_style.Style('USD')
         notes = consensus.method_notes(state['valuation']['forecast_consensus'], style)
-        self.assertIn('One of the three forecasts requested failed validation', notes[0])
+        self.assertIn('One of the three samples requested failed validation', notes[0])
         self.assertIn('averaged year by year', notes[0])
         # Its prompt stayed the shared one: no repair reason was written into the plan prompt.
         self.assertNotIn('plan_repair_reasons', state)
@@ -542,19 +542,23 @@ class ReaderTests(unittest.TestCase):
 
     def record(self, **extra):
         record = {'method': 'mean', 'sector_weight_method': 'median', 'requested_samples': 3, 'sample_count': 3,
-                  'plan_used': 'consensus', 'structure_decision': {'group': [1, 2, 3], 'excluded': []}, 'dropped': [],
-                  'samples': [{'sample': n, 'in_consensus': True, 'values': {'base': value}}
-                              for n, value in ((1, 354.12), (2, 387.55), (3, 398.24))]}
+                  'plan_used': 'consensus', 'representative_sample': 2, 'consensus_values': {'base': 371.0},
+                  'structure_decision': {'group': [1, 2, 3], 'excluded': [], 'structure': {
+                      'earnings_mode': 'gross_profit_less_expenses', 'components': ['cloud', 'devices'],
+                      'horizon': [10, 10, 10], 'discount_rate': True, 'beta_calculation': 'bottom_up_sector_weighted'}},
+                  'dropped': [],
+                  'samples': [{'sample': n, 'in_consensus': True, 'values': {'base': value}, 'distance_to_median_paths': d}
+                              for n, value, d in ((1, 354.12, .03), (2, 387.55, .01), (3, 398.24, .02))]}
         record.update(extra)
         return record
 
     def test_first_page_sentence_in_the_memo_number_style(self):
         style = pipeline.memo_style.Style('USD')
         self.assertEqual(consensus.first_page_sentence(self.record(), style),
-                         'The base case averages three forecasts written from the same evidence; their values ranged '
+                         'The base case averages three samples of the same forecast request; their values ranged '
                          'from $354 to $398.')
         edited = consensus.first_page_sentence(self.record(edited_after_consensus=True), style)
-        self.assertEqual(edited, 'The forecast began as the average of three forecasts written from the same evidence, '
+        self.assertEqual(edited, 'The forecast began as the average of three samples of the same forecast request, '
                                  'valued at $354 to $398, and was revised after review.')
         for record in (None, self.record(plan_used='representative_sample_fallback'),
                        self.record(plan_used='single_valid_sample', structure_decision={'group': [1]})):
@@ -565,9 +569,12 @@ class ReaderTests(unittest.TestCase):
         notes = consensus.method_notes(self.record(dropped=[{'sample': 4, 'reason': 'x'}], requested_samples=4), style)
         self.assertEqual(len(notes), 1)
         # Changed 2026-11-27 (memo audit): the note counts the forecasts combined against those written.
-        self.assertIn('combines three of the four forecasts', notes[0])
+        self.assertIn('combines three of the four samples of the same forecast request', notes[0])
+        self.assertIn('Segment growth, gross margins, expense shares, sales-to-capital and tax rates are averaged', notes[0])
         self.assertIn('industry weights behind the beta take the median', notes[0])
-        self.assertIn('One of the four forecasts requested failed validation', notes[0])
+        self.assertIn('One of the four samples requested failed validation', notes[0])
+        self.assertIn('come from sample 2, the one closest to the per-year median revenue and EBIT paths, whose own base '
+                      'value was $388 against $371 for the combined plan.', notes[0])
         self.assertIn('$354 to $398 a share', notes[0])
         self.assertEqual(consensus.method_notes(None, style), [])
         self.assertEqual(consensus.method_notes({'requested_samples': 1}, style), [])
@@ -585,7 +592,7 @@ class CorrectionTests(unittest.TestCase):
         folder, state = self.run_plan(Transport([taxed(.20), taxed(.22), taxed(.30)]), 3)
         plan, result = state['plan'], state['valuation']
         summary = pipeline.computed_summary(plan, result)
-        self.assertIn('The base case averages three forecasts written from the same evidence; their values ranged from',
+        self.assertIn('The base case averages three samples of the same forecast request; their values ranged from',
                       summary)
         corrected = copy.deepcopy(plan)
         corrected['scenarios']['base']['tax_rate'] = .27
@@ -606,8 +613,143 @@ class CorrectionTests(unittest.TestCase):
         # A run saved before the record existed shows neither.
         result.pop('forecast_consensus')
         old = pipeline._render('# Prose\nText [S1].\n', state['sources'], [], plan, result, {'ticker': 'AAPL'})
-        self.assertNotIn('forecasts written from the same evidence', old)
+        self.assertNotIn('samples of the same forecast request', old)
         self.assertNotIn('Forecast samples', old)
+
+
+def consolidated(growth=.05, margin=.3, tax=.2):
+    """A consolidated proposal: growth and EBIT margins in every scenario, no operating model."""
+    plan = proposal(tax=tax)
+    plan.pop('operating_model')
+    for scenario in plan['scenarios'].values():
+        scenario.update(growth_rates=[growth] * YEARS, ebit_margins=[margin] * YEARS)
+    return plan
+
+
+class AuditTextTests(unittest.TestCase):
+    """The memo audits of 2026-11-27: the note describes the plan valued, honestly, with every sample's value."""
+
+    style = pipeline.memo_style.Style('USD')
+
+    def coca_cola(self):
+        plans = [consolidated(growth=.04), consolidated(growth=.06), proposal(names=('concentrate_operations',
+                                                                                     'finished_product_operations'))]
+        valuations = [{'scenarios': {name: {'per_share_value': value} for name in consensus.SCENARIOS}}
+                      for value in (42.71, 42.91, 45.46)]
+        plan, report = consensus.consensus_plan(copy.deepcopy(plans), valuations=valuations)
+        consensus.finish_report(report, {'scenarios': {name: {'per_share_value': 42.86} for name in consensus.SCENARIOS}},
+                                'consensus')
+        report.update(requested_samples=3, dropped=[])
+        return plan, consensus.summary(report)
+
+    def test_the_note_lists_only_the_inputs_the_combined_structure_has(self):
+        _, record = self.coca_cola()
+        note = consensus.method_notes(record, self.style)[0]
+        self.assertIn('Growth, EBIT margins, sales-to-capital and tax rates are averaged year by year.', note)
+        self.assertNotIn('gross margins', note)
+        self.assertNotIn('expense shares', note)
+
+    def test_the_left_out_sample_names_its_difference_and_its_value(self):
+        _, record = self.coca_cola()
+        note = consensus.method_notes(record, self.style)[0]
+        self.assertIn('Sample 3 modelled gross profit less expenses by segment (concentrate operations and finished '
+                      'product operations), gave $45.5, and was left out.', note)
+        self.assertNotIn('segments or horizon', note)
+        self.assertEqual(consensus.first_page_sentence(record, self.style),
+                         'The base case averages two samples of the same forecast request; their values ranged from '
+                         '$42.7 to $42.9; a third, structured differently, gave $45.5 and was left out.')
+
+    def test_two_samples_tie_and_the_lower_number_is_used_and_named(self):
+        plan, record = self.coca_cola()
+        self.assertEqual(record['representative_sample'], 1)
+        note = consensus.method_notes(record, self.style)[0]
+        self.assertIn('Samples 1 and 2 tied for closest to the per-year median revenue and EBIT paths; the rationales and '
+                      'named cases come from sample 1, whose own base value was $42.7 against $42.9 for the combined plan.',
+                      note)
+        self.assertNotIn('written independently', note)
+
+    def test_the_structure_choice_does_not_depend_on_sample_order(self):
+        plans = [consolidated(growth=.04), proposal(), consolidated(growth=.06)]
+        for order in ([0, 1, 2], [1, 0, 2], [2, 1, 0], [1, 2, 0]):
+            plan, report = consensus.consensus_plan([copy.deepcopy(plans[i]) for i in order], numbers=[i + 1 for i in order])
+            self.assertEqual(sorted(report['structure_decision']['group']), [1, 3])
+            self.assertEqual(report['structure_decision']['excluded'], [2])
+            self.assertEqual(plan['scenarios']['base']['growth_rates'], [.05] * YEARS)
+        self.assertIn('so repeated plans share one structure', pipeline.UNDERWRITING_GUIDANCE)
+
+    def test_a_run_that_asked_for_samples_but_has_no_record_says_so(self):
+        note = consensus.method_notes(None, self.style, requested=3)
+        self.assertEqual(note, ['This run requested three samples of the same forecast request, but the record of those '
+                                'samples is not available for this valuation, so their values and how they were combined '
+                                'are not shown.'])
+        self.assertEqual(consensus.method_notes(None, self.style, requested=1), [])
+        self.assertEqual(consensus.method_notes(None, self.style), [])
+
+    def test_revalue_carries_the_record_and_marks_an_edit(self):
+        plan = proposal()
+        record = {'plan_fingerprint': consensus.fingerprint(plan), 'plan_used': 'consensus'}
+        same = consensus.carry({'forecast_consensus': record}, plan, {'scenarios': {}})
+        self.assertNotIn('edited_after_consensus', same['forecast_consensus'])
+        edited = copy.deepcopy(plan)
+        edited['scenarios']['base']['tax_rate'] = .3
+        moved = consensus.carry({'forecast_consensus': record}, edited,
+                                {'scenarios': {name: {'per_share_value': 10.0} for name in consensus.SCENARIOS}})
+        self.assertTrue(moved['forecast_consensus']['edited_after_consensus'])
+        self.assertEqual(moved['forecast_consensus']['current_values']['base'], 10.0)
+        self.assertEqual(consensus.carry({}, plan, {'scenarios': {}}), {'scenarios': {}})
+
+
+class RevalueRecordTests(unittest.TestCase):
+    def test_the_revalue_command_keeps_the_saved_record(self):
+        from investmentideas import __main__ as cli
+        plan = sampled_plan()
+        with tempfile.TemporaryDirectory() as directory:
+            saved = Path(directory) / 'run'
+            saved.mkdir()
+            (saved / 'assumptions.json').write_text(json.dumps(plan))
+            record = {'plan_used': 'consensus', 'plan_fingerprint': consensus.fingerprint(plan), 'samples': []}
+            (saved / 'valuation.json').write_text(json.dumps({'forecast_consensus': record}))
+            out = Path(directory) / 'out'
+            with patch('sys.argv', ['investmentideas', '--revalue', str(saved / 'assumptions.json'), '--output', str(out)]), \
+                    patch('builtins.print'):
+                cli.main()
+            carried = json.loads((out / 'valuation.json').read_text())['forecast_consensus']
+            self.assertEqual(carried['plan_fingerprint'], record['plan_fingerprint'])
+            self.assertNotIn('edited_after_consensus', carried)
+
+
+class ReplayRecordTests(unittest.TestCase):
+    """tools/replay.py keeps the forecast-sample record in every mode that keeps the saved plan."""
+
+    setUp = PipelineSamplingTests.setUp
+    tearDown = PipelineSamplingTests.tearDown
+    run_plan = PipelineSamplingTests.run_plan
+
+    def test_draft_and_review_replays_keep_the_record_and_restore_restores_it(self):
+        folder, state = self.run_plan(Transport([taxed(.20), taxed(.22), taxed(.30)]), 3)
+        state['current_memo'] = '# Prose\nText [S1].\n'
+        core.save(folder / 'state.json', state)
+        for start in ('draft', 'review'):
+            target = Path(self.directory.name) / f'replay-{start}'
+            seeded = sampling.replay.seed(folder, target, start=start)
+            self.assertEqual(seeded['plan_consensus'], state['plan_consensus'])
+        self.assertNotIn('plan_consensus', sampling.replay.seed(folder, Path(self.directory.name) / 'replay-plan',
+                                                                 start='plan'))
+        # A replay saved before records were carried: restored from its origin at render time, nothing written.
+        lost = Path(self.directory.name) / 'lost'
+        lost.mkdir()
+        old = copy.deepcopy(state)
+        old.pop('plan_consensus')
+        old['valuation'].pop('forecast_consensus')
+        old['replay_origin'] = {'folder': str(folder), 'from': 'review'}
+        core.save(lost / 'state.json', old)
+        restored = sampling.replay.restore_consensus(lost)
+        self.assertEqual(restored['plan_consensus'], state['plan_consensus'])
+        self.assertIn('forecast_consensus', restored['valuation'])
+        self.assertNotIn('plan_consensus', json.loads((lost / 'state.json').read_text()))
+        memo = pipeline._render(old['current_memo'], old['sources'], [], old['plan'], old['valuation'],
+                                {**old, 'budget_preflight': {'plan_samples': 3}})
+        self.assertIn('the record of those samples is not available', memo)
 
 
 class SettingsTests(unittest.TestCase):

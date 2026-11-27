@@ -274,7 +274,7 @@ class ReviewerViewTests(unittest.TestCase):
     def test_the_loop_builds_the_reviewer_copy_with_the_reader_view(self):
         import inspect
         source = inspect.getsource(pipeline._run)
-        self.assertIn("visible=reader_view(memo,state['sources'],plan,result,ticker)", source)
+        self.assertIn("visible=reader_view(memo,state['sources'],plan,result,ticker,state)", source)
         self.assertNotIn('valuation_section(plan,result)+', source.split('visible=')[1].split('\n')[0])
 
     def test_prompts_carry_the_writing_standard(self):
