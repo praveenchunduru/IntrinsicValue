@@ -30,6 +30,7 @@ from .research import MAX_DOCUMENT_BYTES, gather_primary, inline_breakdown_facts
 from .evidence_tables import (breakdown_tables, filing_supplement_for, historical_baseline, render_baseline, render_roic,
                               render_breakdowns)
 from .macro import gather_us_calibration
+from . import country_risk
 from .market_beta import gather_weekly_beta
 from .prompt_context import valuation_context as render_valuation_context
 from .primary_debt import classify_primary_debt
@@ -1252,6 +1253,9 @@ def _evidence_context(sources):
             # The public interface already bounds this focused input at 100 KB.
             # Include all accepted text, including corrections near its end.
             row['data']=copy.deepcopy(data)
+        elif isinstance(data, dict) and data.get('dataset') in (country_risk.COUNTRY_TABLE, country_risk.REGIONAL_TABLE):
+            # Python applies these tables in one panel row; the country rows stay archived.
+            row['data'] = country_risk.prompt_summary(data)
         elif isinstance(data, dict) and (source.get('kind') in {'financial_timeseries','sec_facts','macro_calibration'} or 'excerpts' in data or 'inline_facts' in data):
             # Preserve all structured financial rows; do not truncate JSON midway.
             row['data'] = copy.deepcopy(core.prompt_companyfacts(data))
@@ -1290,7 +1294,7 @@ def _workflow_contract():
             'review':_digest(REVIEW_SCHEMA), 'sections':_digest(SECTIONS),
             'implementation':_digest({name:hashlib.sha256((root/name).read_bytes()).hexdigest()
                 for name in ('pipeline.py','prompt_context.py','quality.py','valuation.py','inputs.py','operating.py','rates.py','primary_debt.py','companyfacts.py',
-                             'evidence_tables.py','research.py')
+                             'evidence_tables.py','research.py','country_risk.py')
                 if (root/name).is_file()})}
 
 
@@ -1989,6 +1993,12 @@ def _lock_plan(plan, sources, *, apply_conventions=True):
         locked['cost_path_reference']=costs
     else:
         locked.pop('cost_path_reference',None)
+    # Damodaran's revenue-weighted country risk premium: one labelled panel row, never the house rate.
+    country=country_risk.country_risk_reference(sources,reported)
+    if country:
+        locked['country_risk_reference']=country
+    else:
+        locked.pop('country_risk_reference',None)
     if 'entry_policy' in locked:
         # Valuation research only (settled owner decision): no entry thresholds.
         changes.append({'field':'entry_policy','previous':locked.pop('entry_policy'),'pinned':None,'source_refs':[],
@@ -2592,6 +2602,9 @@ def _market_consistency_exhibits(result, currency):
             lines.append(f'| {row["label"]} | {value} | {change} | {status} |')
         if panel.get('largest_meaningful_step'):
             lines += ['', f'Largest convention step: {panel["largest_meaningful_step"].replace("_"," ")}. Rows carry no probability and are never tuned to the price.']
+        note=country_risk.render_note(panel)
+        if note:
+            lines += ['', note]
     checks=result.get('beta_cross_checks') or []
     if checks:
         lines += ['', '| Beta cross-check | Unlevered beta | Initial discount rate | Base value | Change |', '|---|---:|---:|---:|---:|']
@@ -2983,7 +2996,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         state['gaps'].extend(gaps)
         for source in primary:
             ingest(source)
-        calibration, calibration_gaps = gather_us_calibration(_fetch_calibration_bytes)
+        calibration, calibration_gaps = gather_us_calibration(_fetch_calibration_bytes, country_risk=True)
         for source in calibration:
             ingest(source)
         state['gaps'].extend(gap['reason'] for gap in calibration_gaps)

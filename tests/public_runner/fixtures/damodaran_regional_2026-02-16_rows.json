@@ -1,0 +1,398 @@
+{
+ "source": "https://pages.stern.nyu.edu/~adamodar/pc/datasets/ctryprem.xlsx, sheet \"Regional Weighted Averages\", downloaded 2026-11-26; real country rows for a subset of countries. Region totals are recomputed over this subset by the test, so they are not his published regional averages.",
+ "modified": "2026-02-16T22:04:55Z",
+ "gdp_header": "GDP (in millions) in 2024",
+ "region_total_labels": {
+  "Africa": "Africa",
+  "Asia": "Asia",
+  "Australia & New Zealand": "Australia & New Zealand",
+  "Caribbean": "Caribbean",
+  "Central and South America": "Central and South America",
+  "Eastern Europe & Russia": "Eastern Europe",
+  "Middle East": "Middle East",
+  "North America": "North America",
+  "Western Europe": "Western Europe"
+ },
+ "rows": [
+  {
+   "country": "Egypt",
+   "gdp_millions": 389059.9110035657,
+   "rating": "Caa1",
+   "default_spread": 0.06372478453347744,
+   "equity_risk_premium": 0.13937694320020105,
+   "country_risk_premium": 0.09707694320020104,
+   "tax_rate": 0.225,
+   "region": "Africa"
+  },
+  {
+   "country": "Nigeria",
+   "gdp_millions": 252261.88014115053,
+   "rating": "B3",
+   "default_spread": 0.05523480540284173,
+   "equity_risk_premium": 0.1264434946547197,
+   "country_risk_premium": 0.08414349465471971,
+   "tax_rate": 0.3,
+   "region": "Africa"
+  },
+  {
+   "country": "South Africa",
+   "gdp_millions": 401144.99837358523,
+   "rating": "Ba2",
+   "default_spread": 0.025569819499326372,
+   "equity_risk_premium": 0.08125250385462612,
+   "country_risk_premium": 0.038952503854626126,
+   "tax_rate": 0.27,
+   "region": "Africa"
+  },
+  {
+   "country": "China",
+   "gdp_millions": 18743803.170827165,
+   "rating": "A1",
+   "default_spread": 0.005992926445154621,
+   "equity_risk_premium": 0.05142949309092801,
+   "country_risk_premium": 0.009129493090928,
+   "tax_rate": 0.25,
+   "region": "Asia"
+  },
+  {
+   "country": "Hong Kong",
+   "gdp_millions": 406863.39648734155,
+   "rating": "Aa3",
+   "default_spread": 0.005093987478381426,
+   "equity_risk_premium": 0.0500600691272888,
+   "country_risk_premium": 0.007760069127288798,
+   "tax_rate": 0.165,
+   "region": "Asia"
+  },
+  {
+   "country": "India",
+   "gdp_millions": 3909891.5338580837,
+   "rating": "Baa3",
+   "default_spread": 0.018677954087398564,
+   "equity_risk_premium": 0.07075358680005894,
+   "country_risk_premium": 0.028453586800058932,
+   "tax_rate": 0.3,
+   "region": "Asia"
+  },
+  {
+   "country": "Japan",
+   "gdp_millions": 4027597.5235505826,
+   "rating": "A1",
+   "default_spread": 0.005992926445154621,
+   "equity_risk_premium": 0.05142949309092801,
+   "country_risk_premium": 0.009129493090928,
+   "tax_rate": 0.2974,
+   "region": "Asia"
+  },
+  {
+   "country": "Korea",
+   "gdp_millions": 1875388.209406803,
+   "rating": "Aa2",
+   "default_spread": 0.004195048511608233,
+   "equity_risk_premium": 0.048690645163649605,
+   "country_risk_premium": 0.0063906451636495986,
+   "tax_rate": 0.264,
+   "region": "Asia"
+  },
+  {
+   "country": "Macao",
+   "gdp_millions": 49467.258923324385,
+   "rating": "Aa3",
+   "default_spread": 0.005093987478381426,
+   "equity_risk_premium": 0.0500600691272888,
+   "country_risk_premium": 0.007760069127288798,
+   "tax_rate": 0.25,
+   "region": "Asia"
+  },
+  {
+   "country": "Singapore",
+   "gdp_millions": 547386.6458918466,
+   "rating": "Aaa",
+   "default_spread": 0.0,
+   "equity_risk_premium": 0.042300000000000004,
+   "country_risk_premium": 0.0,
+   "tax_rate": 0.17,
+   "region": "Asia"
+  },
+  {
+   "country": "Taiwan",
+   "gdp_millions": 791610.0,
+   "rating": "Aa3",
+   "default_spread": 0.005093987478381426,
+   "equity_risk_premium": 0.0500600691272888,
+   "country_risk_premium": 0.007760069127288798,
+   "tax_rate": 0.2,
+   "region": "Asia"
+  },
+  {
+   "country": "Vietnam",
+   "gdp_millions": 476388.23030717525,
+   "rating": "Ba2",
+   "default_spread": 0.025569819499326372,
+   "equity_risk_premium": 0.08125250385462612,
+   "country_risk_premium": 0.038952503854626126,
+   "tax_rate": 0.2,
+   "region": "Asia"
+  },
+  {
+   "country": "Australia",
+   "gdp_millions": 1757022.4516528314,
+   "rating": "Aaa",
+   "default_spread": 0.0,
+   "equity_risk_premium": 0.042300000000000004,
+   "country_risk_premium": 0.0,
+   "tax_rate": 0.3,
+   "region": "Australia & New Zealand"
+  },
+  {
+   "country": "New Zealand",
+   "gdp_millions": 260172.3850976165,
+   "rating": "Aaa",
+   "default_spread": 0.0,
+   "equity_risk_premium": 0.042300000000000004,
+   "country_risk_premium": 0.0,
+   "tax_rate": 0.28,
+   "region": "Australia & New Zealand"
+  },
+  {
+   "country": "Bahamas",
+   "gdp_millions": 15832.8,
+   "rating": "B1",
+   "default_spread": 0.038254847141570306,
+   "equity_risk_premium": 0.10057659756375704,
+   "country_risk_premium": 0.05827659756375704,
+   "tax_rate": 0.0,
+   "region": "Caribbean"
+  },
+  {
+   "country": "Jamaica",
+   "gdp_millions": 22014.39708976886,
+   "rating": "Ba3",
+   "default_spread": 0.030563924870288552,
+   "equity_risk_premium": 0.0888604147637328,
+   "country_risk_premium": 0.04656041476373279,
+   "tax_rate": 0.25,
+   "region": "Caribbean"
+  },
+  {
+   "country": "Argentina",
+   "gdp_millions": 638365.4553400404,
+   "rating": "Caa1",
+   "default_spread": 0.06372478453347744,
+   "equity_risk_premium": 0.13937694320020105,
+   "country_risk_premium": 0.09707694320020104,
+   "tax_rate": 0.35,
+   "region": "Central and South America"
+  },
+  {
+   "country": "Brazil",
+   "gdp_millions": 2185821.6489438605,
+   "rating": "Ba1",
+   "default_spread": 0.0212748888802989,
+   "equity_risk_premium": 0.0747097004727944,
+   "country_risk_premium": 0.032409700472794394,
+   "tax_rate": 0.34,
+   "region": "Central and South America"
+  },
+  {
+   "country": "Chile",
+   "gdp_millions": 330267.1373715923,
+   "rating": "A2",
+   "default_spread": 0.0071915117341855425,
+   "equity_risk_premium": 0.0532553917091136,
+   "country_risk_premium": 0.010955391709113598,
+   "tax_rate": 0.27,
+   "region": "Central and South America"
+  },
+  {
+   "country": "Mexico",
+   "gdp_millions": 1856365.616165938,
+   "rating": "Baa2",
+   "default_spread": 0.016180901401917473,
+   "equity_risk_premium": 0.0669496313455056,
+   "country_risk_premium": 0.024649631345505598,
+   "tax_rate": 0.3,
+   "region": "Central and South America"
+  },
+  {
+   "country": "Czech Republic",
+   "gdp_millions": 347034.06292847905,
+   "rating": "Aa3",
+   "default_spread": 0.005093987478381426,
+   "equity_risk_premium": 0.0500600691272888,
+   "country_risk_premium": 0.007760069127288798,
+   "tax_rate": 0.21,
+   "region": "Eastern Europe & Russia"
+  },
+  {
+   "country": "Poland",
+   "gdp_millions": 917767.1061467614,
+   "rating": "A2",
+   "default_spread": 0.0071915117341855425,
+   "equity_risk_premium": 0.0532553917091136,
+   "country_risk_premium": 0.010955391709113598,
+   "tax_rate": 0.19,
+   "region": "Eastern Europe & Russia"
+  },
+  {
+   "country": "Romania",
+   "gdp_millions": 382564.21798886574,
+   "rating": "Baa3",
+   "default_spread": 0.018677954087398564,
+   "equity_risk_premium": 0.07075358680005894,
+   "country_risk_premium": 0.028453586800058932,
+   "tax_rate": 0.16,
+   "region": "Eastern Europe & Russia"
+  },
+  {
+   "country": "Abu Dhabi",
+   "gdp_millions": 310000.0,
+   "rating": "Aa2",
+   "default_spread": 0.004195048511608233,
+   "equity_risk_premium": 0.048690645163649605,
+   "country_risk_premium": 0.0063906451636495986,
+   "tax_rate": 0.09,
+   "region": "Middle East"
+  },
+  {
+   "country": "Israel",
+   "gdp_millions": 540379.921261681,
+   "rating": "Baa1",
+   "default_spread": 0.013583966609017133,
+   "equity_risk_premium": 0.06299351767277013,
+   "country_risk_premium": 0.020693517672770126,
+   "tax_rate": 0.23,
+   "region": "Middle East"
+  },
+  {
+   "country": "Saudi Arabia",
+   "gdp_millions": 1239804.5333333332,
+   "rating": "Aa3",
+   "default_spread": 0.005093987478381426,
+   "equity_risk_premium": 0.0500600691272888,
+   "country_risk_premium": 0.007760069127288798,
+   "tax_rate": 0.2,
+   "region": "Middle East"
+  },
+  {
+   "country": "United Arab Emirates",
+   "gdp_millions": 552324.8468345815,
+   "rating": "Aa2",
+   "default_spread": 0.004195048511608233,
+   "equity_risk_premium": 0.048690645163649605,
+   "country_risk_premium": 0.0063906451636495986,
+   "tax_rate": 0.09,
+   "region": "Middle East"
+  },
+  {
+   "country": "Canada",
+   "gdp_millions": 2243636.8266337616,
+   "rating": "Aaa",
+   "default_spread": 0.0,
+   "equity_risk_premium": 0.042300000000000004,
+   "country_risk_premium": 0.0,
+   "tax_rate": 0.2614,
+   "region": "North America"
+  },
+  {
+   "country": "United States",
+   "gdp_millions": 28750956.1307312,
+   "rating": "Aa1",
+   "default_spread": 0.002333679169992019,
+   "equity_risk_premium": 0.04463367916999202,
+   "country_risk_premium": 0.002333679169992019,
+   "tax_rate": 0.25,
+   "region": "North America"
+  },
+  {
+   "country": "France",
+   "gdp_millions": 3160442.622465078,
+   "rating": "Aa3",
+   "default_spread": 0.005093987478381426,
+   "equity_risk_premium": 0.0500600691272888,
+   "country_risk_premium": 0.007760069127288798,
+   "tax_rate": 0.2583,
+   "region": "Western Europe"
+  },
+  {
+   "country": "Germany",
+   "gdp_millions": 4685592.5778046865,
+   "rating": "Aaa",
+   "default_spread": 0.0,
+   "equity_risk_premium": 0.042300000000000004,
+   "country_risk_premium": 0.0,
+   "tax_rate": 0.2993,
+   "region": "Western Europe"
+  },
+  {
+   "country": "Ireland",
+   "gdp_millions": 609157.4597472054,
+   "rating": "Aa3",
+   "default_spread": 0.005093987478381426,
+   "equity_risk_premium": 0.0500600691272888,
+   "country_risk_premium": 0.007760069127288798,
+   "tax_rate": 0.125,
+   "region": "Western Europe"
+  },
+  {
+   "country": "Italy",
+   "gdp_millions": 2380825.077243593,
+   "rating": "Baa2",
+   "default_spread": 0.016180901401917473,
+   "equity_risk_premium": 0.0669496313455056,
+   "country_risk_premium": 0.024649631345505598,
+   "tax_rate": 0.2781,
+   "region": "Western Europe"
+  },
+  {
+   "country": "Netherlands",
+   "gdp_millions": 1214927.698572656,
+   "rating": "Aaa",
+   "default_spread": 0.0,
+   "equity_risk_premium": 0.042300000000000004,
+   "country_risk_premium": 0.0,
+   "tax_rate": 0.258,
+   "region": "Western Europe"
+  },
+  {
+   "country": "Spain",
+   "gdp_millions": 1725671.6527421873,
+   "rating": "A3",
+   "default_spread": 0.010187974956762852,
+   "equity_risk_premium": 0.0578201382545776,
+   "country_risk_premium": 0.015520138254577596,
+   "tax_rate": 0.25,
+   "region": "Western Europe"
+  },
+  {
+   "country": "Switzerland",
+   "gdp_millions": 936564.1980485158,
+   "rating": "Aaa",
+   "default_spread": 0.0,
+   "equity_risk_premium": 0.042300000000000004,
+   "country_risk_premium": 0.0,
+   "tax_rate": 0.1961,
+   "region": "Western Europe"
+  },
+  {
+   "country": "Turkey",
+   "gdp_millions": 1359123.7687741222,
+   "rating": "B1",
+   "default_spread": 0.038254847141570306,
+   "equity_risk_premium": 0.10057659756375704,
+   "country_risk_premium": 0.05827659756375704,
+   "tax_rate": 0.25,
+   "region": "Western Europe"
+  },
+  {
+   "country": "United Kingdom",
+   "gdp_millions": 3686033.0444821278,
+   "rating": "Aa3",
+   "default_spread": 0.005093987478381426,
+   "equity_risk_premium": 0.0500600691272888,
+   "country_risk_premium": 0.007760069127288798,
+   "tax_rate": 0.25,
+   "region": "Western Europe"
+  }
+ ]
+}
