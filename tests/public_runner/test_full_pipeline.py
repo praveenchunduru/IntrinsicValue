@@ -995,7 +995,7 @@ class ComputedMemoExhibitTests(unittest.TestCase):
         self.assertIn('| 15.6 |',text)  # Remaining1.48bn / remaining95m shares.
         self.assertIn('| 5.0 |',text)
         self.assertIn('Entry earnings are the first forecast year',text)
-        self.assertIn('A historical-price test compares with current underwriting',text)
+        self.assertIn('A historical case compares that price with today\'s house value',text)
 
     def test_assumptions_label_follows_canonical_lease_allocation_and_selected_asset_policy(self):
         from tests.public_runner.test_inputs import sources as primary_sources, fact

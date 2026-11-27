@@ -123,7 +123,7 @@ class LayoutTests(unittest.TestCase):
         self.assertNotIn('USD', page)
         self.assertNotRegex(page, LONG_NUMBER)
         # Method caveats live in the method notes.
-        for caveat in ('stress cases without probabilities', 'stylized', 'never added together'):
+        for caveat in ('stress cases without probabilities', 'never added together'):
             self.assertNotIn(caveat, page)
 
     def test_python_text_has_no_currency_codes_long_numbers_or_contrast_formulas(self):
@@ -575,8 +575,11 @@ class RateTestWordingTests(unittest.TestCase):
         self.assertIn(pipeline.RATE_TEST_RULE, rewritten)
 
     def test_notes_name_what_each_row_changes(self):
-        self.assertIn('keeps R&D expensed in the continuing value',
-                      pipeline.PANEL_NOTES['terminal_reinvestment_continues_forecast'])
+        style = memo_style.Style('USD')
+        with_rnd = {'scenarios': {'base': {'terminal_rnd_net_investment': 26e9, 'cashflows': []}}}
+        self.assertIn('keeps R&D expensed in the continuing value', pipeline._reinvestment_row_note(with_rnd, style))
+        without = {'scenarios': {'base': {'terminal_rnd_net_investment': 0.0, 'cashflows': []}}}
+        self.assertNotIn('R&D', pipeline._reinvestment_row_note(without, style))
         follows = {'scenarios': {'base': {'search_floor': .005}}}
         self.assertTrue(pipeline._implied_follows(follows))
         self.assertFalse(pipeline._implied_follows({'scenarios': {'base': {'search_floor': .0495}}}))
