@@ -1758,32 +1758,21 @@ SEGMENT_SUM_GAP = .01
 
 
 def segment_operating_note(table, consolidated=None, currency='USD'):
-    """A note when segment operating income does not add up to consolidated operating income, or None.
+    """A caution beside segment operating margins, or None when the table has no segment operating income.
 
-    Apple's segments earned $212.5 billion in fiscal 2026 against $158.1 billion
-    consolidated: its segment measure leaves out R&D and corporate costs. Without
-    the consolidated figure the note gives the segment sum alone.
-    ``consolidated`` maps fiscal year ends to consolidated operating income.
+    A segment's operating income is the company's own segment measure. Apple's
+    leaves out R&D and corporate costs, so its segment margins of 43-47% sit beside
+    a consolidated 33%. The note states no sum and no cause: a live Coca-Cola review
+    (2026-11-27) rejected a note that added the segment rows and called the
+    difference unallocated costs, which the filing facts do not establish and the
+    breakdown's own basis warns against. ``consolidated`` and ``currency`` are kept
+    for callers and not used.
     """
-    ends = (table or {}).get('fiscal_year_ends') or []
     members = [entry for entry in (table or {}).get('members') or [] if ' within ' not in (entry.get('member') or '')]
-    if not ends or not members:
+    if not members or not any((entry.get('operating_income') or [None])[0] is not None for entry in members):
         return None
-    values = [(entry.get('operating_income') or [None])[0] for entry in members]
-    if any(value is None for value in values):
-        return None
-    total = sum(values)
-    style = memo_style.Style(currency)
-    whole = (consolidated or {}).get(ends[0])
-    if isinstance(whole, (int, float)) and whole:
-        if abs(total - whole) <= SEGMENT_SUM_GAP * abs(whole):
-            return None
-        return (f'Segment operating income sums to {style.amount(total)} for the fiscal year ending {ends[0]}, against '
-                f'consolidated operating income of {style.amount(whole)}: the segment measure leaves out costs the '
-                'company does not allocate to segments, so segment margins are not comparable with the consolidated margin.')
-    return (f'Segment operating income sums to {style.amount(total)} for the fiscal year ending {ends[0]}. The segment '
-            'measure can leave out costs the company does not allocate to segments; compare it with consolidated '
-            'operating income in the annual results.')
+    return ('Segment operating income is each segment\'s own reported measure. It can leave out costs the company '
+            'records outside its segments, so a segment margin is not comparable with the consolidated operating margin.')
 
 
 def breakdown_markdown(tables, source_id=None, currency='USD', consolidated_operating_income=None):

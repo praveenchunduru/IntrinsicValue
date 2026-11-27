@@ -204,9 +204,9 @@ class DataHookTests(unittest.TestCase):
             entry.update(operating_income=[income, income], operating_margin=[.3, .3])
         text = '\n'.join(pipeline.reported_tables_section([source]))
         self.assertIn('| Average buyback price, repurchase value in the equity statement / shares ($) |', text)
-        # The consolidated figure (120 in FY2025) is set beside the segment sum (140).
-        self.assertIn('Segment operating income sums to $140B for the fiscal year ending 2025-12-31, against consolidated '
-                      'operating income of $120B', text)
+        # Segment margins carry a caution that states no sum and no cause.
+        self.assertIn('a segment margin is not comparable with the consolidated operating margin', text)
+        self.assertNotIn('Segment operating income sums to', text)
         lines, notes = pipeline._continuity_parts(
             {'reinvestment_continuity': {'fiscal_year_end': '2025-12-31', 'years': 3, 'net_reinvestment': 2e9,
                                          'net_reinvestment_over_years': 5e9, 'capital_expenditure_sales_to_capital': 1.2,

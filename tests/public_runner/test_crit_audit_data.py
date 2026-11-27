@@ -211,16 +211,17 @@ class HistoryBasisTests(unittest.TestCase):
         self.assertEqual(label, 'program value / program shares')
         self.assertEqual([item[0] for item in differing], ['2024-06-30', '2025-06-30', '2026-06-30'])  # 400 against 500
 
-    def test_segment_operating_income_is_set_beside_the_consolidated_figure(self):
-        # Apple: segments sum to $212.5 billion against $158.1 billion consolidated.
+    def test_segment_margin_caution_states_no_sum_and_no_cause(self):
+        # A live Coca-Cola review rejected a note that summed segment rows and named a cause.
         table = {'fiscal_year_ends': ['2026-09-26'], 'members': [
             {'member': 'aapl:AmericasSegmentMember', 'operating_income': [100e9]},
             {'member': 'aapl:EuropeSegmentMember', 'operating_income': [112.5e9]}]}
         note = et.segment_operating_note(table, {'2026-09-26': 158.1e9})
-        self.assertIn('sums to $212B', note)  # the memo's style: whole billions above $100 billion
-        self.assertIn('of $158B', note)
-        self.assertIsNone(et.segment_operating_note(table, {'2026-09-26': 212.4e9}))
-        self.assertIn('Segment operating income sums to $212B', et.segment_operating_note(table))
+        self.assertIn('not comparable with the consolidated operating margin', note)
+        self.assertNotIn('sums to', note)
+        self.assertNotIn('$', note)
+        self.assertIsNone(et.segment_operating_note({'fiscal_year_ends': ['2026-09-26'], 'members': [
+            {'member': 'aapl:AmericasSegmentMember', 'operating_income': [None]}]}))
 
 
 class RoicNoteTests(unittest.TestCase):
