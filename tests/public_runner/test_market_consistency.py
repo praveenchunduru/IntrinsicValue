@@ -66,6 +66,7 @@ def hand_value(inputs, name='base', *, stub=90 / 365, horizon=10, flat=None, ter
     g = scenario.get('terminal_growth', growth_default)
     roic = terminal_roic or scenario['terminal_roic']
     revenue, cumulative, value = inputs['actuals']['revenue'], 1.0, 0.0
+    after_tax = scenario['ebit_margins'][-1] * (1 - scenario['tax_rate'])
     for year in range(1, horizon + 1):
         previous = revenue
         if year <= explicit:
@@ -73,10 +74,14 @@ def hand_value(inputs, name='base', *, stub=90 / 365, horizon=10, flat=None, ter
             nopat = revenue * scenario['ebit_margins'][year - 1] * (1 - scenario['tax_rate'])
             fcff = nopat - (revenue - previous) / scenario['sales_to_capital']
         else:
-            # A steady-state year pays for its own revenue increase at the return on new capital.
+            # A steady-state year invests for the following year's growth at the return on new
+            # capital (none in the last year); the first also pays its own growth, a year late,
+            # with that year's return (2026-11-26).
             revenue *= 1 + g
-            nopat = revenue * scenario['ebit_margins'][-1] * (1 - scenario['tax_rate'])
-            fcff = nopat - (revenue - previous) * scenario['ebit_margins'][-1] * (1 - scenario['tax_rate']) / roic
+            nopat = revenue * after_tax
+            fcff = nopat - (revenue * g * after_tax / roic if year < horizon else 0.0)
+            if year == explicit + 1:
+                fcff -= (revenue - previous) * after_tax / roic * (1 + rates[year - 1])
         cumulative *= 1 + rates[year - 1]
         value += fcff * (1 - stub if year == 1 else 1) * (1 + rates[0]) ** stub / cumulative
     # The capital in place at the end of the rate path supports that year's NOPAT (2026-11-26).

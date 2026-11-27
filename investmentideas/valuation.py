@@ -40,17 +40,18 @@ net fixed investment; maintenance investment offsets depreciation in this model.
 It is one ratio, {"year1": x, "target": y, "target_year": n} (a straight line to
 the target, then held) or one ratio per explicit year; year t's ratio prices year
 t's revenue increase. Negative EBIT creates no assumed cash tax credit. No NOL
-schedule is modelled. Reinvestment pays for the same year's revenue increase, so
-capital at the end of the rate path supports that year's NOPAT. The continuing
+schedule is modelled. Forecast reinvestment pays for the same year's revenue
+increase; steady-state years invest for the following year's growth (the first
+also pays its own, a year late, with that year's return; the last invests nothing
+ahead), so capital at the end of the rate path supports that year's NOPAT. The continuing
 value capitalizes it: NOPAT_T * (1 - g / terminal_roic) / (r - g), NOPAT_T / r when
 the terminal return follows the rate (Mauboussin's steady state, where growth adds
 no value). NOPAT_T uses the terminal tax rate and adds net R&D investment from
 optional ``rnd_share_path`` (an R&D share of revenue, held or one per explicit
-year): year-T R&D less straight-line amortization over six years of the R&D of
-years T-6 to T-1 on the same forecast path (reported R&D from plan-level
-``reported_rnd_history`` for years at or before the anchor), so expensed R&D is
-not also charged as reinvestment and terminal growth still adds no value. Debt
-and other noncommon claims are bridged after enterprise value. No value floors apply.
+year): year-T R&D times one less its six-year straight-line amortization at
+steady terminal growth, so expensed R&D is not also charged as reinvestment.
+Debt and other noncommon claims are bridged after enterprise value. No value
+floors apply.
 
 Optional ``counterfactuals`` maps up to eight named cases to base-scenario
 overrides, for example ``{"higher_growth": {"growth_rates": [.10] * 5}}``.
@@ -90,7 +91,7 @@ current WACC for forecast years 1-5 and moves it linearly to a terminal cost of
 capital by year 10 (the market's operating-asset beta relevered at the firm's own
 leverage; see rates.py). Forecasts shorter than 10 years are extended to year 10
 with steady-state years (terminal growth, final margin, terminal tax, reinvestment
-= that year's NOPAT increase / ROIC); longer forecasts hold the initial rate to year N - 5. In this
+= the following year's NOPAT increase / ROIC); longer forecasts hold the initial rate to year N - 5. In this
 mode terminal growth defaults to the same-date risk-free rate (the ERP's own
 long-run growth), may not exceed it, and needs ``terminal_growth_basis`` when
 lower; a firm whose final forecast growth is below 1% or whose terminal ROIC is
@@ -253,28 +254,23 @@ def _validated_sales_to_capital(item, horizon, name):
 
 
 
+# R&D may exceed revenue (Moderna 2024: about 1.4 times); the plan's expense shares allow up to this.
+MAX_RND_SHARE = 100
+
+
 def _rnd_share_path(spec, horizon, name):
-    """R&D share of revenue in each explicit year: one share held, or one per year."""
-    field = name + '.rnd_share_path'
+    """R&D share of revenue in each explicit year: one share held, or one per year.
+
+    Python sets these from the plan's R&D line or the reported R&D, so messages name
+    the R&D line, never the field (the plan author does not write it).
+    """
+    field = name + ' R&D share of revenue'
     shares = ([_number(value, field) for value in spec] if isinstance(spec, list) else [_number(spec, field)] * horizon)
     if len(shares) != horizon:
-        raise ValueError(f'{field} needs one R&D share of revenue per explicit forecast year ({horizon})')
-    if any(not 0 <= share <= 1 for share in shares):
-        raise ValueError(f'{field} shares must be between 0 and 1')
+        raise ValueError(f'{name}: the R&D line needs one amount for each of the {horizon} forecast years')
+    if any(not 0 <= share <= MAX_RND_SHARE for share in shares):
+        raise ValueError(f'{name}: R&D must be zero or more, and at most {MAX_RND_SHARE} times revenue, in every forecast year')
     return shares
-
-
-def _reported_rnd_history(record):
-    """Reported R&D before the forecast, oldest first and ending at the anchor year, or []."""
-    if record is None:
-        return []
-    amounts = record.get('amounts') if isinstance(record, dict) else None
-    if not isinstance(amounts, list) or len(amounts) > 15:
-        raise ValueError('reported_rnd_history.amounts must list at most 15 reported R&D amounts, oldest first')
-    values = [_number(value, 'reported_rnd_history.amounts') for value in amounts]
-    if any(value < 0 for value in values):
-        raise ValueError('reported_rnd_history amounts cannot be negative')
-    return values
 
 def _validated(plan):
     if not isinstance(plan, dict):
@@ -319,7 +315,6 @@ def _validated(plan):
     discounting = plan.get('_discounting') or {'convention': 'constant'}
     glide = discounting['convention'] == GLIDE
     timing = plan.get('_timing') or {'stub_years': 0.0}
-    history = _reported_rnd_history(plan.get('reported_rnd_history'))
     scenarios = {}
     for name in SCENARIOS:
         item = definitions[name]
@@ -340,7 +335,6 @@ def _validated(plan):
         values['ebit_margins'] = [_number(value, name + '.ebit_margins') for value in margins]
         if item.get('rnd_share_path') is not None:
             values['rnd_share_path'] = _rnd_share_path(item['rnd_share_path'], len(growth), name)
-            values['rnd_history'] = list(history)
         # Set at lock from the plan's R&D line; materialize follows an edited line.
         values['rnd_follows_plan'] = item.get('rnd_basis') == 'plan_rnd_line'
         # Mauboussin's steady state: the return on new terminal capital is the terminal
@@ -480,55 +474,35 @@ def rnd_net_investment_share(growth, life=RND_LIFE_YEARS):
     return 1 - sum((1 + growth) ** -age for age in range(1, life + 1)) / life
 
 
-RND_AMORTIZATION_SOURCE = {
-    'forecast': 'of the forecast\'s own R&D in the six years before',
-    'forecast_and_reported': 'of the forecast\'s and the reported R&D in the six years before',
-    'terminal_growth_steady_state': ('assuming R&D grew at terminal growth, because the forecast and the reported '
-                                     'history together are shorter than six years')}
-RND_AMORTIZATION_TEXT = {key: f' (R&D less six-year amortization {text})' for key, text in RND_AMORTIZATION_SOURCE.items()}
+def _rnd_addback(scenario, rows, margin, growth):
+    """Net R&D investment in the continuing-value year at steady growth, or None without R&D.
 
-
-def _rnd_addback(scenario, rows, explicit, growth):
-    """Net R&D investment in the continuing-value year, or None without an R&D path.
-
-    R&D in year t is that year's share times its revenue on the forecast path (the
-    final explicit share in steady-state years). Amortization at year T is (1/L) x
-    the sum of R&D in years T-L to T-1, straight line from the year after the
-    spending, as roic.py capitalizes R&D. Years at or before the anchor take
-    reported R&D. Owner choice (2026-11-26): amortizing the forecast's own R&D,
-    not a history assumed to grow at terminal growth, keeps the value exactly
-    invariant to terminal growth under the steady state. Only when the forecast and
-    the reported history together are shorter than L years is that assumption used.
+    R&D_T is the final explicit-year share of revenue times year-T revenue. At steady
+    growth g, six-year straight-line amortization from the year after the spending
+    (roic.py) is R&D_T x (1/6) x sum (1+g)^-k, so net investment is
+    R&D_T x rnd_net_investment_share(g). Owner decision (2026-11-26): the steady-state
+    formula, not the forecast's own trailing R&D. Year-T net investment from the
+    trailing R&D is capitalized forever, although amortization catches up after year T
+    as the recent, larger vintages age; that overstated value by 2-4% where R&D growth
+    fades. The share used is at most one less the final EBIT margin: R&D cannot exceed
+    revenue less operating income, so a reported share above revenue held into a
+    profitable final year (an aggregate plan) is capped there.
     """
     shares = scenario.get('rnd_share_path')
-    if not shares or not any(shares):
+    if not shares or not shares[-1]:
         return None
-    spend = [(shares[index] if index < explicit else shares[-1]) * row['revenue'] for index, row in enumerate(rows)]
-    history = scenario.get('rnd_history') or []
-    horizon, current = len(rows), spend[-1]
-    prior = []
-    for age in range(RND_LIFE_YEARS, 0, -1):
-        year = horizon - age
-        if year >= 1:
-            prior.append(spend[year - 1])
-        elif len(history) >= 1 - year:
-            prior.append(history[year - 1])
-        else:
-            prior = None
-            break
-    if prior is None:
-        amortization = current * (1 - rnd_net_investment_share(growth))
-        basis = 'terminal_growth_steady_state'
-    else:
-        amortization = sum(prior) / RND_LIFE_YEARS
-        basis = 'forecast' if horizon > RND_LIFE_YEARS else 'forecast_and_reported'
-    return {'research_and_development_share': shares[-1], 'research_and_development': current,
-            'amortized_spending': prior, 'amortization': amortization, 'amortization_basis': basis,
-            'net_investment_added_to_nopat': current - amortization, 'life_years': RND_LIFE_YEARS,
-            'basis': ('R&D in the continuing-value year is its share of revenue times that year\'s revenue. Amortization '
-                      'is straight line over six years from the year after the spending, ' + RND_AMORTIZATION_SOURCE[basis] +
-                      '. NOPAT adds R&D less amortization (Damodaran: EBIT(1 - t) + R&D - amortization), so the '
-                      'reinvestment charge covers all new capital, R&D included.')}
+    share = min(shares[-1], max(0.0, 1 - margin))
+    spend = share * rows[-1]['revenue']
+    net = spend * rnd_net_investment_share(growth)
+    return {'research_and_development_share': share, 'stated_final_share': shares[-1],
+            'share_capped_at_one_less_margin': share < shares[-1], 'research_and_development': spend,
+            'amortization': spend - net, 'amortization_basis': 'terminal_growth_steady_state',
+            'net_investment_added_to_nopat': net, 'life_years': RND_LIFE_YEARS,
+            'basis': ('R&D in the continuing-value year is the final explicit-year share of revenue times that year\'s '
+                      'revenue' + (', the share capped at one less the final EBIT margin' if share < shares[-1] else '') +
+                      '. Amortization is straight line over six years from the year after the spending, at steady '
+                      'terminal growth. NOPAT adds R&D less amortization (Damodaran: EBIT(1 - t) + R&D - amortization), so '
+                      'the reinvestment charge covers all new capital, R&D included.')}
 
 
 def _project(actuals, scenario, *, flat=None, shift=0.0, terminal=None):
@@ -545,11 +519,15 @@ def _project(actuals, scenario, *, flat=None, shift=0.0, terminal=None):
     versioned = scenario.get('convention') == GLIDE or stub > 0
     explicit = len(scenario['growth_rates'])
     path = scenario.get('sales_to_capital_path')
+    horizon = len(rates)
+    terminal_tax = scenario.get('terminal_tax_rate', scenario['tax_rate'])
+    # After-tax NOPAT per unit of revenue growth in steady-state years, over the return on new capital.
+    steady_capital = scenario['ebit_margins'][-1] * (1 - terminal_tax) / roic
     revenue = actuals['revenue']
     rows = []
     cumulative = 1.0
     roll = (1 + rates[0]) ** stub
-    for year in range(1, len(rates) + 1):
+    for year in range(1, horizon + 1):
         previous = revenue
         if year <= explicit:
             growth, margin, tax = scenario['growth_rates'][year - 1], scenario['ebit_margins'][year - 1], scenario['tax_rate']
@@ -559,12 +537,24 @@ def _project(actuals, scenario, *, flat=None, shift=0.0, terminal=None):
         ebit = revenue * margin
         cash_tax = max(ebit, 0) * tax
         nopat = ebit - cash_tax
+        timing = {}
         if year <= explicit:
             reinvestment = (revenue - previous) / (path[year - 1] if path else scenario['sales_to_capital'])
         else:
-            # Like the explicit years, the year's reinvestment pays for its own revenue
-            # increase: the NOPAT that increase earns, over the return on new capital.
-            reinvestment = (revenue - previous) * margin * (1 - tax) / roic
+            # Steady-state years invest for the following year's growth, as the continuing
+            # value does, so new capital earns the return on new capital from the year after
+            # it is spent (Mauboussin and Callahan 2022, Appendix A). The last rate-path year
+            # invests nothing for the next: the continuing value starts from its NOPAT.
+            following = revenue * growth_forever * steady_capital if year < horizon else 0.0
+            reinvestment = following
+            timing['reinvestment_for_following_year'] = following
+            if year == explicit + 1:
+                # The last forecast year's investment paid only for its own growth, so this
+                # year's growth is funded here, a year late: with a year's return at this
+                # year's rate, which makes its present value that of funding it a year earlier.
+                own = (revenue - previous) * steady_capital
+                timing.update(reinvestment_for_own_growth=own, late_funding_return=own * rates[year - 1])
+                reinvestment += own * (1 + rates[year - 1])
         fcff = nopat - reinvestment
         cumulative *= 1 + rates[year - 1]
         counted = 1 - stub if year == 1 else 1.0
@@ -581,6 +571,7 @@ def _project(actuals, scenario, *, flat=None, shift=0.0, terminal=None):
         if versioned:
             row.update(phase='explicit' if year <= explicit else 'steady_state',
                        discount_rate=rates[year - 1], discount_time=year - stub, counted_fraction=counted)
+        row.update(timing)
         rows.append(row)
     # Continuing value at the end of the rate path (year T). Reinvestment above paid for
     # each year's own revenue increase, so the capital in place supports year-T NOPAT;
@@ -589,14 +580,13 @@ def _project(actuals, scenario, *, flat=None, shift=0.0, terminal=None):
     # 2026-11-26). In Appendix A of Mauboussin and Callahan (2022) the investment that
     # pays for a year's growth is made the year before, as it is here after year T:
     # each later year's reinvestment, growth / ROIC of NOPAT, pays for the year after.
-    terminal_tax = scenario.get('terminal_tax_rate', scenario['tax_rate'])
     terminal_revenue = revenue
     nopat_before_rnd = terminal_revenue * scenario['ebit_margins'][-1] * (1 - terminal_tax)
     # R&D is expensed in the margin and new capital is also charged at growth / ROIC, so
     # without this every R&D dollar after year T would earn below its cost. Net R&D
     # investment (R&D less amortization) is added back, as Damodaran does
     # (EBIT(1 - t) + R&D - amortization; the tax benefit of expensing is kept).
-    addback = _rnd_addback(scenario, rows, explicit, growth_forever)
+    addback = _rnd_addback(scenario, rows, scenario['ebit_margins'][-1], growth_forever)
     rnd_net = addback['net_investment_added_to_nopat'] if addback else 0.0
     terminal_nopat = nopat_before_rnd + rnd_net
     terminal_reinvestment = terminal_nopat * growth_forever / roic
@@ -625,7 +615,7 @@ def _project(actuals, scenario, *, flat=None, shift=0.0, terminal=None):
               'terminal_enterprise_value': terminal_value,
               'continuing_value_basis': (
                   'Continuing value at the end of year ' + str(len(rows)) + ': that year\'s NOPAT at the terminal tax rate'
-                  + (', plus net R&D investment' + RND_AMORTIZATION_TEXT[addback['amortization_basis']] + ','
+                  + (', plus net R&D investment (R&D less six-year amortization at steady terminal growth),'
                      if addback else '') + ' capitalized as NOPAT x (1 - g / ROIC) / (r - g)'
                   + (', which is NOPAT / r because the return on new capital equals the rate' if follows else '')
                   + '. The capital in place at that year end supports that NOPAT; each later year\'s reinvestment pays '
@@ -1269,10 +1259,16 @@ def _computed_diagnostics(actuals, definitions, scenarios, weighted):
         margin = inputs['ebit_margins'][-1] * (1 - inputs['tax_rate'])
         terminal_margin = inputs['ebit_margins'][-1] * (1 - inputs.get('terminal_tax_rate', inputs['tax_rate']))
         growth = inputs['terminal_growth']
-        # A steady-state year pays for its own revenue increase; the first continuing-value
-        # year pays for the growth of the year after (growth times final-year revenue).
-        increase = following['revenue'] - last['revenue'] if following else growth * result['terminal_revenue']
-        continued_reinvestment = _finite_or_none(increase / inputs['sales_to_capital'])
+        continuing_roic = terminal_margin * inputs['sales_to_capital']
+        if following:
+            # The first steady-state year invests at the return on new capital (its own growth,
+            # funded a year late, and the next year's); at the forecast's efficiency the same
+            # investment scales by that return over the implied one.
+            continued_reinvestment = (_finite_or_none(following_reinvestment * result['terminal_roic_applied'] / continuing_roic)
+                                      if continuing_roic > 0 else None)
+        else:
+            # The first continuing-value year pays for the growth of the year after.
+            continued_reinvestment = _finite_or_none(growth * result['terminal_revenue'] / inputs['sales_to_capital'])
         # Reinvestment the house continuing value implies in the forecast's own terms (R&D
         # expensed): expensed NOPAT less the continuing-value cash flow.
         implied_tangible = result['terminal_nopat_before_rnd_addback'] - result['terminal_fcff']
@@ -1282,7 +1278,6 @@ def _computed_diagnostics(actuals, definitions, scenarios, weighted):
                 if continued_reinvestment is not None else None)
         fcff_delta = _value_change(following_fcff, last['fcff'])
         alternative_price = None
-        continuing_roic = terminal_margin * inputs['sales_to_capital']
         if continued_reinvestment is not None and continuing_roic >= growth and continuing_roic > 0:
             # The same reinvestment expressed as the return it implies, with R&D expensed as
             # in the forecast, so one projection (rate path, steady-state years, timing) computes it.
@@ -1305,10 +1300,10 @@ def _computed_diagnostics(actuals, definitions, scenarios, weighted):
             **({'forecast_sales_to_capital_path': list(inputs['sales_to_capital_path'])} if inputs.get('sales_to_capital_path') else {}),
             'equivalent_terminal_sales_to_capital': equivalent_capital,
             'terminal_roic_required_for_continuing_forecast_sales_to_capital': _finite_or_none(continuing_roic),
-            'reinvestment_timing_note': ('Forecast and steady-state reinvestment pay for the same year\'s revenue increase, so the '
-                                         'capital in place at the end of the rate path supports that year\'s NOPAT. The continuing '
-                                         'value capitalizes that NOPAT; its reinvestment, growth / ROIC of NOPAT, pays for the next '
-                                         'year\'s growth. Cash-flow-equivalent terminal sales-to-capital is growth times final-year '
+            'reinvestment_timing_note': ('Forecast reinvestment pays for the same year\'s revenue increase. Steady-state years and '
+                                         'the continuing value invest growth / ROIC of NOPAT for the following year\'s growth; the '
+                                         'first steady-state year also pays its own growth with a year\'s return, and the last '
+                                         'rate-path year invests nothing for the next, so the continuing value capitalizes its NOPAT. Cash-flow-equivalent terminal sales-to-capital is growth times final-year '
                                          'revenue over expensed NOPAT less the continuing-value cash flow, so it counts net R&D '
                                          'investment where the continuing value adds it back.'),
             'terminal_reinvestment': result['terminal_reinvestment'],
@@ -1863,8 +1858,16 @@ def forecast_return_on_capital(reference, scenarios):
         result = scenarios[name]
         flows = result['cashflows']
         capital = [float(opening)]
-        for row in flows:
-            capital.append(capital[-1] + row['net_reinvestment'])
+        # Capital that paid for each year's own growth: explicit years invest for their own
+        # growth; a steady-state year's growth was paid for by the year before (the first
+        # steady-state year pays its own, a year late, and that year's return is not capital).
+        funding = []
+        for index, row in enumerate(flows):
+            late = row.get('late_funding_return', 0.0)
+            ahead = row.get('reinvestment_for_following_year', 0.0)
+            capital.append(capital[-1] + row['net_reinvestment'] - late)
+            earlier = flows[index - 1].get('reinvestment_for_following_year', 0.0) if index else 0.0
+            funding.append(row['net_reinvestment'] - late - ahead + earlier)
         years = []
         for index, row in enumerate(flows):
             average = (capital[index] + capital[index + 1]) / 2
@@ -1875,9 +1878,13 @@ def forecast_return_on_capital(reference, scenarios):
             if 'phase' in row:
                 item['phase'] = row['phase']
             if index >= 3:
-                # The NOPAT change over three years over the capital change over the three
-                # years ending a year earlier, as in the history table (roic.py, p22).
-                change = capital[index] - capital[index - 3]
+                # The NOPAT change over three years over the capital that paid for those three
+                # years' growth. Forecast reinvestment pays for the same year's growth, so this is
+                # the change in capital over the same three years (capital[i+1] - capital[i-2]);
+                # the history table lags capital a year (roic.py, p22) because reported capital
+                # is spent before it earns. A constant incremental return prints that return, and
+                # steady-state years print the return on new capital.
+                change = sum(funding[index - 2:index + 1])
                 if change > 0:
                     item['incremental_return_3y'] = (row['nopat'] - flows[index - 3]['nopat']) / change
             years.append(item)
@@ -1888,8 +1895,9 @@ def forecast_return_on_capital(reference, scenarios):
             'basis': 'Invested capital starts at the reported operating-approach invested capital (Mauboussin and Callahan '
                      'method, including goodwill and acquired intangibles) at the last reported fiscal year end and adds each '
                      'forecast year\'s net reinvestment. ROIC is NOPAT over the average of opening and closing capital. '
-                     'Three-year incremental ROIC is the NOPAT change over three years over the capital change over the '
-                     'three years ending a year earlier, so it starts in year 4. Forecast NOPAT is EBIT after the plan\'s tax '
+                     'Three-year incremental ROIC is the NOPAT change over three years over the capital that paid for that '
+                     'growth: the same three years\' capital change, because forecast reinvestment pays for the same year\'s '
+                     'growth (the history table lags capital a year), so it starts in year 4. Forecast NOPAT is EBIT after the plan\'s tax '
                      'rate; the history table uses EBITA after the cash tax rate, so the two differ slightly. After the '
                      'forecast, new capital earns the terminal return on new capital. Display only; no check uses it.'}
 
@@ -2190,13 +2198,13 @@ def _convention_panel(actuals, definitions, scenarios, discounting, reported_pea
     add('terminal_reinvestment_continues_forecast', 'Terminal reinvestment continues the forecast capital efficiency (no step at the end of the forecast)',
         {'terminal_roic': continuing, 'rnd_share_path': None},
         applies=continuing > 0 and continuing >= base['terminal_growth'] and
-                (abs(continuing - base['terminal_roic']) > 1e-6 or any(base.get('rnd_share_path') or ())),
+                (abs(continuing - base['terminal_roic']) > 1e-6 or bool((base.get('rnd_share_path') or [0.0])[-1])),
         reason='Forecast capital efficiency already equals the terminal return')
     # Owner choice (2026-11-26, Damodaran critique F3): the continuing value adds net R&D
     # investment back to NOPAT; this row shows the value with R&D left expensed.
     add('terminal_rnd_expensed', 'R&D expensed in the continuing value (earlier house rule): no net R&D investment added back to NOPAT, '
         'so new R&D after the forecast earns below its cost',
-        {'rnd_share_path': None}, applies=any(base.get('rnd_share_path') or ()),
+        {'rnd_share_path': None}, applies=bool((base.get('rnd_share_path') or [0.0])[-1]),
         reason='No R&D share is set for the continuing value')
     for shift in (-.01, .01):
         add(f'required_return_{"minus" if shift < 0 else "plus"}_1_point', f'Whole discount-rate path {shift * 100:+.0f} point',
@@ -2225,16 +2233,25 @@ def _country_risk_row(panel, reference, actuals, base, baseline, calibration):
     The row is not ranked with the convention rows: the S&P 500 implied premium is
     solved from US companies that already earn foreign revenue.
     """
+    try:
+        _country_risk_row_checked(panel, reference, actuals, base, baseline, calibration)
+    except (ValueError, TypeError, KeyError, AttributeError, ArithmeticError) as error:
+        # A malformed reference is an exhibit failure, never a valuation failure.
+        panel['rows'] = [row for row in panel['rows'] if row.get('name') != COUNTRY_RISK_ROW]
+        panel['country_risk_note'] = 'The country risk row was not computed: ' + str(error)[:200]
+
+
+def _country_risk_row_checked(panel, reference, actuals, base, baseline, calibration):
     if not isinstance(reference, dict):
-        raise ValueError('country_risk_reference must be an object')
+        raise ValueError('the country risk reference is not an object')
     if reference.get('status') != 'calculated':
         reason = reference.get('reason')
         panel['country_risk_note'] = (reason.strip() if isinstance(reason, str) and reason.strip() else
                                       'No revenue-weighted country risk premium was computed.')
         return
-    premium = _number(reference.get('weighted_premium'), 'country_risk_reference.weighted_premium')
+    premium = _number(reference.get('weighted_premium'), 'the weighted country risk premium')
     if not -.02 <= premium <= .2:
-        raise ValueError('country_risk_reference.weighted_premium must be a decimal rate between -0.02 and 0.20')
+        raise ValueError('the weighted country risk premium must be a decimal rate between -0.02 and 0.20')
     if calibration is None:
         panel['country_risk_note'] = ('The country risk row needs the dated discount-rate inputs for the equity weight; '
                                       'this plan states its discount rates directly.')
@@ -2242,7 +2259,7 @@ def _country_risk_row(panel, reference, actuals, base, baseline, calibration):
     if calibration.get('basis') == 'house_hurdle':
         panel['country_risk_note'] = 'A house hurdle is a policy rate; no country risk premium is added to it.'
         return
-    weight = calibration['equity_weight']
+    weight = _number(calibration.get('equity_weight'), 'the equity weight')
     shift = weight * premium
     exposures = [{key: item.get(key) for key in ('label', 'share_of_revenue', 'premium_over_us', 'mapped_to')}
                  for item in reference.get('exposures') or [] if isinstance(item, dict)]
@@ -2576,9 +2593,17 @@ def _index_benchmark(plan, base, company_value_to_price):
              'terminal_roic': rate, 'terminal_roic_follows_rate': True}
     level = {'revenue': 1.0, 'net_debt': 0.0, 'other_equity_claims': 0.0, 'shares_outstanding': 1.0}
     try:
-        house = _project(level, index)['per_share_value']
+        projection = _project(level, index)
     except (ValueError, ArithmeticError) as error:
         return dict(output, status='not_calculated', reason=str(error)[:300])
+    # One timing for the house value and the price, the premium model's: each year invests
+    # growth / return of its NOPAT for the following year's growth (the sales-to-capital
+    # above gives exactly that), so the capital in place at year T already supports year
+    # T+1's NOPAT and the continuing value starts there. The engine's company continuing
+    # value starts from year-T NOPAT because company forecast years invest for their own
+    # growth; using it here understated the index by about 2.5% (engine review, 2026-11-26).
+    final = projection['cashflows'][-1]
+    house = projection['pv_forecast_fcff'] + final['nopat'] * (1 + growth) / rate * final['discount_factor']
     # The premium's own pricing: next year's earnings, less reinvestment of growth / return, at rate - growth.
     price = (1 + growth) * margin * (1 - growth / ret) / (rate - growth)
     return dict(output, status='calculated', value_to_price=house / price,
@@ -2587,7 +2612,8 @@ def _index_benchmark(plan, base, company_value_to_price):
                        f'new capital earns {ret:.0%} (the market\'s long-run return on new capital, as in the 15% convention '
                        'row), and the price is the value with those returns forever, the premium\'s own assumption. The '
                        f'house value keeps them for {years} years, then new capital earns the cost of capital (risk-free rate '
-                       'plus premium); both are discounted at that rate. Damodaran\'s monthly workbook has no index earnings '
+                       'plus premium); both are discounted at that rate, and in both each year invests for the following '
+                       'year\'s growth. Damodaran\'s monthly workbook has no index earnings '
                        'or return on equity, so this is not a reproduction of the cash flows behind his premium. His model '
                        'adds five years of consensus growth and uses the index\'s own return on equity; growth above the '
                        'risk-free rate in those years, or a return on equity above this figure, puts the ratio lower.'))
