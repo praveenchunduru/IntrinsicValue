@@ -333,7 +333,7 @@ python -m pip install .
 investmentideas --help
 ```
 
-The current source passes **1,047 tests** locally on Python 3.9, 3.12 and 3.13 (four
+The current source passes **1,055 tests** locally on Python 3.9, 3.12 and 3.13 (four
 skip unless saved runs are named for them); the
 v0.2.0 release passed 268. The
 [CI matrix](https://github.com/praveenchunduru/IntrinsicValue/actions/runs/42261827883)
