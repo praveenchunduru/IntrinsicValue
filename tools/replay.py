@@ -42,7 +42,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from investmentideas import core, pipeline  # noqa: E402
+from investmentideas import core, pipeline, settings  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import consensus_check  # noqa: E402  (tools/, beside this script)
 from investmentideas.valuation import SCENARIOS  # noqa: E402
@@ -571,9 +571,13 @@ def main():
         except ValueError as exc:
             raise SystemExit(str(exc)) from None
         return
+    try:
+        settings.apply_env_file()  # the same `.env` the main command reads
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from None
     key = os.environ.get('OPENROUTER_API_KEY', '').strip()
     if not key:
-        raise SystemExit('Set OPENROUTER_API_KEY')
+        raise SystemExit('Set OPENROUTER_API_KEY, or put it in a .env file in this folder')
     saved_folder = Path(args.saved).resolve()
     saved = json.loads((saved_folder / 'state.json').read_text())
     if args.plan_samples is not None:

@@ -53,7 +53,22 @@ def main():
     parser.add_argument('--review-notes',type=Path,help='Reopen the same full run with additional independent review notes (UTF-8, at most 30 KB)')
     parser.add_argument('--revalue', type=Path, help='Recompute an edited assumptions.json without a key or model calls; --output is the destination folder')
     parser.add_argument('--port', type=int, default=8765)
+    parser.add_argument('--setup', action='store_true',
+                        help='Ask for your OpenRouter key and email once and save them in .env in this folder')
     args = parser.parse_args()
+    if args.setup:
+        if args.ticker or args.revalue:
+            parser.error('--setup is run on its own')
+        from .settings import run_setup
+        try:
+            print(run_setup())
+        except (KeyboardInterrupt, EOFError):
+            print('\nSetup cancelled; nothing was saved.', file=sys.stderr)
+            sys.exit(1)
+        except (ValueError, OSError) as exc:
+            print(f'Setup stopped: {exc}', file=sys.stderr)
+            sys.exit(1)
+        return
     if args.budget is None:
         args.budget = 2.0 if args.quick else 20.0  # pipeline.DEFAULT_BUDGET: a ceiling, not the expected bill
     try:
@@ -80,11 +95,19 @@ def main():
             return
         if not math.isfinite(args.budget) or not 0 < args.budget <= 100:
             raise ValueError('Budget must be greater than zero and at most $100')
+        # A `.env` file in the working folder supplies the key and the SEC contact once,
+        # for the browser form and the command line alike. Exported values win.
+        from .settings import apply_env_file, describe
+        filled = apply_env_file()
+        if filled:
+            print(describe(filled), file=sys.stderr)
         if not args.ticker:
             from .web import serve
             extra={'sec_contact':args.sec_contact} if args.sec_contact else {}
             serve(args.port, args.output, default_mode='quick' if args.quick else 'full',**extra)
             return
+        for note in setup_notes(args.sec_contact, needs_sec=not args.snapshot):
+            print(note, file=sys.stderr)
         evidence = args.evidence.read_text(encoding='utf-8') if args.evidence else ''
         if len(evidence.encode()) > 100000:
             raise ValueError('Evidence must be at most 100 KB; provide a focused excerpt')
@@ -117,8 +140,6 @@ def main():
                 extra['counterfactuals']=json.loads(args.counterfactuals.read_text(encoding='utf-8'))
         elif args.review_notes or args.counterfactuals or args.draft or args.snapshot or args.forecast_plan or args.plan_samples:
             raise ValueError('--review-notes, --counterfactuals, --draft, --snapshot, --forecast-plan and --plan-samples apply only to full research')
-        for note in setup_notes(args.sec_contact, needs_sec=not args.snapshot):
-            print(note, file=sys.stderr)
         with sec_contact_scope(args.sec_contact):
             folder = runner(args.ticker, os.environ.get('OPENROUTER_API_KEY', ''), profile=args.profile,
                             budget=args.budget, directory=args.output, evidence=evidence,

@@ -23,8 +23,16 @@ and generate a full memo. The email identifies requests to SEC; it is not anothe
 API key. It stays in memory and is sent only to SEC. Choose **economy**
 for open-weight analysis or **balanced** for Claude analysis with open-weight research; a different model reviews the memo in both. Use `python3` or Windows
 `py` if that is your Python command. A dedicated key with a provider credit limit
-is recommended. The key is held in process memory; it is not stored in the browser,
+is recommended. The form holds the key in process memory; it is not stored in the browser,
 research files or logs. This loopback application is for one local user.
+
+To enter the key and email only once, run `python -m investmentideas --setup`. It asks
+for both and saves them in a `.env` file in the folder you run from, readable only by
+you. The form and the command line both read that file when they start, and the form's
+two fields can then be left blank. Only `OPENROUTER_API_KEY` and `SEC_CONTACT_EMAIL` are
+read from it, a value exported in your shell takes priority, and a run never writes to
+it. [`.env.example`](../.env.example) shows the two lines if you prefer to write the file
+by hand.
 
 Optional installation adds a command without adding runtime dependencies:
 
@@ -137,12 +145,9 @@ NOL or lease-adjustment schedule.
 ## CLI
 
 ```bash
-# macOS/Linux: enter without putting the value in shell history
-read -rs OPENROUTER_API_KEY
-export OPENROUTER_API_KEY
-
-# Replace with your real requester email for SEC access; this is not a paid key
-export SEC_CONTACT_EMAIL='your-real-email@example.com'
+# Once: save your OpenRouter key and your email (for SEC access) in .env in this folder.
+# Exporting OPENROUTER_API_KEY and SEC_CONTACT_EMAIL in your shell works too, and wins.
+python -m investmentideas --setup
 
 # Full memo: Claude Haiku research, Claude Opus analysis (three forecasts), GPT-6.2 Sol review
 python -m investmentideas AAPL --profile balanced --budget 20
@@ -185,9 +190,8 @@ sets SEC requester identity for one run without saving it. `SEC_CONTACT_EMAIL` o
 contact-bearing `SEC_USER_AGENT` can supply it instead. See `--help` and the
 [underwriting guide](underwriting.md).
 
-On PowerShell use your preferred local secret mechanism to set
-`$env:OPENROUTER_API_KEY`, or use the browser form. [portable environment example](../investmentideas/.env.example) documents the
-variable; the standard-library runner does not automatically load `.env` files.
+On Windows, `py -m investmentideas --setup` saves the same `.env` file; setting
+`$env:OPENROUTER_API_KEY` in PowerShell or using the browser form also works.
 
 ## Editable, auditable output
 
