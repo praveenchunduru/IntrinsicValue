@@ -3252,6 +3252,28 @@ def _implied_return_sentence(row, which, money):
     return None
 
 
+def _transition_step(result, money):
+    """The base case's cash-flow step from the last forecast year to the continuing value, in one sentence.
+
+    Reviews of the live Apple and Coca-Cola memos (2026-11-27) asked for the step that
+    explains the largest convention row: under the house steady state reinvestment rises
+    to terminal growth over the return on new capital, so free cash flow roughly halves.
+    """
+    diagnostics=(result.get('computed_diagnostics') or {}).get('terminal_transition') or {}
+    row=diagnostics.get('base') if isinstance(diagnostics,dict) else None
+    base=(result.get('scenarios') or {}).get('base') or {}
+    if not isinstance(row,dict):
+        return None
+    last,terminal,percent=row.get('last_forecast_fcff'),row.get('terminal_fcff'),row.get('fcff_step_percent')
+    share,roic=base.get('terminal_reinvestment_rate'),row.get('terminal_roic')
+    numbers=(last,terminal,percent,share,roic)
+    if not all(isinstance(x,(int,float)) and not isinstance(x,bool) and math.isfinite(x) for x in numbers):
+        return None
+    return (f'Forecast-to-continuing-value step (base case): free cash flow is {money(last)} in the last forecast year '
+            f'and {money(terminal)} in the first continuing-value year ({percent:+.1f}%), because reinvestment becomes '
+            f'terminal growth over the {roic:.2%} return on new capital, {share:.0%} of NOPAT.')
+
+
 def computed_summary(plan, result):
     """The valuation summary Python places at the top of every memo.
 
@@ -3369,6 +3391,9 @@ def computed_summary(plan, result):
     exhibits=_largest_exhibits(result.get('convention_panel'),money)
     if exhibits:
         lines+=['',exhibits]
+    step=_transition_step(result,money)
+    if step:
+        lines+=['',step]
     continuity=result.get('forecast_continuity')
     if continuity:
         lines+=['',f'Year-1 EBIT margin against the reported {continuity["reported_operating_margin"]:.1%}: '+
@@ -4029,7 +4054,8 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'real cost. Missing evidence narrows the conclusion; state each gap once instead of repeating caveats. '
             'Do not invent transcripts, guidance, consensus, dates or quotes. Valuation research only: no ratings, '
             'target prices, entry levels, margins of safety, upside or downside, or position sizing; write value / '
-            'price. Plain analytical prose without slogans, superlatives or rhetorical contrast formulas. Refer to the '
+            'price. Do not reproduce outside ratings, price targets or recommendations either, even attributed or '
+            'labelled unverified; give an outside view as its economic argument. Plain analytical prose without slogans, superlatives or rhetorical contrast formulas. Refer to the '
             'computed summary, exhibits and reported tables by name; never mention Python, prompts or instructions, and '
             'add no tables of your own.'
             '\nCOMPUTED SUMMARY (placed above your text):\n'+computed_summary(plan,result)+

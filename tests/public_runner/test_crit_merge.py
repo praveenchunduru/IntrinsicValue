@@ -102,5 +102,27 @@ class ReasoningAndLengthRetryTests(unittest.TestCase):
         self.assertNotIsInstance(caught.exception, core.LengthLimited)
 
 
+
+class TransitionStepTests(unittest.TestCase):
+    """The summary states the base case's forecast-to-continuing-value cash-flow step."""
+
+    def test_sentence_and_missing_data(self):
+        from investmentideas import pipeline
+        money = lambda x: f'USD {x/1e9:,.1f} billion'
+        result = {'computed_diagnostics': {'terminal_transition': {'base': {
+                      'last_forecast_fcff': 15.8e9, 'terminal_fcff': 7.8e9, 'fcff_step_percent': -50.6, 'terminal_roic': 0.0874}}},
+                  'scenarios': {'base': {'terminal_reinvestment_rate': 0.565}}}
+        text = pipeline._transition_step(result, money)
+        self.assertIn('USD 15.8 billion in the last forecast year and USD 7.8 billion', text)
+        self.assertIn('(-50.6%)', text)
+        self.assertIn('8.74% return on new capital', text)
+        self.assertIsNone(pipeline._transition_step({'scenarios': {}}, money))
+
+    def test_outside_ratings_are_ruled_out_in_the_writing_standard(self):
+        from investmentideas import pipeline
+        import inspect
+        self.assertIn('Do not reproduce outside ratings, price targets or recommendations', inspect.getsource(pipeline))
+
+
 if __name__ == '__main__':
     unittest.main()

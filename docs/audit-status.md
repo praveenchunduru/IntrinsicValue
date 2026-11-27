@@ -715,14 +715,52 @@ latest retrieval. Shares could come from a cover months after year-end net debt
 they are now counted on the net-debt date or a cover within 60 days. Prices that vary by
 UTC hour are reserved at their highest level, so the economy profile can start.
 
-No paid run has completed on this code; a Microsoft run is under way and will be
-recorded separately. With these fixes (23255b1) the suite has 850 offline tests, passing
-on Python 3.9, 3.12 and 3.13.
+With these fixes (23255b1) the suite has 850 offline tests, passing on Python 3.9, 3.12
+and 3.13.
+
+### Live runs on the change set (2026-11-27)
+
+Three balanced runs (Claude Haiku 5.5, Claude Opus 5.5, GPT-6.2 Sol), run one after
+another with fixes between them, each with a $20 allowance and the default one revision.
+They reported $14.76 in total. Every plan passed on its first response.
+
+| Run | Code | Cost | First draft | After one revision | Base value / price | Value / price |
+|---|---|---:|---|---|---:|---:|
+| Microsoft | 8f40f8b | $5.40 | 1 blocker, 6 major, 2 minor | 3 major, 3 minor; not approved | $360.15 / $489.93 | 0.74 |
+| Apple | c1158dc | $4.50 | 1 blocker, 4 major, 3 minor | 3 minor; approved | $138.86 / $355.58 | 0.39 |
+| Coca-Cola | db0804a | $4.86 | 2 blocker, 5 major, 3 minor | 2 major, 3 minor; not approved | $41.45 / $97.59 | 0.42 |
+
+The stylized S&P 500 is at 0.80 of its price under the same conventions on that date.
+The Apple memo is the first live run to pass review. The finding check refuted no
+finding in any run.
+
+- The Microsoft run stopped twice before its plan, for $0.13 in all. Claude Haiku 5.5
+  reasons without being asked and OpenRouter counts that inside the output limit: a web
+  lane spent 4,118 of 6,000 tokens reasoning, then the evidence synthesis 11,078 of
+  12,000. A probe showed `reasoning: {"enabled": false}` gives Haiku none, while Opus
+  5.5 rejects it ("Reasoning is mandatory"). Haiku stages now send it, and a response
+  cut off at its limit is retried once at 1.75 times the limit instead of stopping the
+  run (8f40f8b).
+- Python's own wording caused surviving findings. Microsoft kept a major for calling the
+  103.8 billion net-reinvestment reference reported, because the computed summary said
+  "against the reported". Apple kept two minors for a median ROIC called reported and a
+  note saying derived quarters are not reported on their own. Computed figures now say
+  "computed from reported lines" or "computed from reported values" (c1158dc, db0804a).
+- The rest were the writer's: an unverified figure restated in an evidence-gap note, a
+  lease paragraph that called commitments capital expenditure, broker buy ratings
+  reproduced from a search excerpt (Coca-Cola's first draft, removed in revision), a
+  variant view that read a one-input test as exclusive, and a misattributed timing
+  effect. The writing standard now covers evidence-gap notes, leases and outside
+  ratings, and the summary states the base case's step from the last forecast year to
+  the continuing value (free cash flow falls about half as reinvestment becomes terminal
+  growth over the return on new capital), which two reviews asked for.
+
+The runs' folders are kept outside the repository. No run has used the last fixes yet.
 
 ### Still open after 2026-11-14
 
-- No live run has produced an approved memo. The final run's first draft drew 4 major
-  findings and its revision 3, against 11 before the first-shot changes.
+- One of three live runs on the 2026-11-26 change set produced an approved memo (Apple,
+  after one revision). No first draft has passed without a revision.
 - The plan-prompt evidence-tier rule and the rubric clarification have not been run live.
 - No paid run has yet shown a first draft with no surviving major finding; replay 2 does
   so only when the later fact-check is applied offline.
@@ -738,9 +776,8 @@ on Python 3.9, 3.12 and 3.13.
   revision.
 - Defaults moved to the newest generation in every slot (2026-11-15, and the balanced
   reviewer again on 2026-11-26): balanced uses Claude Haiku 5.5, Claude Opus 5.5 and
-  GPT-6.2 Sol; economy uses DeepSeek V4.1 Flash, DeepSeek V4 Pro and Kimi K3.1 Pro. Only
-  Opus 5.5 as writer has been run; GPT-6.2 Sol as reviewer and the whole economy profile
-  have not.
+  GPT-6.2 Sol; economy uses DeepSeek V4.1 Flash, DeepSeek V4 Pro and Kimi K3.1 Pro. The
+  balanced profile has run live (2026-11-27); the economy profile has not.
 - The writer still occasionally does arithmetic the computed tables do not supply (a
   net share reduction stated a thousand times too small, then corrected to a wrong
   figure). The reported-history table carries no net share change.
@@ -752,8 +789,6 @@ on Python 3.9, 3.12 and 3.13.
   offline restatement under the current conventions) rests on the discount rate and
   terminal returns, which the memo's convention panel and beta cross-checks show one
   change at a time, beside the stylized index's 0.80. No value is tuned to the price.
-- No paid run has completed on the 2026-11-26 change set, and the country risk row has
-  not run in a live pipeline.
 - Equity bridge: Nvidia's $12.9 billion of marketable equity is added in the bridge but
   stays in ROIC's invested capital. Lines left out because they may overlap the selected
   cash or another line are disclosed in the bridge (largest: Meta's $6.0 billion of
