@@ -56,18 +56,22 @@ without a separate search key. Unavailable sources, excerpt limits, secondary
 financial data and issuer-directory mapping fallbacks are disclosed.
 
 Primary inline-XBRL and normalized SEC Companyfacts records lock supported annual
-revenue, shares and the financial-debt, cash and finance-lease bridge. Alternative
+revenue, shares, the financial-debt, cash and finance-lease bridge, non-operating
+investments, noncontrolling interests, preferred stock, pension obligations and the
+dilutive share increment. Alternative
 reported totals and disjoint components are reconciled; similar tag names alone
 do not establish accounting scope. Conflicting or incomplete essential primary coverage
 stops before paid research and produces no price target. The saved input-coverage report
 identifies the missing disclosures. Cash classification and unidentified additional claims
 remain explicit house policies, not reported facts.
 
-Two inputs can rest on a labelled assumption. When the whole SEC entity record shows no
+Two debt inputs can rest on a labelled assumption. When the whole SEC entity record shows no
 short-term borrowing amount beyond reported commercial paper and other short-term borrowings,
 or no finance lease liability, the missing category is assumed zero. The coverage report marks
 the field `pinned_with_disclosed_assumption`, the bridge lists the concepts that were scanned,
-and the memo states the assumption. An undisclosed borrowing would lower equity value. Issuers
+and the memo states the assumption. An undisclosed borrowing would lower equity value. An
+equity-bridge line with no reported concept, such as preferred stock, is likewise zero by a
+labelled assumption. Issuers
 whose own facts conflict, or that report shares only by class, are refused with the specific
 reason; see the [issuer sample](docs/audit-status.md#live-validation-on-2026-11-14).
 
@@ -76,11 +80,13 @@ computes a bear/base/bull FCFF DCF in Python and writes a memo. The first draft 
 built to stand on its own:
 
 - Python extracts the filings' revenue, cost and operating income by product, segment
-  and geography, five years of reported history, and the 10-K's margin, inventory,
-  commitment and buyback disclosures. The models see them before any web excerpt.
+  and geography, five years of reported history, the latest eight fiscal quarters, and
+  the 10-K's margin, inventory, commitment and buyback disclosures. The models see them
+  before any web excerpt.
 - Python renders every table and a valuation summary at the top of the memo,
-  including what the price requires of one input at a time. The model writes the
-  interpretation around them and does no arithmetic of its own.
+  including what the price requires of one input at a time and where that growth falls
+  in published base rates. The model writes the interpretation around them and does no
+  arithmetic of its own.
 - Free checks trace every figure in the prose to the computed output or a primary
   source, then one small call fixes what they find. Citations of unverified web
   excerpts are labelled in the text.
@@ -98,18 +104,26 @@ growth to the risk-free rate unless a scenario gives a company-specific reason f
 less. Present values are dated at the valuation date when the reported balance sheet
 allows it. Year-1 margins must start from the last reported results unless the plan
 cites evidence for a step. Costs are shares of revenue, final-year margins have
-ceilings from the reported history, the terminal return on new capital equals the
-terminal cost of capital after the 10-year forecast (Mauboussin's steady state), and the
-base case is the headline value with bear and bull as unweighted stress cases.
-The memo reports value relative to price, the
-discount rate the price implies beside the required return, and the value under
-alternative conventions one change at a time. It sets no entry prices, margins of
-safety or position sizes. See
+ceilings from the reported history and the latest twelve months, the terminal return on
+new capital equals the terminal cost of capital after the 10-year forecast (Mauboussin's
+steady state, with 10 years as a house horizon), the continuing value adds back net R&D
+investment, and the base case is the headline value with bear and bull as unweighted
+stress cases.
+The memo reports value relative to price beside a stylized S&P 500 valued under the
+same conventions, the discount rate the price implies beside the required return, and
+the value under alternative conventions one change at a time. Beside those rows it
+values the base case at other horizons, at Mauboussin's industry fade, under other rate
+regimes and with Damodaran's revenue-weighted country risk premium. The memo also places each scenario's revenue
+growth, and the growth the price requires, in Mauboussin's published base rates for
+companies of the same size. None of these exhibits changes the value or checks the plan.
+The memo sets no entry prices, margins of safety or position sizes. See
 [market-consistent conventions](docs/underwriting.md#keep-the-discount-rate-consistent-with-the-equity-risk-premium).
 
-The valuation includes operating growth/margins, taxes, incremental sales-to-capital,
-terminal reinvestment at terminal ROIC, discount rates, net debt and noncommon claims,
-bear, base and bull cases, sensitivities and a reverse DCF where a market price is available.
+The valuation includes operating growth/margins, taxes, incremental sales-to-capital (one
+ratio or a path), terminal reinvestment at terminal ROIC, discount rates, net debt,
+non-operating investments, noncommon claims and diluted shares, bear, base and bull
+cases, forecast return on invested capital, sensitivities and a reverse DCF where a
+market price is available.
 Optional company-specific operating schedules derive revenue and EBIT from sourced
 starting categories and explicit forward drivers. Dated required-return inputs can
 compute WACC; sector betas, issuer return history and debt-yield proxies retain their
@@ -293,7 +307,7 @@ python -m pip install .
 investmentideas --help
 ```
 
-The current source passes **613 tests** locally on Python 3.9, 3.12 and 3.13; the
+The current source passes **814 tests** locally on Python 3.9, 3.12 and 3.13; the
 v0.2.0 release passed 268. The
 [CI matrix](https://github.com/praveenchunduru/IntrinsicValue/actions/runs/42261827883)
 tests Python 3.10, 3.12 and 3.13. CI runs synthetic evidence and mocked transports without model calls or

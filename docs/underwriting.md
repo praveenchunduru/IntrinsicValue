@@ -14,17 +14,19 @@ figures are a dated snapshot, not defaults for other companies or future runs.
 Use three-letter `currency`, `amount_unit="currency_units"` and
 `share_unit="shares"`: money is in whole currency units and shares are whole
 shares, not millions. Each actual needs a `source_refs` entry. The full pipeline
-pins supported annual revenue, outstanding shares and the debt/cash/claims bridge
-to primary inline-XBRL or normalized SEC Companyfacts records. It rejects essential coverage gaps rather than
+pins supported annual revenue, outstanding shares, the debt/cash/claims bridge,
+non-operating investments and the dilutive share increment to primary inline-XBRL
+or normalized SEC Companyfacts records. It rejects essential coverage gaps rather than
 letting a forecast replace a reported number. A supplied forecast passes through
 the same input lock and source-reference checks.
 
 The net-debt bridge deducts selected directly reported cash, marketable securities
 and short-term investments exactly once. Inclusive subtotals replace their parts.
 Absent optional investment categories are excluded under the disclosed selected-asset
-policy, rather than asserted to be zero. Unclassified long-term investments are
-excluded. Classifying selected assets as nonoperating is a house policy, not a
-reported assertion that all cash is surplus.
+policy, rather than asserted to be zero. Unclassified long-term investments stay
+out of cash; the equity bridge below adds them separately. Classifying selected
+assets as nonoperating is a house policy, not a reported assertion that all cash is
+surplus.
 
 Debt can use a complete financial-debt total or reconciled, disjoint short- and
 long-term components. A narrow long-term tag is not promoted to whole-company debt just
@@ -41,6 +43,7 @@ order, and `net_debt_bridge.short_term_financing.basis` records which one applie
 | `reported` | A reported short-term borrowing total, or a complete whole-debt total | `pinned` |
 | `manual_primary_review` | A reviewed classification with an exact same-source excerpt | `pinned` |
 | `reported_current_debt_identity` | Reported current debt equals reported current long-term debt, so short-term borrowing is zero by arithmetic | `pinned` |
+| `reported_current_debt_less_current_maturities` | A short-term borrowings line equal to reported current debt within its stated rounding, less current long-term debt and current finance leases | `pinned` |
 | `identified_categories_house_assumption` | Commercial paper and other short-term borrowings as reported, with nothing further assumed | `pinned_with_disclosed_assumption` |
 
 The last basis is a house assumption. It applies only when the run fetched the
@@ -57,18 +60,36 @@ short-term financing and long-term debt without issuer disclosure, so it stops
 the bridge. A reported total always displaces the assumption, and reported
 current debt above the identified categories contradicts it.
 
-Three exact reconciliations handle recurring issuer tagging patterns. Each uses
-only reported amounts and is recorded in the bridge:
+These reconciliations handle recurring issuer tagging patterns. Each uses only
+reported amounts and is recorded in the bridge:
 
 - `LongTermDebt` equal to `DebtInstrumentCarryingAmount` (gross principal) is set
   aside when gross less the reported unamortized discount and issuance costs equals
-  current plus noncurrent carrying debt. The carrying amounts are used.
+  current plus noncurrent carrying debt. The carrying amounts are used. The same test
+  sets aside principal observations when one date carries both: Uber's 10-K tagged
+  `LongTermDebt` at $10,600 million of principal and later 10-Q comparatives at the
+  $10,521 million carrying amount.
 - A whole-debt total equal to the reported long-term subtotal, alongside separately
   reported positive short-term borrowings, is excluded as narrower than its taxonomy
   scope. The components are used, which is the larger figure.
+- A `ShortTermBorrowings` line equal to reported current debt (`DebtCurrent`) within
+  its stated rounding is read as the current-debt total when current long-term debt is
+  larger than that rounding. Short-term borrowings are then the line less current
+  long-term debt and current finance leases (Johnson & Johnson: $8,495 million less
+  $2,000 million), under the basis `reported_current_debt_less_current_maturities`.
 - A value repeated in prose at a coarser stated inline precision (`decimals`) is a
   duplicate when it lies within half a unit of that precision of the most precisely
   reported amount.
+- Scope checks allow half a unit of each inline amount's stated precision, summed
+  over a total and its parts. Procter & Gamble's current-debt parts, each rounded to
+  millions, come to $11,297 million against a $11,296 million total. Company-facts
+  values carry no stated precision and compare exactly.
+- Where no cash and cash equivalents concept is tagged on the date and no restricted
+  cash is reported, the total including restricted cash stands in for cash (Procter &
+  Gamble). Net debt is then `pinned_with_disclosed_assumption`.
+- The available-for-sale securities total is a fallback for issuers that report no
+  other investment category. Its conflicting observations stop the bridge only when
+  no other category is selected (Uber restated it by $1 million in later comparatives).
 
 Anything else that conflicts stays a conflict. When both exist for the same year,
 total revenues (`us-gaap:Revenues`) are selected over a smaller contract-revenue
@@ -84,13 +105,59 @@ remains an expense and operating-lease liabilities are not added to debt. When
 the whole SEC entity record reports no finance or capital lease liability concept
 on the balance-sheet date, finance leases are assumed zero and labelled as an
 assumption in `other_claims_bridge`. A partial lease disclosure stays unknown.
-Outside these two labelled assumptions, missing liability categories never become zero.
+Outside these two labelled assumptions, missing debt and lease categories never
+become zero.
+
+Equity value then adds non-operating investments (`actuals.nonoperating_assets`) at
+carrying value on the balance-sheet date of net debt. The lines are those the
+return-on-capital table removes from invested capital: `LongTermInvestments` where it
+is tagged, otherwise noncurrent securities plus the largest of equity-method
+investments, other long-term investments and non-marketable equity securities, which
+can contain one another. A line that may already be in the selected cash is not added
+again: Apple's $80.2 billion of noncurrent marketable securities stay in cash, and a
+`LongTermInvestments` total beside noncurrent securities selected as cash gives way to
+the equity-investment lines. Marketable equity securities are added only when the
+selected cash holds just cash and debt securities and no added line can contain them.
+A reported quoted value is printed beside the bridge and left out of it (Coca-Cola's
+equity-method stakes: $20.2 billion carrying, $34.3 billion quoted).
+`nonoperating_assets_bridge` lists each line added and each line left out with the
+reason.
+
+`other_equity_claims` adds to finance leases the noncontrolling interests (total
+equity less parent equity where no interest is tagged), redeemable noncontrolling
+interests, preferred stock and net unfunded defined-benefit pension and
+postretirement obligations, each at carrying value, with the parts in
+`other_claims_bridge.components`. Pension obligations are the recognized liabilities
+less the recognized assets of overfunded plans, before tax, and a net surplus is not
+added. Damodaran deducts underfunded obligations between firm and equity value and,
+under his conservative rule, adds nothing for excess plan assets ("Dealing with Cash,
+Cross Holdings and Other Non-Operating Assets", 2005). Where no defined-benefit concept
+is tagged, a reported postemployment obligation stands in (AT&T). Preferred stock whose
+conversion the filing counts in diluted shares is deducted through the share count
+instead (Procter & Gamble). The discount-rate weights are unchanged: market equity is
+the price times outstanding shares, and noncontrolling interests and preferred stock
+carry no weight.
+
+Value per share divides equity value by outstanding shares plus the dilutive increment
+(`actuals.dilutive_shares`): the anchor fiscal year's diluted less basic
+weighted-average shares, which counts awards by the treasury-stock method and
+convertibles as if converted. Separately reported conversion shares of convertible debt
+are removed, because net debt already deducts that debt. When outstanding shares are
+more than 1.5 times the year's basic average or less than two thirds of it, as after a
+split, the increment is scaled by their ratio. Stock-based compensation stays an
+operating expense, and unvested awards beyond the diluted count are not valued. A
+bridge line with no reported concept is zero by disclosed assumption. Coverage is
+complete only when all six fields are pinned. Plans saved without `nonoperating_assets`
+and `dilutive_shares` value them at zero and revalue unchanged. The memo prints a
+base-case table from enterprise value to value per share, one row per line with its
+source and basis.
 
 Companyfacts records retain their actual API origin, filing/accession dates,
 units and raw values. They are not labeled as inline context facts. The financial
 context table preserves annual operating cash flow, capex, inventory, repurchases,
 taxes and other recognized observations when available. Conflicting observations
-remain visible; weighted-average shares never replace outstanding shares.
+remain visible. Weighted-average shares never replace outstanding shares; their
+diluted-less-basic difference sets only the dilutive increment.
 
 ## Build a company-specific operating bridge
 
@@ -136,16 +203,25 @@ in gross-profit mode, `ebit_margins`. Python derives them and rejects conflictin
 duplicates. Other scenario fields remain explicit: probability, cash operating
 tax, incremental sales-to-capital, terminal growth and terminal ROIC (under the
 rate glide below, terminal growth may be omitted and defaults to the risk-free
-rate; in the full pipeline Python sets the probabilities and the terminal ROIC, and
-`terminal_roic_basis: "terminal_rate"` makes the terminal return follow the terminal
-discount rate of any rate path applied). The model does not infer these from category history.
+rate; in the full pipeline Python sets the probabilities, the terminal ROIC and the
+continuing value's R&D shares, and `terminal_roic_basis: "terminal_rate"` makes the
+terminal return follow the terminal discount rate of any rate path applied). The model
+does not infer these from category history.
 
 GAAP R&D and SG&A must retain their stock-compensation and rent costs under this
 convention. Do not deduct them again. FCFF is EBIT less cash operating taxes and
-incremental revenue divided by sales-to-capital. Maintenance investment is assumed
-to offset depreciation. Negative EBIT creates no automatic cash tax credit.
-Terminal reinvestment is terminal NOPAT × growth / ROIC; inspect the transition
-from the last forecast year rather than treating terminal cash flow as a plug.
+incremental revenue divided by sales-to-capital. Sales-to-capital is one ratio,
+`{"year1", "target", "target_year"}` (a straight line to the target, then held, as
+expense shares are), or one ratio per forecast year, so a capex cycle can be stated.
+Python writes the per-year ratios as `sales_to_capital_path` and rejects a stated path
+that disagrees. Year t's ratio prices year t's revenue increase, so the capital in
+place at the end of the forecast supports that year's NOPAT. Maintenance investment is
+assumed to offset depreciation. Negative EBIT creates no automatic cash tax credit.
+The continuing value capitalizes the final model year's NOPAT at the terminal tax
+rate, plus any net R&D investment (see the house conventions below), as
+NOPAT × (1 − g / ROIC) / (r − g), with no further growth step; each later year's
+reinvestment, growth / ROIC of NOPAT, pays for the year after.
+`computed_diagnostics.terminal_transition` shows the step from the last forecast year.
 
 ## Start year 1 from the reported results
 
@@ -157,7 +233,11 @@ with its XBRL concept, sources and basis. Only annual facts for the revenue anch
 exact fiscal year count. When a line is reported only in parts it is derived and
 labelled: SG&A as selling and marketing plus general and administrative, operating
 expenses as total costs and expenses less cost of revenue, and gross profit as revenue
-less cost of revenue. A concept whose observations conflict leaves its line out. The
+less cost of revenue. R&D is the larger of `ResearchAndDevelopmentExpense` and its part
+excluding acquired in-process cost, since the inclusive concept cannot be the smaller:
+Johnson & Johnson tags only its $0.1 billion in-process charge with it, against $14.7
+billion of R&D excluding it in fiscal 2025. The history and return-on-capital tables
+use the same rule. A concept whose observations conflict leaves its line out. The
 latest year to date of the first forecast year from 10-Q facts is reported beside it.
 These lines are reference data and never valuation inputs.
 
@@ -177,37 +257,101 @@ the reported results with any stated basis.
 Two more anchors work the same way, each with its reference computed by Python from
 the reported history, shown to the plan author and printed in the exhibits:
 
-- **Reinvestment.** Net reinvestment is capital expenditure less depreciation and
-  amortization, plus acquisitions and finance-lease additions where reported. Over
-  forecast years 1-3, a scenario needs `capital_efficiency_basis` when either its net
-  reinvestment is below two thirds of three years at the last reported figure, or its
-  sales-to-capital is above 1.5 times the reported three-year incremental rate.
-  Businesses whose depreciation exceeds capital spending, or whose revenue fell, are not
-  checked. Leases signed but not yet commenced are disclosed in the evidence and not
-  deducted.
+- **Reinvestment.** Incremental sales-to-capital is the revenue increase over the last
+  three fiscal years divided by each of two measures of the investment in those years.
+  One is net reinvestment: capital expenditure less depreciation and amortization, plus
+  acquisitions and finance-lease additions where reported. The other is the change in
+  invested capital by Mauboussin and Callahan's method, which also counts working
+  capital, operating leases and purchased intangibles. The lower rate is the reference
+  (Nvidia: 9.6 on net reinvestment, 2.2 on invested capital). Over forecast years 1-3, a
+  scenario needs `capital_efficiency_basis` when its net reinvestment is below two
+  thirds of three years at the last reported net reinvestment (where that is positive),
+  or when its sales-to-capital is above 1.5 times the reference. A business whose
+  capital spending is below depreciation is still checked when invested capital rose
+  (Apple, Uber). One whose revenue fell, or whose investment rose on neither measure, is
+  not checked. The repair message names the basis and gives the other rate. Leases
+  signed but not yet commenced are disclosed in the evidence and not deducted.
 - **Final-year margin ceilings.** Bear at most the reported five-year average
-  operating margin; base and bull at most the reported five-year peak plus 5 points
-  (40% of the peak when that is smaller, with a floor of 1.5 points, as in the year-1
-  band). No citation lifts a ceiling. A business with no profitable year in the history
-  has no ceiling. Plans had let expenses fall to half their share of revenue, raising
-  margins in every scenario.
+  operating margin, where that average is positive. Base and bull at most the higher of
+  the reported five-year peak and the latest twelve-month operating margin, plus 5
+  points (40% of that margin when smaller, with a floor of 1.5 points, as in the year-1
+  band). The twelve months are the four latest fiscal quarters, reported or derived,
+  when the last of them ends after the last fiscal year; failing that, a year to date
+  of at least two quarters, since one quarter is too seasonal. The latest margin only
+  raises a ceiling, and no citation lifts one. A business with no profitable year in
+  the history has no ceiling, and one whose five-year average is not positive has no
+  bear ceiling, because the engine requires a positive final margin (Uber). Plans had
+  let expenses fall to half their share of revenue, raising margins in every scenario.
+
+## Compare revenue growth with base rates
+
+Python places each scenario's revenue path in Mauboussin's published base rates for
+companies of the same starting size, and prints the result in the memo and in
+`valuation.json` (`base_rates`). For 3, 5 and 10 years it computes compound annual
+growth from the last reported revenue along the computed path, and its percentile in
+the matching size class. The growth the price requires (the base path with the
+required shift in every explicit year) gets the same treatment. The summary's
+revenue-growth requirement row gives the 10-year percentile of both the house path and
+the required one.
+
+The newest table covering the size and horizon is used. For 5 years that is "Bayes and
+Base Rates 2.0" (May 2026, Exhibit 1) for USD 2-5 billion of starting sales and "Bayes
+and Base Rates" (February 2026, Exhibit 5) for USD 8-12 billion, both nominal, read
+with a normal approximation because they give only a mean and standard deviation.
+Otherwise it is "The Base Rate Book" (Mauboussin, Callahan and Majd, 2016, Exhibit 4,
+with bin counts from its appendix), whose growth is after inflation and whose
+percentiles interpolate within five-point bins. Starting sales are restated in each
+table's dollars with US CPI-U. For the 2016 tables plan growth is deflated at a stated
+2.0% a year, the Federal Reserve's longer-run goal, because the pipeline collects no
+inflation expectation. The book gives margin persistence only by sector, with no
+distribution of company margins, so no margin percentile is shown. Plans in other
+currencies are not compared, and offline `--revalue` output has no base rates.
+
+The plan author sees the reference distributions for the company's size class, a
+review correction sees the plan's percentiles, and the writer and reviewer read them in
+the valuation context. Nothing is checked against them.
 
 ## House conventions the plan does not choose
 
 - **Terminal return on new capital equals the terminal discount rate**, Mauboussin's
-  steady state. The 10 forecast years are the competitive advantage period: excess
-  returns on new investment come only from those years' growth and capital efficiency.
-  Afterwards new investment earns its cost of capital, so growth adds no value and the
-  continuing value is year-11 NOPAT over the terminal discount rate, the form of
-  Appendix A of Mauboussin and Callahan's 2022 ROIC paper and of "Market-Expected
-  Return on Investment" (2021). Python computes each scenario's terminal rate from the
-  rate inputs (the glide target, or the constant WACC) before valuing the plan, so a
-  locked plan locked again keeps it. The convention panel shows the value with a
-  terminal return 4 points above the terminal rate, at the reported five-year median
-  ROIC capped at 15% (the earlier house rule) where that differs from 15%, and at 15%
-  and 25%. The implied equity risk premium behind the discount rate assumes the market
-  as a whole earns more than its cost of capital on new investment; the 15% row shows
-  the value under that assumption for this company.
+  steady state. The 10 forecast years are a house horizon, and no company's competitive
+  advantage period is measured: excess returns on new investment come only from those
+  years' growth and capital efficiency. Afterwards new investment earns its cost of
+  capital, so growth adds no value and the continuing value is year-10 NOPAT over the
+  terminal discount rate, the form of Appendix A of Mauboussin and Callahan's 2022 ROIC
+  paper and of "Market-Expected Return on Investment" (2021). Value is then exactly
+  invariant to terminal growth when the plan has no steady-state years, as with every
+  plan of at least 10 years and every constant-rate plan; under the glide a shorter
+  plan's steady-state years keep a small timing effect. Python computes each scenario's
+  terminal rate from the rate inputs (the glide target, or the constant WACC) before
+  valuing the plan, so a locked plan locked again keeps it. The convention panel shows
+  the value with a terminal return 4 points above the terminal rate, at the reported
+  five-year median ROIC capped at 15% (the earlier house rule) where that differs from
+  15%, and at 15% and 25%. The implied
+  equity risk premium behind the discount rate assumes the market as a whole earns more
+  than its cost of capital on new investment; the 15% row shows the value under that
+  assumption for this company. In Mauboussin and Callahan's "Competitive Advantage
+  Period: The Neglected Value Driver" (April 2026) the period differs by company, so the
+  panel also values the base case with horizons of 5, 15 and 20 years and at
+  Mauboussin's industry fade rate.
+- **The continuing value adds net R&D investment back to NOPAT.** Margins expense R&D,
+  and the continuing value also charges reinvestment at the terminal return, so without
+  the add-back every R&D dollar after the forecast would earn below its cost. Python sets
+  each scenario's `rnd_share_path` at lock from the plan's R&D line, one share per year
+  (an edited line or an R&D counterfactual carries it along), holds the reported share
+  when the plan has no R&D line, and sets none when the company reports no R&D (Costco).
+  Net R&D investment is final-year R&D less one sixth of the forecast's own R&D in the
+  six prior years, straight line from the year after the spending (the life the
+  return-on-capital table uses), and NOPAT adds it, as in Damodaran's EBIT(1 − t) + R&D −
+  amortization ("Research and Development Expenses: Implications for Profitability
+  Measurement and Valuation", 1999). Selling and administrative costs stay expensed. For
+  forecasts shorter than six years, reported R&D (`reported_rnd_history`) fills the years
+  at or before the anchor; only when that is also too short does the amortization assume
+  R&D grew at terminal growth, and `terminal_rnd_addback.amortization_basis` says so.
+  Value stays exactly invariant to terminal growth under the steady state. Steady-state
+  years before the continuing value keep R&D expensed. The convention panel shows the
+  value with R&D expensed in the continuing value (the earlier house rule). Plans
+  supplied with `--forecast-plan` get no add-back unless they state `rnd_share_path`.
 - **The base case is the headline value.** Bear and bull are stress cases without
   probabilities; Python sets the probabilities to 0, 1 and 0 and drops any
   `weights_basis`. The summary table labels each case's role and has no weighted row.
@@ -216,7 +360,14 @@ Owner choices: the terminal return and weights on 2026-11-15, after same-evidenc
 set terminal returns of 20-30% and different weights, moving value by several percent
 between runs; the headline base case, cost shares, margin ceilings and the three-year
 reinvestment window on 2026-11-26, and later that day Mauboussin's steady state in place
-of a 15% terminal return limited by the reported median ROIC.
+of a 15% terminal return limited by the reported median ROIC. After the three-lens
+critique the same day: the 10-year steady state stays the house rule, with horizons of
+5, 15 and 20 years and Mauboussin's industry fade as panel rows; the continuing value
+capitalizes year-10 NOPAT with no further growth step and adds back net R&D investment
+(R&D only, six-year life, from the forecast's own R&D); Damodaran's revenue-weighted
+country risk premium is a panel row only, because the S&P 500 implied premium already
+reflects US companies' foreign revenue; and base rates appear as printed percentiles,
+with no check.
 
 ## Date the required-return inputs
 
@@ -270,10 +421,12 @@ finance leases and quote-derived market equity are reconciled with the valuation
 bridge. Different-date or different-measurement records are labeled as such,
 rather than falsely described as reconciled.
 
-Live evidence collection attempts three keyless public calibration sources:
+Live evidence collection attempts five keyless public calibration sources:
 
 - Damodaran's monthly sustainable-payout implied ERP and its same-row Treasury
-  proxy. A newer Treasury rate must not silently replace the paired rate.
+  proxy. A newer Treasury rate must not silently replace the paired rate. The pairs for
+  the ten years ending at that row are kept for the rate-regime exhibit, outside model
+  prompts and the figure check.
 - Damodaran's January US sector beta table, preserving month precision and
   separate uncorrected/cash-corrected asset betas. The forecast author can map the
   company to named industries for a bottom-up beta; Python copies each industry's
@@ -281,10 +434,17 @@ Live evidence collection attempts three keyless public calibration sources:
   conventions are not established by the table.
 - FRED's ICE BofA AA US Corporate Index Effective Yield, explicitly a debt-cost
   proxy whose rating, maturity and composition may differ from issuer debt.
+- Damodaran's dated country risk premium page and the workbook it links, whose
+  "Regional Weighted Averages" sheet gives GDP-weighted regional premiums. Each
+  published regional average must equal the GDP-weighted average of its countries.
+  The workbook states no date of its own, so it is dated by its last-modified stamp,
+  and it is used only when its US and mature-market premiums match the page's. Models
+  see only the tables' dates and base premiums.
 
 Strict parsers archive original bytes and provenance. Retrieval or format failure
-creates a gap, not a substitute rate. These sources do not establish an issuer
-country-risk premium or reconstruct an unrevised historical source vintage.
+creates a gap, not a substitute rate. The country risk tables feed only the panel row
+described in the next section, and none of these sources reconstructs an unrevised
+historical source vintage.
 
 ## Keep the discount rate consistent with the equity risk premium
 
@@ -296,8 +456,11 @@ keeps earning its 10-year average return on equity on new investment. A company 
 that uses this premium with a lower terminal growth rate values the index itself below
 its price. Reproducing his November 1, 2026 estimate (4.41% over a 4.94% Treasury
 rate) and valuing the index again with 3% terminal growth gives about 80% of its
-price. Setting every firm's return on new capital equal to its cost of capital gives
-about 65%.
+price. Setting every firm's return on new capital equal to its cost of capital from
+year 6, the end of his five years of consensus growth, gives about 62% under the house
+continuing value, and about 69% when the index keeps its return on equity for the
+house's 10 years. Before 2026-11-26 the continuing value capitalized the following
+year's earnings, and the same calculation gave about 65% and 72%.
 
 A plan opts into conventions that match the premium with
 `discount_rate.term_structure="glide_to_market_v1"` and a dated
@@ -306,8 +469,8 @@ A plan opts into conventions that match the premium with
 - Years 1-5 use the current WACC. The rate then moves linearly to a terminal WACC by
   year 10, and the terminal value uses the terminal WACC. A forecast shorter than 10
   years is extended to year 10 with steady-state years at terminal growth, the final
-  margin and reinvestment of NOPAT × growth / ROIC. A longer forecast holds the
-  current rate until five years before its end.
+  margin and reinvestment that pays for that year's revenue increase at the terminal
+  return. A longer forecast holds the current rate until five years before its end.
 - The terminal WACC uses the market's cash-corrected operating-asset beta (the
   industry table's "Total Market (without financials)" row), relevered at the firm's
   own debt-to-equity ratio with its current debt cost and marginal tax rate.
@@ -320,8 +483,9 @@ A plan opts into conventions that match the premium with
   scenario whose final forecast growth is below 1%, or whose terminal ROIC is below
   the risk-free rate, must state its terminal growth.
 - The terminal WACC must exceed terminal growth by at least one point. The memo flags
-  a scenario whose spread is under two points, and sensitivity, convention-panel and
-  implied-return rows under two points are marked fragile.
+  a scenario whose spread is under two points, and sensitivity and convention-panel
+  rows under two points are marked fragile, as are implied-return rows where the
+  terminal return does not follow the rate.
 - Optional scenario `terminal_tax_rate` sets the operating tax rate for steady-state
   years and the terminal value; it defaults to the scenario's last tax rate.
   Damodaran's spreadsheet glides the tax rate to the marginal rate over the forecast.
@@ -360,32 +524,102 @@ Every plan with a market price reports:
   discount rate, applied in every year and in the terminal value, at which value
   equals the price. Beside it is the same calculation at the house value, the
   flat-equivalent required return. This describes what the price implies about the
-  discount rate and makes no forecast of shareholder returns.
+  discount rate and makes no forecast of shareholder returns. Where the terminal return
+  follows the rate, the search starts at 0.5%, below terminal growth, because the
+  continuing value is then NOPAT over the rate; otherwise it starts just above terminal
+  growth, and only those rows can be marked fragile. When no rate in the range gives the
+  price, `price_bound` reports the highest and lowest values with the rates that give
+  them, and the summary says that no flat rate in the searched range, up to 50%,
+  reconciles the price.
 - `convention_panel`: base value with one convention changed at a time: the current
   rate held constant, Damodaran's terminal rate, terminal growth at the risk-free rate,
   steady-state and terminal tax at the marginal rate, a terminal return 4 points above
   the terminal rate, the earlier house rule (the reported five-year median ROIC, at most
   15%, where that is neither 15% nor the terminal rate), the base-case margin held at or
   below the reported five-year peak (when the history is profitable), a 15% and a 25%
-  terminal return, terminal reinvestment that continues the forecast's capital
-  efficiency, and the whole rate path one point higher and lower.
+  terminal return, terminal reinvestment that continues the forecast's final-year
+  capital efficiency with R&D kept expensed as in the forecast, R&D expensed in the
+  continuing value (the earlier house rule, where an R&D share is set), and the whole
+  rate path one point higher and lower.
   Rows carry no probability. The largest convention row is named; the two rate shifts
   show scale and are not ranked. Rows that need the glide appear only under it.
+- Exhibit rows in the same panel, never ranked and never changing the house value:
+  - **Horizons.** Five years keeps plan years 1-5 and makes the later model years
+    steady-state years. Fifteen and twenty years hold the final-year margin and capital
+    efficiency (the final sales-to-capital and R&D share where those are paths) while
+    growth moves in equal steps to terminal growth, on the house rate path (under the
+    glide, the current rate to year 5, the glide to year 10 and the terminal rate
+    after). Plans still state 1-15 explicit years; only these rows run to 20.
+  - **Industry fade.** The bottom-up beta's industries map to the GICS industry groups
+    of Exhibit 25 in Mauboussin and Callahan's April 2026 paper (fade rates from 0.10
+    for staples to 0.30 for utilities). A fade rate f reads as 1/f more years of the
+    final-year economics (Holland's equivalence, p33; his simplified formula gives
+    shorter equivalents, footnote 130), weighted by the beta weights and rounded to
+    whole years. Financials, real estate and industries that span groups with
+    different rates (Diversified, Green & Renewable Energy, Retail (General)) have no
+    group, so such a company gets a note instead of a row.
+  - **Rate regimes.** The cash flows stay fixed while the Treasury rate moves 1 and 2
+    points either way, with the premium and the debt spread held. Under the glide,
+    terminal growth that equals the risk-free rate moves with it, a stated lower rate
+    is kept up to the new risk-free rate, and the terminal return follows the new
+    terminal rate; constant-rate plans keep their terminal growth. Where terminal
+    growth moves, the row also gives the value at the house terminal growth. The base
+    case is also valued at each month's Treasury rate and implied premium over the ten
+    years ending at the plan's own pair; two rows give the lowest and highest values
+    and name their months, and the memo gives the median. A plan without dated rate inputs moves the
+    whole rate path one for one, and a house hurdle gets no rate values.
+  - **Country risk**, described after this list.
+- `index_benchmark`: a stylized S&P 500 under the same conventions, printed in the
+  summary table beside the company's value / price. Damodaran's monthly workbook has
+  no index earnings or return on equity, so the benchmark is a steady state. The index
+  grows at the risk-free rate and earns 15% on new capital (the market figure behind
+  the 15% convention row). Its price assumes those returns forever, as the premium
+  does; its house value keeps them for the plan's forecast years, after which new
+  capital earns its cost. At the November 1, 2026 pair (4.94%, 4.41%) and 10 years the
+  ratio is 0.78. With his November 2026 inputs (15.5% growth for five years and a
+  19.45% return on equity) the same 10-year structure gives about 0.69, so the stylized
+  benchmark runs about 0.09 high. The memo labels it a steady state that does not
+  reproduce his cash flows.
 - `price_requirements`: for the base case, how far one input at a time would have to
   move for value to equal the price: revenue growth or EBIT margin in every explicit
   forecast year (as a shift in points, with the year-1 figure and the compound revenue
   growth or average margin it produces over all forecast years), terminal return on new
-  capital, sales-to-capital, or terminal growth. Only inputs the engine accepts are
-  searched; a row that cannot
-  reach the price reports the closest value and on which side of the price it stays.
-  Rows are alternatives, never combined.
+  capital, sales-to-capital (one ratio in every explicit year, in place of any house
+  path), or terminal growth. Only inputs the engine accepts are searched; a row that
+  cannot reach the price reports the closest value and on which side of the price it
+  stays. Rows are alternatives, never combined.
 - `value_to_price` for each scenario and `weighted_value_to_price`. Percentage upside
   is no longer reported.
 
+**Country risk (one panel row).** At lock Python pins `country_risk_reference`: the
+latest annual filing's revenue by geography, or a segment breakdown whose members are
+all regions, mapped by member name to Damodaran's dated tables. A country takes its own
+premium, a region the GDP-weighted average of its countries, and a "rest of world" line
+the countries the filing does not report separately. Premiums are measured over the US
+premium (0.23 points in January 2026), because the house cost of equity already pairs
+the Treasury rate with the implied premium, so US revenue adds nothing. Only a set of
+members whose revenue adds up to reported revenue within 0.1% is used; a region is split
+by a country the filing reports elsewhere for the same year (Apple's Americas less its US
+revenue); members reported within a business segment are not used. Unmapped revenue is
+excluded from the weights and listed. When there is no geographic split, no set that
+adds up, less than half of revenue mapped or no dated discount rate, the panel says why
+in place of the row. The row adds the weighted premium to the cost of equity in every
+year and in the terminal value, as premium times revenue exposure with no beta scaling
+(Damodaran's lambda approach, "Country Risk: Determinants, Measures and Implications",
+2025 edition). The cost of debt and the capital weights are unchanged, so every rate
+rises by the equity weight times the premium. The S&P 500 implied premium already
+reflects US companies' foreign revenue, so the row overstates the adjustment against
+that benchmark; it is not ranked and the house value is unchanged. Labels are matched by
+name, so a company's own region definitions are not read (Apple's Europe segment
+includes India, the Middle East and Africa), and GDP weights the countries inside a
+region.
+
 Plans valued under the glide or a valuation-date stub also report `discounting` (the
 base rate path, terminal rate and their inputs), and their model ID ends in `-v2`.
-Other plans keep the `-v1` ID and produce the same values as before; the shipped
-examples recompute to identical per-share values.
+Other plans keep the `-v1` ID. Since 2026-11-26 every plan's continuing value
+capitalizes final-year NOPAT, so the shipped examples recompute to identical explicit
+cash flows with continuing values 1/(1+g) of the saved ones (the revised Apple base
+case moves from $162.07 to $159.53).
 
 Limits: leverage moves the rate through the debt tax shield and through the gap
 between the pretax debt cost and the risk-free rate. The current debt-to-equity ratio
@@ -459,11 +693,12 @@ Alternative historical fits are not forward confidence intervals.
 
 Separately, up to eight named `counterfactuals` override base forecast inputs.
 Supported aggregate fields are `growth_rates`, `ebit_margins`, `tax_rate`,
-`terminal_tax_rate`, `sales_to_capital`, `wacc`, `terminal_growth`,
-`terminal_growth_basis` and `terminal_roic`. Under the glide a counterfactual `wacc` is
-one flat rate in every year and in the terminal value. Arrays keep the
-base horizon. With an operating model, use `operating_overrides` for existing
-component growth/margin arrays or existing expense arrays. Do not mix operating
+`terminal_tax_rate`, `sales_to_capital` (a ratio or a path), `wacc`, `terminal_growth`,
+`terminal_growth_basis`, `terminal_roic` and `rnd_share_path`. Under the glide a
+counterfactual `wacc` is one flat rate in every year and in the terminal value. Arrays
+keep the base horizon. An operating case that changes the R&D line changes the
+continuing value's R&D with it. With an operating model, use `operating_overrides` for
+existing component growth/margin arrays or existing expense arrays. Do not mix operating
 drivers with aggregate growth/EBIT overrides. For example, in a five-year model
 with an existing `services` component:
 
@@ -531,9 +766,17 @@ and annual revenue, cost and
 operating income by product or service, segment and geography from the filing's
 inline XBRL. Per-share and share-count values reported only before a later split
 restatement, and buyback prices without a matching value and share count, are shown
-as n/a. The 10-K and 10-Q excerpts include gross-margin, inventory, purchase
-commitment and share-repurchase disclosures. The tables are derived from the archived
-documents on every run, so a folder collected earlier gets new columns.
+as n/a. Beside the annual history, a table of the latest eight fiscal quarters from the
+same company facts gives revenue, growth on the year-earlier quarter, operating margin,
+and inventory and deferred revenue where tagged. A quarter not reported on its own is
+derived from cumulative periods of its fiscal year (the fourth quarter as the year less
+nine months, which covers Costco's 16-week quarter) and marked derived; each fiscal
+year uses one revenue concept. The four latest quarters give the twelve-month margin
+the ceilings use. The annual tables showed Nvidia's 0.2% growth and 16% margin for the
+year to January 2023 while its quarterly margins ran at 7%, 10% and then 30%. The 10-K
+and 10-Q excerpts include gross-margin, inventory, purchase commitment and
+share-repurchase disclosures. The tables are derived from the archived documents on
+every run, so a folder collected earlier gets new columns.
 
 Beside the history, Python computes return on invested capital by the method of
 Mauboussin and Callahan ("Return on Invested Capital: How to Calculate ROIC and Handle
@@ -563,13 +806,25 @@ years as openings:
   Microsoft's incremental ROIC for 2018-2021 differs from the paper's Exhibit 16.
 - ROIC is NOPAT over the average of opening and closing invested capital, shown with
   NOPAT margin and capital turnover, without goodwill and acquired intangibles, and
-  with internally generated intangibles capitalized where R&D, selling and marketing
-  and G&A are all reported (a missing R&D line is not taken as zero: Amazon reports
-  technology spending under its own concept) (100% of R&D over six years, 70% of selling and marketing and
-  20% of G&A over two years, straight line from the year after the spending, as the
-  paper applies to Microsoft).
+  with internally generated intangibles capitalized where R&D is reported (a missing
+  R&D line is not taken as zero: Amazon reports technology spending under its own
+  concept). Years marked (split), where selling and marketing and G&A are reported
+  apart, use the company method the paper applies to Microsoft: 100% of R&D over six
+  years, and 70% of selling and marketing and 20% of G&A over two years, straight line
+  from the year after the spending. Years marked (one line) use Peters and Taylor's
+  shares as Mauboussin and Callahan state them in "ROIC and Intangible Assets"
+  (November 2022, p9): 100% of R&D and 30% of SG&A, with the same lives, because that
+  paper sets lives by industry without listing them. A year uses the first basis on
+  which its opening capital is also measured, so an average never mixes the two (Apple
+  reports selling and G&A apart only from fiscal 2023). R&D is the larger of the
+  inclusive concept and its part excluding acquired in-process cost.
 - Incremental ROIC is the NOPAT change over three years over the change in invested
-  capital over the three years ending a year earlier; a fall in capital shows n/m.
+  capital over the three years ending a year earlier. It shows n/m when capital fell or
+  rose by less than a tenth of the average of the two capital figures (Johnson &
+  Johnson had shown 1,614% and Apple 534%).
+- The basis notes flag a latest NOPAT tax rate more than five points from its
+  three-year median and give that year's ROIC at the median rate (Microsoft: 10.7%
+  against 22.6%, ROIC 33.1% against 28.6%).
 
 On Microsoft's filings as of the end of 2022 the method reproduces the paper's example:
 invested capital of $96.1, $120.2 and $164.8 billion for fiscal 2020-2022 (paper: 96,
@@ -578,6 +833,14 @@ and 33.9% with intangibles capitalized (34%). NOPAT is $68.6 billion against the
 paper's $70 billion, which estimates about $1 billion of lease interest against $0.3
 billion here. The paper's industry-specific capitalization shares (Iqbal and others,
 by Fama-French industry) are not applied.
+
+Under the forecast, Python prints each scenario's ROIC and three-year incremental ROIC
+by year below the operating-bridge table, and the return on new capital after the
+forecast. Invested capital starts at the last reported operating-approach figure,
+goodwill and acquired intangibles included, and adds each year's net reinvestment;
+incremental ROIC starts in year 4. Forecast NOPAT is EBIT after the plan's tax rate,
+while the history uses EBITA after the cash tax rate, so the two differ slightly. The
+table is display only; no check uses it.
 
 The forecast author fills one template: an operating model when the filings report
 revenue by product, service or segment, otherwise aggregate growth and margin arrays.
@@ -591,9 +854,10 @@ returned no text. A thinking stage that ends that way is retried once without
 reasoning.
 
 Python places a valuation summary under the memo's title: scenario values and value /
-price, what the price implies, what the price requires, the largest convention steps
-and year-1 margin against the reported results. The writer gets eight sections of
-about 3,000 words in total and the shared quality standard (`quality.RUBRIC`). It
+price with the index benchmark's ratio beside them, what the price implies, what the
+price requires (with the base-rate percentile of the required growth), the largest
+convention steps and year-1 margin against the reported results. The writer gets eight
+sections of about 3,000 words in total and the shared quality standard (`quality.RUBRIC`). It
 copies computed and reported figures exactly and does no arithmetic of its own.
 
 Before the paid review, free checks (`quality.prereview_checks`) flag figures that
@@ -623,10 +887,12 @@ amount is within 3% of a reported year's buybacks takes that year's program valu
 average price, so the exhibits and the history table quote one price. By default one revision follows if material findings remain,
 and the second review checks the earlier findings rather than re-auditing from scratch.
 
-Python prints the reported history and the return-on-capital table (one column per
-year) and the segment tables after
+Python prints the reported history, the latest eight fiscal quarters, the
+return-on-capital table (one column per year) and the segment tables after
 the exhibits, with a scale check of the final forecast year against today; writers no
-longer re-type them.
+longer re-type them. The valuation section also prints the equity bridge from
+enterprise value to value per share, the base-rate table after the scale check, and
+the forecast ROIC under the operating bridge.
 
 The evidence is sent first in every Claude stage, marked for one-hour provider caching,
 and the review and its finding check share one prefix of evidence, valuation and the
@@ -679,7 +945,8 @@ python -m investmentideas --revalue assumptions.json --output revalued
 ```
 
 Offline revaluation uses the supplied facts and references; it does not fetch
-support, verify source truth, rewrite a previous memo or approve the new model.
+support, verify source truth, rewrite a previous memo or approve the new model. It
+runs the engine alone, so its output has no continuity checks or base rates.
 
 ## Costs and context size
 
@@ -716,12 +983,13 @@ applicable. Inspect the final artifact hashes and findings for the exact run.
 The review schema asks the reviewer to state the conclusion's central weakness, its
 computed value effect, whether the memo handles it and whether the memo explains the
 difference between value and price. An answer other than a plain yes counts as no or
-partly. Either answer short of yes, with no other material finding, becomes a major
-finding, so the draft goes back for revision. A review that gives neither answer gets
-a minor finding and can pass; the memo then shows the assessment as not stated. The
-default reviewer is a different model from the author: GPT-6.2 Sol for `balanced`
-and Kimi K3.1 Pro for `economy`. When `--strong-model` names the default reviewer, the
-profile's default author reviews instead. `--review-model` can name any model,
+partly. Since 2026-11-15 the answers are recorded for the reader and raise no finding:
+Python's summary states which inputs alone can and cannot bring value to the price. A
+review that gives neither answer gets a minor finding and can pass; the memo then shows
+the assessment as not stated. The default reviewer is a different model from the
+author: GPT-6.2 Sol for `balanced` (owner choice, 2026-11-26: the newest OpenAI
+generation in the catalog) and Kimi K3.1 Pro for `economy`. When `--strong-model`
+names the default reviewer, the profile's default author reviews instead. `--review-model` can name any model,
 including the author, and is saved with the run; a run folder saved before the
 cross-model default keeps its saved reviewer.
 
