@@ -33,7 +33,7 @@ from .macro import gather_us_calibration
 from .roic import _consecutive as roic_consecutive
 from . import country_risk
 from .market_beta import gather_weekly_beta
-from .prompt_context import valuation_context as render_valuation_context
+from .prompt_context import PROMPT_SIGNIFICANT_DIGITS, rounded as prompt_rounded, valuation_context as render_valuation_context
 from .primary_debt import classify_primary_debt
 from .operating import derive as derive_operating
 from .valuation import (_timing as _valuation_timing, evaluate, materialize, sales_to_capital_path, save_valuation,
@@ -46,6 +46,10 @@ VERSION = 'full-2'
 # review reserved about $5 (GPT-6.2 Sol, the default since 2026-11-26, about half), so a run with one revision needs about $15 of headroom
 # although it is expected to cost about $4.50 (Opus review, 2026-11-15).
 DEFAULT_BUDGET = 20.0
+# Revision rounds after the first review. A round is normally exact edits to the
+# prose; it rewrites the memo only when the plan changed or an edit for a blocker
+# or major did not apply. The loop stops as soon as no blocker or major survives.
+DEFAULT_MAX_REVISIONS = 2
 SECTIONS = '''Write these eight sections, in this order, starting with the heading "## 1. Valuation conclusion".
 Python writes the title and the first page above your text: the values, the table "What the price needs" and the
 table "Conventions that move the value most". It adds the valuation detail, reported history and method notes after
@@ -257,10 +261,188 @@ def _evidence_prefix(context):
     return 'Evidence:\n'+context+'\n'
 
 
-def _review_prefix(context, valuation_context, visible):
-    """Evidence, valuation and the fenced draft: identical for the review and its finding check."""
-    return (_evidence_prefix(context)+'Valuation:\n'+valuation_context+
-            '\nDraft (quote only text between the markers):\n<<<DRAFT\n'+visible+'\nDRAFT>>>\n')
+def _review_prefix(context, valuation_context):
+    """Evidence then valuation: the reviewer's cached block, identical for every review of one valuation.
+
+    The draft is not part of it. Live runs (2026-11-27) cached evidence, valuation
+    and draft together, so the second review paid the whole cache write again
+    for a change in the draft alone.
+    """
+    return _evidence_prefix(context)+'Valuation:\n'+valuation_context+'\n'
+
+
+def _draft_block(visible):
+    """The fenced draft, sent after the cached blocks and the instructions."""
+    return '\nDraft (quote only text between the markers):\n<<<DRAFT\n'+visible+'\nDRAFT>>>\n'
+
+
+def _model_valuation_context(plan, result):
+    """The valuation as models read it: floats to six significant figures; saved files keep full precision."""
+    if result is None:
+        return json.dumps({'assumptions':prompt_rounded(plan),'computed':None},ensure_ascii=False)
+    return render_valuation_context(plan,result,significant=PROMPT_SIGNIFICANT_DIGITS)
+
+
+def _prompt_json(value):
+    """Reference JSON for a prompt, with floats to six significant figures."""
+    return json.dumps(prompt_rounded(value))
+
+
+def _rounded_inputs(plan, result):
+    """The model-facing (rounded) plan and result, traced beside the originals.
+
+    A figure copied from the rounded context then traces even where rounding
+    twice (to six figures, then to the displayed digits) moves the last digit.
+    """
+    return (prompt_rounded(result), prompt_rounded(plan)) if result is not None else ()
+
+
+LATER_EVIDENCE = '\nSources collected after the evidence block above (the same evidence tiers apply):\n'
+
+
+def _freeze_evidence(state, *, refresh=False):
+    """Fix which sources the cached evidence block holds for the rest of the run.
+
+    The block is first written by the plan stage. Sources added later (targeted
+    research after a review) go in an uncached block after it, so every later
+    stage reads the same cached bytes. A new plan refreezes the block.
+    """
+    ids=[source.get('id') for source in state.get('sources',[]) if isinstance(source,dict)]
+    record=state.get('cached_evidence')
+    held=record.get('source_ids') if isinstance(record,dict) else None
+    if refresh or not isinstance(held,list) or not set(held)<=set(ids):
+        state['cached_evidence']={'source_ids':ids,
+                                  'prefix_sha256':_digest(_evidence_prefix(_evidence_context(state.get('sources',[]))))}
+
+
+def _evidence_blocks(state):
+    """(cached evidence context, text of sources added after it, '' when none)."""
+    record=state.get('cached_evidence')
+    held=set(record.get('source_ids') or []) if isinstance(record,dict) else None
+    sources=[source for source in state.get('sources',[]) if isinstance(source,dict)]
+    if held is None:
+        return _evidence_context(sources),''
+    cached=[source for source in sources if source.get('id') in held]
+    later=[source for source in sources if source.get('id') not in held]
+    return _evidence_context(cached),(_later_evidence(later,_evidence_rows(cached)[3]) if later else '')
+
+
+def _forecast_findings(findings, memo, python_ids=()):
+    """Surviving blockers and majors that a prose edit cannot answer, as (id, reason).
+
+    The forecast response runs only when this is not empty. A reviewer finding
+    counts when it names no quality-standard rule, so it cannot be classed as a
+    wording defect, or when its quoted text is not in the writer's prose: the
+    computed summary, exhibits, tables and the plan text Python prints (scenario
+    rationales, monitoring cases, counterfactual and repurchase labels) change
+    only with the plan. A Python check counts when it found no valuation model.
+    Every other blocker or major names a rule about the prose (B1-B3, M1-M6) and
+    quotes the prose, so exact edits answer it. The edit call can still report
+    that a finding needs a forecast change; that also runs the forecast response.
+    """
+    reasons=[]
+    for finding in findings:
+        if not isinstance(finding,dict) or finding.get('severity') not in {'blocker','major'}:
+            continue
+        identifier=finding.get('id')
+        if identifier in python_ids:
+            if identifier in PLAN_CHECK_IDS:
+                reasons.append((identifier,'a Python check found no valuation model'))
+            continue
+        excerpt=finding.get('current_excerpt') or ''
+        if not finding.get('rule'):
+            reasons.append((identifier,'names no quality-standard rule'))
+        elif not excerpt.strip() or excerpt not in memo:
+            reasons.append((identifier,'quotes text outside the writer\'s prose'))
+    return reasons
+
+
+def _edit_required(findings, memo, python_ids=()):
+    """IDs of the blockers and majors that need an applied edit; without one the round rewrites the memo.
+
+    A reviewer finding that quotes text outside the writer's prose is exempt:
+    no edit to the prose can change that text, and a rewrite cannot either.
+    """
+    required=[]
+    for finding in findings:
+        if not isinstance(finding,dict) or finding.get('severity') not in {'blocker','major'}:
+            continue
+        excerpt=finding.get('current_excerpt') or ''
+        if finding.get('id') not in python_ids and (not excerpt.strip() or excerpt not in memo):
+            continue
+        required.append(finding.get('id'))
+    return required
+
+
+FORECAST_SKIP_REASON = ('Every surviving blocker and major names a quality-standard rule and quotes the writer\'s prose, '
+                        'so the forecast was not reopened; the valuation is unchanged.')
+# Python's checks that only a plan can answer; its other checks concern the prose.
+PLAN_CHECK_IDS = frozenset({'valuation-model-missing'})
+# The reviewer and Python assign these IDs; see the review loop in _run.
+PYTHON_FINDING_IDS = frozenset({'central-weakness-unhandled','review-assessment-missing'})
+EDIT_TOKENS = 10000
+EDIT_INSTRUCTIONS = (
+    'Answer the review findings below with exact edits to the memo prose. Return ONLY JSON {"edits":[{"finding":"F1",'
+    '"quote":"exact contiguous text copied from the memo","replacement":"corrected text"}],"forecast":[{"finding":"F2",'
+    '"reason":"why only a forecast change can answer it"}]}. Each quote must appear exactly once in the memo and be '
+    'at most one paragraph. An empty replacement deletes the quoted text. Give every blocker and major at least one '
+    'edit, unless only a change to the forecast can answer it; list that one under forecast instead. Several edits '
+    'may answer one finding. Fix the defect each finding names and change nothing else: do not touch sentences no '
+    'finding names, do not reword for style, and keep every heading. Where a finding is wrong, keep the text or make '
+    'the correct reading plain; do not copy an invalid accusation into the memo. Copy figures exactly from the '
+    'computed summary, the exhibits or a source, calculate no new figures, and place each [S#] after the sourced '
+    'figure it supports. If a figure you need is not there, make the point without it.')
+
+
+def _edit_response(text):
+    """(edits, forecast flags) from the edit call; (None, []) when no edits object parses."""
+    edits=_last_edits(text) if isinstance(text,str) else None
+    flags=[]
+    decoder=json.JSONDecoder()
+    for match in re.finditer(r'\{\s*"edits"',text if isinstance(text,str) else ''):
+        try:
+            value,_=decoder.raw_decode(text,match.start())
+        except ValueError:
+            continue
+        if isinstance(value,dict) and isinstance(value.get('edits'),list):
+            flags=[item for item in value.get('forecast') or [] if isinstance(item,dict) and isinstance(item.get('finding'),str)]
+    return edits,flags
+
+
+def _apply_finding_edits(memo, edits, finding_ids, pools):
+    """Apply edits that each answer a named finding; return (memo, one record per edit).
+
+    An edit is rejected when it names no finding, when its quote is not exactly
+    once in the prose, or when its replacement adds a figure that traces to no
+    source or computed value, or a trading-layer term, that the quote lacks.
+    """
+    records=[]
+    for edit in edits if isinstance(edits,list) else []:
+        record={'finding':edit.get('finding') if isinstance(edit,dict) else None,'applied':False}
+        quote=edit.get('quote') if isinstance(edit,dict) else None
+        replacement=edit.get('replacement') if isinstance(edit,dict) else None
+        record.update(quote=quote if isinstance(quote,str) else None,
+                      replacement=replacement if isinstance(replacement,str) else None)
+        if not isinstance(quote,str) or not quote.strip() or not isinstance(replacement,str):
+            record['reason']='malformed edit'
+        elif record['finding'] not in finding_ids:
+            record['reason']='names no finding under review'
+        elif memo.count(quote)!=1:
+            record['reason']=f'quote found {memo.count(quote)} times in the prose'
+        else:
+            added=list(untraced_figures(replacement,pools) or [])
+            for figure in untraced_figures(quote,pools) or []:
+                if figure in added:
+                    added.remove(figure)
+            if added:
+                record['reason']='replacement adds figures that trace to no source or computed value: '+', '.join(added[:5])
+            elif TRADING_TERMS.search(replacement) and not TRADING_TERMS.search(quote):
+                record['reason']='replacement adds a trading-layer term'
+            else:
+                memo=memo.replace(quote,replacement)
+                record['applied']=True
+        records.append(record)
+    return memo,records
 
 
 def _carried_refutations(state, iteration, manifest):
@@ -1502,7 +1684,34 @@ def _evidence_context(sources):
     Excerpts are bounded; full originals remain in the source archive. Never
     pass an entire filing, private environment or credentials into a prompt.
     """
-    computed, primary, unverified, used = [], [], [], 0
+    computed, primary, unverified, _ = _evidence_rows(sources)
+    parts = []
+    if computed:
+        parts.append('COMPUTED FROM REPORTED FILINGS (Python tables; cite the bracketed source ID):\n' + '\n\n'.join(computed))
+    parts.append('PRIMARY AND OFFICIAL SOURCES:\n' + json.dumps(primary, ensure_ascii=False))
+    if unverified:
+        parts.append('UNVERIFIED WEB EXCERPTS (search results; attributed outside views and consensus context only, '
+                     'labelled unverified where cited):\n' + json.dumps(unverified, ensure_ascii=False))
+    return '\n\n'.join(parts)
+
+
+def _later_evidence(sources, unverified_used):
+    """Sources added after the cached block, in the same tiers; the unverified budget continues from it."""
+    computed, primary, unverified, _ = _evidence_rows(sources, unverified_used)
+    parts = []
+    if computed:
+        parts.append('COMPUTED FROM REPORTED FILINGS (Python tables; cite the bracketed source ID):\n' + '\n\n'.join(computed))
+    if primary:
+        parts.append('PRIMARY AND OFFICIAL SOURCES:\n' + json.dumps(primary, ensure_ascii=False))
+    if unverified:
+        parts.append('UNVERIFIED WEB EXCERPTS (search results; attributed outside views and consensus context only, '
+                     'labelled unverified where cited):\n' + json.dumps(unverified, ensure_ascii=False))
+    return '\n\n'.join(parts)
+
+
+def _evidence_rows(sources, used=0):
+    """(computed tables, primary rows, unverified rows, unverified characters used) for the evidence tiers."""
+    computed, primary, unverified = [], [], []
     for source in sources:
         row = {key: source[key] for key in ('id','title','url','kind','source_tier','retrieved_at','primary_focus_excerpts') if key in source}
         data = source.get('data')
@@ -1538,14 +1747,7 @@ def _evidence_context(sources):
             else:
                 row['excerpt_omitted'] = 'Prompt budget for unverified excerpts reached; title and URL only.'
         (unverified if source.get('source_tier') in UNVERIFIED_TIERS else primary).append(row)
-    parts = []
-    if computed:
-        parts.append('COMPUTED FROM REPORTED FILINGS (Python tables; cite the bracketed source ID):\n' + '\n\n'.join(computed))
-    parts.append('PRIMARY AND OFFICIAL SOURCES:\n' + json.dumps(primary, ensure_ascii=False))
-    if unverified:
-        parts.append('UNVERIFIED WEB EXCERPTS (search results; attributed outside views and consensus context only, '
-                     'labelled unverified where cited):\n' + json.dumps(unverified, ensure_ascii=False))
-    return '\n\n'.join(parts)
+    return computed, primary, unverified, used
 
 
 def _workflow_contract():
@@ -1646,24 +1848,30 @@ def _recover_supplied_evidence(folder,state,evidence):
 
 
 def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
-                              forecast_plan=None, draft=None, max_revisions=1):
+                              forecast_plan=None, draft=None, max_revisions=DEFAULT_MAX_REVISIONS):
     """Price known repeated context before the first potentially billed call.
 
     Future search excerpts, forecasts, derived valuation data and memo prose are
     unknown at this point. This is deliberately a reservation *floor*, not an
     upper bound, token prediction, invoice estimate, or completion guarantee.
     The real request retains its full byte-based reservation in Router.complete.
+    The pass test covers the first draft and its review. Each revision round is
+    priced separately: its usual stages (targeted research, the edit call, the
+    free-check fix, the review and its check) and the stages it adds only when
+    a finding concerns the forecast or an edit fails (forecast response, rewrite).
     """
     context = _evidence_context(state['sources'])
-    stages = []
-    def add(stage, model, prompt, tokens, web=False):
+    def priced(stage, model, prompt, tokens, web=False):
         # Reasoning tokens are reserved on top of the output limit, as the router does.
         catalog=getattr(router,'catalog',{}) or {}
         if core.reasoning_request(catalog.get(model),model,core.reasoning_budget(stage)) is not None:
             tokens+=core.reasoning_budget(stage)
-        stages.append({'stage':stage, 'model':model, 'known_prompt_utf8_bytes':len(prompt.encode()),
-                       'max_completion_tokens':tokens, 'web_search':web,
-                       'reservation_floor_usd':router.estimate(model,prompt,tokens,web=web)})
+        return {'stage':stage, 'model':model, 'known_prompt_utf8_bytes':len(prompt.encode()),
+                'max_completion_tokens':tokens, 'web_search':web,
+                'reservation_floor_usd':router.estimate(model,prompt,tokens,web=web)}
+    stages = []
+    def add(*args, **kwargs):
+        stages.append(priced(*args, **kwargs))
     if not state.get('web_research_complete'):
         for lane in ('business','challenge','expectations','claims'):
             add('web_'+lane,easy,f'Research {ticker}: {lane}.',WEB_RESEARCH_TOKENS,web=True)
@@ -1676,7 +1884,8 @@ def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
             FORECAST_SCHEMA+UNDERWRITING_GUIDANCE+PLAN_SOURCE_RULE+'\nEvidence:\n'+context,12000)
     valuation = ''
     if state.get('valuation') is not None and state.get('plan'):
-        valuation = render_valuation_context(state['plan'],state['valuation'])
+        valuation = _model_valuation_context(state['plan'],state['valuation'])
+    memo = draft or state.get('current_memo','')
     if not supplied_memo:
         add('full_draft',strong,'Write a complete investment-committee draft.\nEvidence:\n'+
             context+'\nValuation:\n'+valuation,MEMO_TOKENS)
@@ -1684,18 +1893,40 @@ def _initial_budget_preflight(router, state, *, ticker, easy, strong, reviewer,
         add('draft_check_fix_'+str(state['iteration']),strong,'Correct only the problems listed below.\nEvidence:\n'+context,8000)
     add('review_'+str(state['iteration']),reviewer,'Independently audit the complete memo.\n'+
         REVIEW_SCHEMA+'\nEvidence:\n'+context+'\nValuation:\n'+valuation+
-        '\nDraft:\n'+(draft or state.get('current_memo','')),12000)
+        '\nDraft:\n'+memo,12000)
     add('finding_check_'+str(state['iteration']),reviewer,FINDING_CHECK+'\nEvidence:\n'+context+'\nValuation:\n'+valuation+
-        '\nDraft:\n'+(draft or state.get('current_memo','')),FINDING_CHECK_TOKENS)
+        '\nDraft:\n'+memo,FINDING_CHECK_TOKENS)
     floor = sum(row['reservation_floor_usd'] for row in stages)
+    rounds = []
+    for number in range(state['iteration']+1, state['iteration']+1+max_revisions):
+        usual = [priced(f'targeted_research_{number}',easy,f'Investigate {ticker} primary evidence.',WEB_RESEARCH_TOKENS,web=True),
+                 priced(f'prose_edits_{number}',strong,EDIT_INSTRUCTIONS+'\nEvidence:\n'+context+'\nMemo:\n'+memo,EDIT_TOKENS),
+                 priced(f'draft_check_fix_{number}',strong,'Correct only the problems listed below.\nEvidence:\n'+context,8000),
+                 priced(f'review_{number}',reviewer,'Independently audit the complete memo.\n'+REVIEW_SCHEMA+'\nEvidence:\n'+
+                        context+'\nValuation:\n'+valuation+'\nDraft:\n'+memo,12000),
+                 priced(f'finding_check_{number}',reviewer,FINDING_CHECK+'\nEvidence:\n'+context+'\nValuation:\n'+valuation+
+                        '\nDraft:\n'+memo,FINDING_CHECK_TOKENS)]
+        conditional = [priced(f'model_response_{number}',strong,'Address these review findings.\n'+FORECAST_SCHEMA+
+                              UNDERWRITING_GUIDANCE+'\nEvidence:\n'+context+'\nMemo:\n'+memo,12000),
+                       priced(f'revise_{number}',strong,'Revise the complete memo.\nEvidence:\n'+context+'\nValuation:\n'+
+                              valuation+'\nMemo:\n'+memo,MEMO_TOKENS)]
+        rounds.append({'round':number,'usual_stages':usual,'conditional_stages':conditional,
+                       'usual_floor_usd':sum(row['reservation_floor_usd'] for row in usual),
+                       'conditional_floor_usd':sum(row['reservation_floor_usd'] for row in conditional)})
+    every = stages+[row for item in rounds for row in item['usual_stages']+item['conditional_stages']]
     suggested=max(DEFAULT_BUDGET,float(math.ceil(floor)))
-    return {'scope':'First draft, its fix call, one review and its finding check; revisions and format/forecast repairs excluded',
+    return {'scope':'First draft, its fix call, one review and its finding check; revision rounds are priced separately '
+                    'and format/forecast repairs are excluded',
             'basis':'Uncached UTF-8 byte reservations at maximum catalog price tiers and configured output limits. '
                     'Only currently known context is included. Future search results, synthesis, forecasts, '
                     'computed valuation and memo text can increase reservations; this floor is not a completion guarantee or predicted bill.',
             'budget_usd':router.budget, 'known_context_reservation_floor_usd':floor,
             'suggested_total_allowance_usd':suggested if suggested<=100 else None,
-            'max_revisions':max_revisions, 'passed':router.budget>=floor, 'stages':stages}
+            'max_revisions':max_revisions, 'passed':router.budget>=floor, 'stages':stages,
+            'revision_rounds':rounds,
+            'largest_single_reservation_floor_usd':max((row['reservation_floor_usd'] for row in every),default=0.0),
+            'revision_basis':'Each call needs its own reservation on top of what earlier calls actually cost; a round '
+                             'adds the conditional stages only when a finding concerns the forecast or an edit fails.'}
 
 
 def _fetch_calibration_bytes(url):
@@ -3848,7 +4079,7 @@ def _render(memo, sources, gaps, plan, result, state):
 
 
 def run(ticker, key, *, profile='balanced', budget=DEFAULT_BUDGET, directory='research-output', evidence='',
-        easy_model=None, strong_model=None, progress=lambda message: None, max_revisions=1, review_notes='', extra_sources=None, counterfactuals=None, draft=None, review_model=None,
+        easy_model=None, strong_model=None, progress=lambda message: None, max_revisions=DEFAULT_MAX_REVISIONS, review_notes='', extra_sources=None, counterfactuals=None, draft=None, review_model=None,
         source_snapshot=None, forecast_plan=None):
     ticker = core.symbol(ticker)
     if source_snapshot is not None:
@@ -4181,6 +4412,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
     state.pop('coverage_preflight_failed',None)
     if forecast_plan is not None and (changed_forecast or not state.get('plan')):
         supplied,changes=_lock_plan(forecast_plan,state['sources'],apply_conventions=False)
+        _freeze_evidence(state,refresh=True)
         if 'requested_counterfactuals' in state:
             supplied['counterfactuals']=copy.deepcopy(state['requested_counterfactuals'])
         _validate_plan_sources(supplied,state['sources'])
@@ -4297,7 +4529,11 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             checkpoint()
         state['web_research_complete']=True
         checkpoint()
-    context=_evidence_context(state['sources'])
+    # The plan stage writes the cached evidence block; a saved plan keeps its block.
+    _freeze_evidence(state,refresh='plan' not in state)
+    context,later=_evidence_blocks(state)
+    def evidence_above():
+        return EVIDENCE_ABOVE+(LATER_EVIDENCE+later if later else '')
     gaps=json.dumps(state['gaps'])
     pending=state.get('pending_revision')
     resume_revision=_pending_revision_matches(pending,state)
@@ -4307,7 +4543,11 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
     # The pending prose phase already has its sources, findings and adjudicated
     # model. Re-synthesizing newly added targeted evidence would repay completed
     # work before resuming the saved revision.
-    thesis='' if resume_revision or (draft is not None and (state.get('plan') or forecast_plan is not None)) else call('evidence_synthesis',easy,
+    # Only the plan and the first draft read the synthesis. Once both exist it is
+    # not requested again: a rerun after targeted research had added sources
+    # otherwise paid for a new synthesis that no later stage reads.
+    thesis='' if resume_revision or (draft is not None and (state.get('plan') or forecast_plan is not None)) or (
+        'plan' in state and state.get('current_memo')) else call('evidence_synthesis',easy,
                 'Build a dated evidence table and a decision-focused issue tree for this equity valuation. '
                 'Separate reported facts, house assumptions, competing explanations, and missing evidence. '
                 'Trace source IDs [S#]. Explain where management economics may differ from accounting; '
@@ -4335,15 +4575,15 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         anchor_revenue=(reported.get('actuals') or {}).get('revenue')
         prompt=('Build an investment valuation plan for '+ticker+'. Ground actuals in supplied evidence; '
                 'use primary reports where accessible, and reconcile secondary-series dates and definitions.\n'+
-                FORECAST_SCHEMA+_rate_convention(state['sources'],reported.get('currency'))+UNDERWRITING_GUIDANCE+PLAN_FIELD_RULES+PLAN_SOURCE_RULE+'\nIMMUTABLE reported inputs (copy these values exactly; forecast judgments only):\n'+json.dumps(reported)+
+                FORECAST_SCHEMA+_rate_convention(state['sources'],reported.get('currency'))+UNDERWRITING_GUIDANCE+PLAN_FIELD_RULES+PLAN_SOURCE_RULE+'\nIMMUTABLE reported inputs (copy these values exactly; forecast judgments only):\n'+_prompt_json(reported)+
                 (('\nReinvestment computed from reported lines (reference for years 1-3 reinvestment and sales_to_capital):\n'+
-                  json.dumps(reinvestment_reference(state['sources'],anchor_revenue)))
+                  _prompt_json(reinvestment_reference(state['sources'],anchor_revenue)))
                  if reinvestment_reference(state['sources'],anchor_revenue) else '')+
                 (('\nReported operating margins (reference for the final-year margin ceilings):\n'+
-                  json.dumps(cost_path_reference(state['sources'],reported.get('operating_reference'),anchor_revenue)))
+                  _prompt_json(cost_path_reference(state['sources'],reported.get('operating_reference'),anchor_revenue)))
                  if cost_path_reference(state['sources'],reported.get('operating_reference'),anchor_revenue) else '')+
                 base_rates.plan_context(reported)+
-                EVIDENCE_ABOVE+'\nDiligence synthesis:\n'+thesis+'\nRetrieval gaps:\n'+gaps+
+                evidence_above()+'\nDiligence synthesis:\n'+thesis+'\nRetrieval gaps:\n'+gaps+
                 # A rerun after a discarded plan would otherwise resend the identical request.
                 ('\nAn earlier attempt at this plan was rejected for these reasons; avoid them: '+
                  ' | '.join(state['plan_repair_reasons']) if state.get('plan_repair_reasons') else ''))
@@ -4416,8 +4656,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         state['valuation']=_evaluate(state['plan'])
         save_valuation(folder,state['plan'],state['valuation'])
     plan,result=state['plan'],state.get('valuation')
-    valuation_context=(render_valuation_context(plan,result) if result is not None else
-                       json.dumps({'assumptions':plan,'computed':None},ensure_ascii=False))
+    valuation_context=_model_valuation_context(plan,result)
     state['prompt_context_metrics'] = {
         'full_json_utf8_bytes':len(json.dumps({'assumptions':plan,'computed':result},ensure_ascii=False).encode()),
         'presentation_utf8_bytes':len(valuation_context.encode()),
@@ -4446,7 +4685,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'computed summary, exhibits and reported tables by name; never mention Python, prompts or instructions, and '
             'add no tables of your own.'
             '\nCOMPUTED SUMMARY (placed above your text):\n'+computed_summary(plan,result)+
-            EVIDENCE_ABOVE+'\nSynthesis:\n'+thesis+'\nValuation:\n'+valuation_context+'\nGaps:\n'+gaps,tokens=MEMO_TOKENS,
+            evidence_above()+'\nSynthesis:\n'+thesis+'\nValuation:\n'+valuation_context+'\nGaps:\n'+gaps,tokens=MEMO_TOKENS,
             prefix=_evidence_prefix(context))
         state['current_memo']=_label_unverified(draft,state['sources'])
         checkpoint()
@@ -4486,7 +4725,9 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'a policy discount, nonrecurring adjustment, source passage or double-counted cash distribution. '
             'Return the full revised memo only, '+MEMO_WORDS+'. The current prose is '+str(prose_words(memo))+
             ' words; the revision must not be longer, and should be shorter where the current prose exceeds 3,000 words. '
-            'Keep the required section order.\n'+EVIDENCE_TIER_RULE+'\n'+RUBRIC+EVIDENCE_ABOVE+
+            'Keep the required section order.\n'+EVIDENCE_TIER_RULE+'\n'+RUBRIC+evidence_above()+
+            ('\nNo forecast response was requested for these findings; the valuation below is unchanged.'
+             if isinstance(candidate,dict) and candidate.get('skipped') else '')+
             ('\nThe forecast correction for these findings was rejected; the valuation below is unchanged. Do not '
              'describe any forecast change as made.' if isinstance(candidate,dict) and candidate.get('correction_rejected') else '')+
             ('\nNotes on the plan now valued:\n'+'\n'.join(state.get('plan_gap_notes',[])) if state.get('plan_gap_notes') else '')+
@@ -4497,280 +4738,9 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
         state.pop('pending_revision',None)
         checkpoint()
 
-    while _revisions_used(state)<=max_revisions:
-        iteration=state['iteration']
-        memo=state['current_memo']
-        pending=state.get('pending_revision')
-        if _pending_revision_matches(pending,state):
-            if _revisions_used(state)>=max_revisions:
-                raise ValueError(f'Increase max_revisions to at least {_revisions_used(state)+1} to resume the pending prose revision')
-            finish_revision(iteration,memo,pending['findings'],pending['model_response'])
-            continue
-        if pending:
-            state.pop('pending_revision',None)
-            checkpoint()
-        # Free checks before the paid review, and one targeted fix call when they
-        # find defects (untraced or unlabelled figures, added convention rows,
-        # length). Edits are exact quote replacements applied by Python.
-        computed_inputs=(result,plan,_computed_tables(state['sources']))
-        issues=prereview_checks(_with_summary(memo,plan,result),state['sources'],computed_inputs) if result else []
-        fixed=state.setdefault('prereview_fixes',{})
-        # Keyed by the draft's own text: a contract refresh can replace the draft
-        # within one iteration, and the new draft must be checked and fixed.
-        memo_key=hashlib.sha256(memo.encode()).hexdigest()[:16]
-        done=any(memo_key in (record.get('memo_sha256'),record.get('fixed_memo_sha256'))
-                 for record in fixed.values() if isinstance(record,dict))
-        # Length is left to the writing stages: a live fix call (2026-11-14) asked to
-        # cut 1,300 words overran its output limit and was deleting the conclusion's
-        # required rows. The fix call corrects figures, labels and added rows only.
-        fixable=[issue for issue in issues if issue['id']!='length']
-        if fixable and not done:
-            try:
-                response=call(f'draft_check_fix_{iteration}',strong,
-                'Correct only the problems listed below in this memo draft. Return ONLY JSON {"edits":[{"quote":"exact '
-                'contiguous text copied from the memo","replacement":"corrected text"}]}. Each quote must appear exactly '
-                'once in the memo; keep each quote to one sentence or less. For an untraced figure, use the exact figure from '
-                'the computed summary, the COMPUTED FROM REPORTED FILINGS tables, the valuation output or a primary source, '
-                'or remove the figure. For a figure found only in unverified excerpts, cite the primary source that contains '
-                'it, label it as unverified context, or remove it. Describe convention rows separately, never as adding up. '
-                'Change nothing else.\n'+
-                EVIDENCE_TIER_RULE+'\nProblems:\n'+json.dumps(fixable)+'\nCOMPUTED SUMMARY:\n'+computed_summary(plan,result)+
-                EVIDENCE_ABOVE+'\nComputed exhibits:\n'+valuation_section(plan,result)+'\nMemo:\n'+memo,tokens=8000,
-                prefix=_evidence_prefix(context))
-            except core.IncompleteResponse as exc:
-                # The fix is a free-check convenience; the review still sees the draft
-                # and the same checks. A charged but unusable answer does not stop the run.
-                response=''
-                progress(f'Pre-review fix not applied: {exc}'.split(', so it')[0])
-            # A live fix response (2026-11-14) gave edits, wrote "Wait, I need to
-            # re-read", and gave corrected edits. The last complete block is the
-            # model's answer; each edit is still applied only on an exact match.
-            edits=_last_edits(response) if response else []
-            memo,applied,skipped=_apply_edits(memo,edits)
-            memo=_label_unverified(memo,state['sources'])
-            if not response:
-                skipped=['the fix response was incomplete and was not used']
-            elif edits is None:
-                skipped=['no complete edits object could be parsed from the response']
-            fixed[f'{iteration}:{memo_key}']={'memo_sha256':memo_key,'fixed_memo_sha256':hashlib.sha256(memo.encode()).hexdigest()[:16],
-                                             'issues':[issue['id'] for issue in issues],'edits_applied':applied,'edits_skipped':skipped[:20]}
-            state['current_memo']=memo
-            checkpoint()
-            issues=prereview_checks(_with_summary(memo,plan,result),state['sources'],computed_inputs)
-        visible=_label_unverified(_with_summary(memo,plan,result)+'\n'+valuation_section(plan,result)+
-                                  '\n'.join(reported_tables_section(state['sources'])),state['sources'])
-        (revisions/f'memo-{iteration}.md').write_text(visible,encoding='utf-8')
-        # A review can fail after a new draft/model is saved. Keep the reader
-        # download consistent with those artifacts even before review succeeds.
-        state['complete']=False
-        state['quality_status']='needs_review'
-        pending=_render(memo,state['sources'],state['gaps'],plan,result,state)
-        (folder/'memo.md').write_text(pending,encoding='utf-8')
-        core.save(folder/'source-ledger.json',claim_ledger(pending))
-        checkpoint()
-        manifest={'memo_sha256':hashlib.sha256(visible.encode()).hexdigest(),
-                  'sources_sha256':_digest(state['sources']),'valuation_sha256':_digest(result),
-                  'review_type':'model_peer_review_not_publication_certification'}
-        deterministic=inspect_memo(visible,state['sources'],result)+[
-            {key:value for key,value in issue.items() if key!='items'}|{'issue':issue['issue']+' Examples: '+
-             '; '.join(item['figure'] or item['sentence'][:80] for item in issue['items'][:8])} for issue in issues]
-        fresh_notes=(state.get('external_notes','') if state.get('external_notes_digest') !=
-                     state.get('external_notes_reviewed_digest') else '')
-        earlier=state['review_history'][-1] if iteration and state.get('review_history') else None
-        ledger=('\nFindings from the previous review. Verify whether each is resolved in this draft; do not re-raise a '
-                'resolved one, and raise a new material finding only for a defect present in this draft:\n'+
-                json.dumps([{key:finding.get(key) for key in ('id','severity','issue')} for finding in earlier.get('findings',[])])
-                if earlier else '')
-        prompt=('Review this equity memo against its supplied evidence and the Python valuation, using the shared quality '
-                'standard below, and classify each defect as blocker, major or minor by that standard. Rounding within '
-                'the last displayed digit is never material; an unverified excerpt used only as attributed outside view '
-                'or context is not material, but a company fact or number resting only on one is (rule M1); style '
-                'preferences are not findings. Check: (1) every figure in the prose against the computed summary, the computed tables, the '
-                'valuation output or the cited source, and every comparison with the price by arithmetic; (2) that the '
-                'memo does not contradict the computed account of which inputs alone can and cannot bring value to the '
-                'price (explaining why the house forecast differs from what the price requires is the variant view, not '
-                'a contradiction; the conclusion need not restate the account); (3) that company facts rest on primary sources and unverified '
-                'excerpts are labelled context; (4) that the strongest sourced opposing case is answered with evidence; '
-                '(5) that no trading-layer language appears; (6) that convention rows are never added together; (7) that '
-                'repurchase, multiple and monitoring statements use the computed diagnostics and their fixed inputs. A '
-                'disclosed house forecast is a judgment, not a defect, unless primary evidence contradicts it or it is '
-                'unexplained. Never write a fix that asks the author to compute a value the engine has not computed. '
-                'Before flagging an omission, check the whole memo. Report every material defect you find and at most '
-                'three minor ones; there is no target number of findings. '
-                'Every finding must quote one contiguous passage of the CURRENT draft (between the draft markers) verbatim, without added quotation '
-                'marks or ellipses; for an omission, quote the heading or sentence where the missing content belongs and '
-                'name the omission in issue. Earlier notes can be stale; never report an accusation that the current '
-                'draft already resolves. Keep each issue under 100 words and each fix under 70.\n'+
-                EVIDENCE_TIER_RULE+'\n'+RUBRIC+ledger+'\n'+REVIEW_SCHEMA+
-                '\nThe evidence, the valuation and the draft are in the blocks above.'+
-                '\nDeterministic diagnostics (not semantic proof):\n'+json.dumps(deterministic)+
-                '\nNew external notes for this draft only; verify against the CURRENT wording and omit resolved allegations:\n'+fresh_notes+
-                ('\nArtifact integrity recheck record: '+state['artifact_review_record']+
-                 '. Original state-derived artifacts were reconstructed; deliberate edits require explicit supplied inputs. '
-                 'Reassess this frozen draft and model.' if state.get('artifact_review_record') else ''))
-        prior_review=next((r for r in reversed(state['review_history']) if r['iteration']==iteration),None)
-        reusable=(prior_review and not state.get('review_invalidated') and
-                  prior_review.get('review_model',strong)==reviewer and
-                  prior_review.get('manifest',{}).get('memo_sha256')==manifest['memo_sha256'] and
-                  prior_review.get('manifest',{}).get('valuation_sha256')==manifest['valuation_sha256'])
-        if reusable:
-            # Targeted evidence may have arrived after this frozen review. It
-            # belongs in the correction; the unchanged draft need not be paid
-            # for again after an interrupted model-response or revision step.
-            record=prior_review
-            combined=record['findings']
-        else:
-            review_prefix=_review_prefix(context,valuation_context,visible)
-            raw=call(f'review_{iteration}',reviewer,prompt,tokens=12000,prefix=review_prefix)
-            try:
-                review_value,normalized=_response_json(raw)
-                # Live GPT-5.4 reviews (2026-11-14) wrapped quotes in quotation
-                # marks or joined fragments, and each paid a format repair whose
-                # result was then anchored to its longest exact span anyway. The
-                # same anchoring applies to the first response; the reviewer's
-                # wording stays on record beside the anchored excerpt.
-                review=parse_review(json.dumps(review_value),memo=visible,anchor_embellished=True)
-            except ValueError as exc:
-                (reviews/f'review-{iteration}-unparsed.txt').write_text(raw,encoding='utf-8')
-                # This call repairs presentation only. Repeating the full source
-                # packet and valuation wastes context and invites a new audit.
-                repair=('Reformat the recorded review below; do not conduct a new audit, add findings, '
-                        'or discard unresolved substantive findings. Preserve IDs, severities and meaning. '
-                        'For each finding copy ONE short contiguous verbatim excerpt, preferably 50–300 '
-                        'characters, from the CURRENT FROZEN MEMO. Do not join passages, use ellipses, '
-                        'wrap the excerpt in extra quotation marks, or write literal backslash-n text. '
-                        'For an omission quote the adjacent actual wording and describe the omission in issue. '
-                        'Omit only accusations explicitly withdrawn or described as already resolved in '
-                        'the recorded review. Return exactly the schema.\n'+REVIEW_SCHEMA+
-                        '\nFormat error: '+str(exc)+'\nCURRENT FROZEN MEMO:\n'+visible+
-                        '\nRECORDED REVIEW:\n'+raw)
-                raw=call(f'review_format_{iteration}',reviewer,repair,tokens=12000)
-                (reviews/f'review-{iteration}-reformatted.txt').write_text(raw,encoding='utf-8')
-                try:
-                    review_value,normalized=_response_json(raw)
-                    review=parse_review(json.dumps(review_value),memo=visible,anchor_embellished=True)
-                except ValueError as failed:
-                    # A saved response is replayed on resume. Keeping a review
-                    # that cannot be validated would stop every later attempt
-                    # here, so it is discarded (both raw texts stay on disk and
-                    # the spending stays in the ledger) and the next attempt
-                    # requests a fresh review.
-                    for name in [name for name in state['stages']
-                                 if name.split(':')[0] in (f'review_{iteration}',f'review_format_{iteration}')]:
-                        state['stages'].pop(name)
-                    checkpoint()
-                    raise ValueError(str(failed)+'. The rejected review was discarded; run the same command again '
-                                     'for a fresh review') from None
-            if normalized:
-                recovery={'stage':f'review_{iteration}','method':'one_explicit_complete_json_fence'}
-                if recovery not in state.setdefault('response_normalizations',[]):
-                    state['response_normalizations'].append(recovery)
-            known={s['id'] for s in state['sources']}
-            for finding in review['findings']:
-                if not set(finding['source_refs']).issubset(known):
-                    raise RuntimeError('Reviewer cited a source outside the research snapshot')
-            # A reviewer ID equal to one Python assigns (the assessment finding, a
-            # deterministic check) is renamed so records and the check stay distinct.
-            reserved={'central-weakness-unhandled','review-assessment-missing'}|{f.get('id') for f in deterministic}
-            for finding in review['findings']:
-                if finding['id'] in reserved:
-                    finding['id']=finding['id']+'-reviewer'
-            # The reviewer's assessment finding is checked with its majors. It is
-            # kept only when no checked reviewer major survives, as before the
-            # check existed; its minor form (assessment missing) is always kept.
-            assessment=assessment_findings({**review,'findings':[]})
-            material=[f for f in review['findings']+assessment if f.get('severity') in {'blocker','major'}]
-            refuted,check_note={},None
-            # Python settles "this number is in no source" itself: a replay review
-            # (2026-11-15) called a figure from the reported-history table absent,
-            # and the model check upheld it.
-            pools=trace_pools(state['sources'],computed_inputs)
-            # A finding the check refuted earlier on the same text under the same
-            # rule is not paid for again (the check flip-flopped between reviews).
-            earlier_refuted=_carried_refutations(state,iteration,manifest)
-            for index,finding in enumerate(material):
-                rule,excerpt=finding.get('rule'),finding.get('current_excerpt') or ''
-                if rule=='M3':
-                    missing=untraced_figures(excerpt,pools)
-                    if missing==[]:
-                        refuted[index]=('Python traced every figure in the quoted text to the computed output, the reported '
-                                        'tables or a primary source.')
-                elif rule=='B2' and excerpt and not TRADING_TERMS.search(excerpt):
-                    refuted[index]='The quoted text contains none of the trading-layer terms the standard names.'
-                elif rule=='M6' and HOUSE_ATTRIBUTION.search(excerpt):
-                    refuted[index]='The quoted text names the figure as a house, computed or forecast figure.'
-                if index not in refuted and (rule,excerpt) in earlier_refuted:
-                    refuted[index]=earlier_refuted[(rule,excerpt)]
-            pending=[f for index,f in enumerate(material) if index not in refuted]
-            if pending:
-                try:
-                    check=call(f'finding_check_{iteration}',reviewer,FINDING_CHECK+'\n'+EVIDENCE_TIER_RULE+'\n'+RUBRIC+
-                        '\nFindings:\n'+json.dumps([dict({key:f.get(key) for key in ('severity','rule','issue','current_excerpt','fix','source_refs')},id=check_id)
-                                                    for f,check_id in zip(pending,_check_ids(pending))])+
-                        '\nThe evidence, the valuation and the draft are in the blocks above.',tokens=FINDING_CHECK_TOKENS,
-                        prefix=review_prefix)
-                    for index,reason in _refuted_findings(check,pending).items():
-                        refuted[material.index(pending[index])]=reason
-                except core.IncompleteResponse as exc:
-                    # Charged and recorded; every remaining finding stands, as if the check upheld it.
-                    check_note='The check response was incomplete; every finding it was asked about was kept.'
-                    progress(f'Finding check not used: {exc}'.split(', so it')[0])
-            removed={id(material[index]) for index in refuted}
-            kept=[f for f in review['findings'] if id(f) not in removed]
-            if any(f.get('severity') in {'blocker','major'} for f in kept):
-                assessment=[f for f in assessment if f.get('severity') not in {'blocker','major'}]
-            else:
-                assessment=[f for f in assessment if id(f) not in removed]
-            combined=kept+deterministic+assessment
-            effective='revise' if any(f.get('severity') in {'blocker','major'} for f in combined) else 'pass'
-            record={'iteration':iteration,'verdict':effective,'model_verdict':review.get('verdict_as_reviewed',review['verdict']),
-                    'findings':combined,'manifest':manifest,
-                    'diagnostic_scope':DIAGNOSTIC_SCOPE,'review_model':reviewer,'author_model':strong}
-            if material:
-                record['finding_check']={'model':reviewer,'checked':[f['id'] for f in material],
-                                         'refuted':[dict(material[index],check_reason=reason) for index,reason in sorted(refuted.items())]}
-                if check_note:
-                    record['finding_check']['note']=check_note
-            for key in ('central_weakness','gap_explained'):
-                if key in review:
-                    record[key]=review[key]
-            state['review_history']=[r for r in state['review_history'] if r['iteration']!=iteration]+[record]
-            core.save(reviews/f'review-{iteration}.json',record)
-            (reviews/f'review-{iteration}.txt').write_text(raw,encoding='utf-8')
-            state.pop('review_invalidated',None)
-        state['external_notes_reviewed_digest']=state.get('external_notes_digest')
-        major=[f for f in combined if f.get('severity') in {'blocker','major'}]
-        state['quality_status']='reviewed_draft' if not major and result else 'needs_review'
-        report=_render(memo,state['sources'],state['gaps'],plan,result,state)
-        (folder/'memo.md').write_text(report,encoding='utf-8')
-        core.save(folder/'source-ledger.json',claim_ledger(report))
-        checkpoint()
-        if not major:
-            state['complete']=bool(result)
-            if not result:
-                state['quality_status']='missing_valuation'
-            break
-        if _revisions_used(state)==max_revisions:
-            state['complete']=False
-            state['quality_status']='unresolved_findings'
-            break
-        call(f'targeted_research_{iteration+1}',easy,
-             f'Investigate {ticker} primary evidence needed to resolve these specific findings. '
-             'Find exact dated source passages; do not repeat unverified assertions. '
-             'Answer in at most about 900 words. Findings:\n'+json.dumps(major),
-             tokens=WEB_RESEARCH_TOKENS,web=True)
-        research_row=next(r for r in reversed(state['ledger'])
-                          if r['stage']==f'targeted_research_{iteration+1}' and r.get('status')=='complete')
-        for annotation in research_row.get('annotations',[]):
-            if annotation.get('content') and not any(s.get('url')==annotation['url'] for s in state['sources']):
-                _register(folder,state['sources'],{'title':annotation['title'] or 'Targeted review evidence',
-                    'url':annotation['url'],'kind':'search_excerpt','source_tier':'search_excerpt_unverified',
-                    'data':{'excerpt':annotation['content'],'review_iteration':iteration+1}})
-        context=_evidence_context(state['sources'])
-        checkpoint()
-        # Review may identify economic or evidentiary defects in the model.
-        # Correct the editable plan first and independently recompute it, rather
-        # than letting prose quietly contradict an unchanged spreadsheet.
+    def forecast_response(iteration,memo,combined):
+        """The forecast response to a review: (adjudication, decision), and the recomputed model when corrected."""
+        nonlocal plan,result,valuation_context
         apply=not state.get('provided_forecast_digest')
         rate_text=_correction_rate_text(state['sources'],plan,apply)
         model_response=call(f'model_response_{iteration+1}',strong,
@@ -4785,21 +4755,21 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
             'do not silently drop their scope or invent a discount to satisfy a review. '
             'Forecast changes must be explicit house assumptions and economically justified. '
             +FORECAST_SCHEMA+rate_text+UNDERWRITING_GUIDANCE+PLAN_FIELD_RULES+PLAN_SOURCE_RULE+
-            EVIDENCE_ABOVE+'\nCurrent memo (verify allegations against this exact text):\n'+memo+'\nCurrent forecast proposal:\n'+json.dumps(_proposal_view({k:plan[k] for k in
+            evidence_above()+'\nCurrent memo (verify allegations against this exact text):\n'+memo+'\nCurrent forecast proposal:\n'+json.dumps(_proposal_view({k:plan[k] for k in
                 ('assumptions_label','scenario_rationales','scenarios','operating_model','discount_rate','monitoring',
                  'counterfactuals','calibration_comparisons','forecast_periods','repurchase_tests',
                  'margin_continuity_basis','capital_efficiency_basis','valuation_timing') if k in plan}))+
-            '\nLocked actuals (reference only; omit from your proposal):\n'+json.dumps(plan.get('actuals',{}))+
+            '\nLocked actuals (reference only; omit from your proposal):\n'+_prompt_json(plan.get('actuals',{}))+
             '\nReported operating lines (reference for year-1 continuity):\n'+
-            json.dumps((plan.get('reported_inputs') or {}).get('operating_reference'))+
-            ('\nReinvestment computed from reported lines (reference for years 1-3 reinvestment):\n'+json.dumps(plan['reinvestment_reference'])
+            _prompt_json((plan.get('reported_inputs') or {}).get('operating_reference'))+
+            ('\nReinvestment computed from reported lines (reference for years 1-3 reinvestment):\n'+_prompt_json(plan['reinvestment_reference'])
              if plan.get('reinvestment_reference') else '')+
-            ('\nReported operating margins (reference for the final-year margin ceilings):\n'+json.dumps(plan['cost_path_reference'])
+            ('\nReported operating margins (reference for the final-year margin ceilings):\n'+_prompt_json(plan['cost_path_reference'])
              if plan.get('cost_path_reference') else '')+
             base_rates.result_context(result)+
-            '\nComputed diagnostics for verification:\n'+json.dumps((result or {}).get('computed_diagnostics',{}))+
-            '\nComputed counterfactuals:\n'+json.dumps((result or {}).get('counterfactuals',{}))+
-            '\nComputed reverse-DCF projections:\n'+json.dumps((result or {}).get('reverse_dcf',{}).get('solution_projections',[]))+
+            '\nComputed diagnostics for verification:\n'+_prompt_json((result or {}).get('computed_diagnostics',{}))+
+            '\nComputed counterfactuals:\n'+_prompt_json((result or {}).get('counterfactuals',{}))+
+            '\nComputed reverse-DCF projections:\n'+_prompt_json((result or {}).get('reverse_dcf',{}).get('solution_projections',[]))+
             '\nFindings:\n'+json.dumps(combined),tokens=12000,prefix=_evidence_prefix(context))
         def parsed(text, stage):
             try:
@@ -4908,19 +4878,418 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                                      'change named in these dispositions took effect; treat them as findings the memo '
                                      'must address in prose against the unchanged valuation.'}
             state['plan']=plan
-            valuation_context=(render_valuation_context(plan,result) if result is not None else
-                               json.dumps({'assumptions':plan,'computed':None},ensure_ascii=False))
+            valuation_context=_model_valuation_context(plan,result)
         core.save(reviews/f'model-response-{iteration+1}.json',adjudication)
+        return adjudication,decision
+
+    def save_pending(iteration,memo,combined,adjudication,mode,manifest,required=()):
+        # The committed findings, forecast response and next step, so an
+        # interrupted round resumes without paying for the review again.
         state['pending_revision']={
             'iteration':iteration,
             'memo_sha256':hashlib.sha256(memo.encode()).hexdigest(),
             'plan_sha256':_digest(plan),'valuation_sha256':_digest(result),
             'sources_sha256':_digest(state['sources']),
             'external_notes_digest':state.get('external_notes_digest'),
-            'review_manifest':copy.deepcopy(record['manifest']),
-            'findings':copy.deepcopy(combined),'model_response':copy.deepcopy(adjudication)}
+            'review_manifest':copy.deepcopy(manifest),
+            'findings':copy.deepcopy(combined),'model_response':copy.deepcopy(adjudication),
+            'mode':mode,'edit_required':list(required)}
         checkpoint()
-        finish_revision(iteration,memo,combined,adjudication)
+
+    def note_round(number,**fields):
+        rounds=state.setdefault('revision_rounds',[])
+        entry=next((item for item in rounds if item.get('round')==number and item.get('cycle')==state.get('revision_base',0)),None)
+        if entry is None:
+            entry={'round':number,'cycle':state.get('revision_base',0)}
+            rounds.append(entry)
+        entry.update(fields)
+        checkpoint()
+
+    def edit_round(iteration,memo,combined,adjudication,required,manifest):
+        """Answer the findings with exact edits to the prose; rewrite only when an edit for a required finding fails."""
+        number=iteration+1
+        material={f.get('id') for f in combined if isinstance(f,dict) and f.get('severity') in {'blocker','major'}}
+        shown=[{key:f[key] for key in ('id','severity','rule','issue','current_excerpt','fix','source_refs') if f.get(key) is not None}
+               for f in combined if isinstance(f,dict)]
+        prompt=(EDIT_INSTRUCTIONS+'\n'+EVIDENCE_TIER_RULE+'\n'+RUBRIC+
+                ('' if adjudication.get('skipped') else
+                 '\nForecast response to these findings (the valuation below is unchanged):\n'+json.dumps(adjudication))+
+                '\nFindings:\n'+json.dumps(shown)+
+                '\nCOMPUTED SUMMARY:\n'+computed_summary(plan,result)+evidence_above()+
+                '\nComputed exhibits:\n'+valuation_section(plan,result)+
+                '\nMemo:\n'+memo)
+        try:
+            text=call(f'prose_edits_{number}',strong,prompt,tokens=EDIT_TOKENS,prefix=_evidence_prefix(context))
+        except core.IncompleteResponse as exc:
+            # Charged and recorded; an unusable answer falls back to the rewrite.
+            text=''
+            progress(f'Prose edits not applied: {exc}'.split(', so it')[0])
+        edits,flags=_edit_response(text)
+        flagged=[item for item in flags if item['finding'] in material]
+        if flagged and adjudication.get('skipped'):
+            # The author says only a forecast change answers these: reopen the forecast once.
+            note_round(number,forecast_reasons=[[item['finding'],'the edit call says only a forecast change can answer it']
+                                                for item in flagged])
+            adjudication,decision=forecast_response(iteration,memo,combined)
+            note_round(number,forecast_response=decision)
+            if decision in ('corrected','unavailable'):
+                core.save(reviews/f'edits-{number}.json',{'iteration':iteration,'round':number,'edits':[],'forecast':flags,
+                          'required':list(required),'unanswered':[],'outcome':'forecast_changed'})
+                save_pending(iteration,memo,combined,adjudication,'rewrite',manifest)
+                note_round(number,revision='rewrite',rewrite_reason='the plan changed')
+                finish_revision(iteration,memo,combined,adjudication)
+                return
+            # The forecast stands: ask for the edits again with its dispositions in view.
+            save_pending(iteration,memo,combined,adjudication,'edits',manifest,required)
+            return edit_round(iteration,memo,combined,adjudication,required,manifest)
+        computed=(result,plan,_computed_tables(state['sources']))+_rounded_inputs(plan,result)
+        edited,records=_apply_finding_edits(memo,edits or [],{f.get('id') for f in combined if isinstance(f,dict)},
+                                            trace_pools(state['sources'],computed))
+        edited=_label_unverified(edited,state['sources'])
+        answered={item['finding'] for item in records if item['applied']}
+        missing=[identifier for identifier in required if identifier not in answered]
+        after=prereview_checks(_with_summary(edited,plan,result),state['sources'],computed) if result else []
+        log={'iteration':iteration,'round':number,'edits':records,'forecast':flags,'required':list(required),
+             'unanswered':missing,'free_checks_after':[issue['id'] for issue in after],
+             'outcome':'rewrite' if missing else 'edited'}
+        if not text:
+            log['note']='the edit response was incomplete and was not used'
+        elif edits is None:
+            log['note']='no complete edits object could be parsed from the response'
+        core.save(reviews/f'edits-{number}.json',log)
+        if missing:
+            save_pending(iteration,memo,combined,adjudication,'rewrite',manifest)
+            note_round(number,revision='rewrite',edits_applied=len(answered),
+                       rewrite_reason='no edit applied for '+', '.join(missing[:10]))
+            finish_revision(iteration,memo,combined,adjudication)
+            return
+        state['current_memo']=edited
+        state['iteration']=number
+        state.pop('pending_revision',None)
+        note_round(number,revision='edits',edits_applied=sum(1 for item in records if item['applied']),
+                   edits_rejected=sum(1 for item in records if not item['applied']))
+
+    while _revisions_used(state)<=max_revisions:
+        iteration=state['iteration']
+        memo=state['current_memo']
+        pending=state.get('pending_revision')
+        if _pending_revision_matches(pending,state):
+            if _revisions_used(state)>=max_revisions:
+                raise ValueError(f'Increase max_revisions to at least {_revisions_used(state)+1} to resume the pending prose revision')
+            if pending.get('mode')=='edits':
+                edit_round(iteration,memo,pending['findings'],pending['model_response'],
+                           pending.get('edit_required') or [],pending.get('review_manifest'))
+            else:
+                finish_revision(iteration,memo,pending['findings'],pending['model_response'])
+            continue
+        if pending:
+            state.pop('pending_revision',None)
+            checkpoint()
+        # Free checks before the paid review, and one targeted fix call when they
+        # find defects (untraced or unlabelled figures, added convention rows,
+        # length). Edits are exact quote replacements applied by Python.
+        computed_inputs=(result,plan,_computed_tables(state['sources']))+_rounded_inputs(plan,result)
+        issues=prereview_checks(_with_summary(memo,plan,result),state['sources'],computed_inputs) if result else []
+        fixed=state.setdefault('prereview_fixes',{})
+        # Keyed by the draft's own text: a contract refresh can replace the draft
+        # within one iteration, and the new draft must be checked and fixed.
+        memo_key=hashlib.sha256(memo.encode()).hexdigest()[:16]
+        done=any(memo_key in (record.get('memo_sha256'),record.get('fixed_memo_sha256'))
+                 for record in fixed.values() if isinstance(record,dict))
+        # Length is left to the writing stages: a live fix call (2026-11-14) asked to
+        # cut 1,300 words overran its output limit and was deleting the conclusion's
+        # required rows. The fix call corrects figures, labels and added rows only.
+        fixable=[issue for issue in issues if issue['id']!='length']
+        # The same problems that an earlier fix call in this cycle left in place are
+        # not sent again: edits leave most sentences as they were, so a second call
+        # would be asked to fix exactly what it already declined to change.
+        attempted=_digest(fixable)
+        repeated=bool(fixable) and not done and any(
+            isinstance(record,dict) and record.get('remaining_sha256')==attempted and
+            record.get('cycle',0)==state.get('revision_base',0) for record in fixed.values())
+        if repeated:
+            fixed[f'{iteration}:{memo_key}']={'memo_sha256':memo_key,'fixed_memo_sha256':memo_key,
+                                             'issues':[issue['id'] for issue in issues],'edits_applied':0,
+                                             'skipped_call':'the same problems remained after an earlier fix call',
+                                             'cycle':state.get('revision_base',0),'remaining_sha256':attempted}
+            checkpoint()
+        elif fixable and not done:
+            try:
+                response=call(f'draft_check_fix_{iteration}',strong,
+                'Correct only the problems listed below in this memo draft. Return ONLY JSON {"edits":[{"quote":"exact '
+                'contiguous text copied from the memo","replacement":"corrected text"}]}. Each quote must appear exactly '
+                'once in the memo; keep each quote to one sentence or less. For an untraced figure, use the exact figure from '
+                'the computed summary, the COMPUTED FROM REPORTED FILINGS tables, the valuation output or a primary source, '
+                'or remove the figure. For a figure found only in unverified excerpts, cite the primary source that contains '
+                'it, label it as unverified context, or remove it. Describe convention rows separately, never as adding up. '
+                'Change nothing else.\n'+
+                EVIDENCE_TIER_RULE+'\nProblems:\n'+json.dumps(fixable)+'\nCOMPUTED SUMMARY:\n'+computed_summary(plan,result)+
+                evidence_above()+'\nComputed exhibits:\n'+valuation_section(plan,result)+'\nMemo:\n'+memo,tokens=8000,
+                prefix=_evidence_prefix(context))
+            except core.IncompleteResponse as exc:
+                # The fix is a free-check convenience; the review still sees the draft
+                # and the same checks. A charged but unusable answer does not stop the run.
+                response=''
+                progress(f'Pre-review fix not applied: {exc}'.split(', so it')[0])
+            # A live fix response (2026-11-14) gave edits, wrote "Wait, I need to
+            # re-read", and gave corrected edits. The last complete block is the
+            # model's answer; each edit is still applied only on an exact match.
+            edits=_last_edits(response) if response else []
+            memo,applied,skipped=_apply_edits(memo,edits)
+            memo=_label_unverified(memo,state['sources'])
+            if not response:
+                skipped=['the fix response was incomplete and was not used']
+            elif edits is None:
+                skipped=['no complete edits object could be parsed from the response']
+            fixed[f'{iteration}:{memo_key}']={'memo_sha256':memo_key,'fixed_memo_sha256':hashlib.sha256(memo.encode()).hexdigest()[:16],
+                                             'issues':[issue['id'] for issue in issues],'edits_applied':applied,'edits_skipped':skipped[:20]}
+            state['current_memo']=memo
+            checkpoint()
+            issues=prereview_checks(_with_summary(memo,plan,result),state['sources'],computed_inputs)
+            if response and edits is not None:
+                # A complete answer that left these problems is not asked again.
+                fixed[f'{iteration}:{memo_key}'].update(cycle=state.get('revision_base',0),
+                    remaining_sha256=_digest([issue for issue in issues if issue['id']!='length']))
+                checkpoint()
+        visible=_label_unverified(_with_summary(memo,plan,result)+'\n'+valuation_section(plan,result)+
+                                  '\n'.join(reported_tables_section(state['sources'])),state['sources'])
+        (revisions/f'memo-{iteration}.md').write_text(visible,encoding='utf-8')
+        # A review can fail after a new draft/model is saved. Keep the reader
+        # download consistent with those artifacts even before review succeeds.
+        state['complete']=False
+        state['quality_status']='needs_review'
+        pending=_render(memo,state['sources'],state['gaps'],plan,result,state)
+        (folder/'memo.md').write_text(pending,encoding='utf-8')
+        core.save(folder/'source-ledger.json',claim_ledger(pending))
+        checkpoint()
+        manifest={'memo_sha256':hashlib.sha256(visible.encode()).hexdigest(),
+                  'sources_sha256':_digest(state['sources']),'valuation_sha256':_digest(result),
+                  'review_type':'model_peer_review_not_publication_certification'}
+        deterministic=inspect_memo(visible,state['sources'],result)+[
+            {key:value for key,value in issue.items() if key!='items'}|{'issue':issue['issue']+' Examples: '+
+             '; '.join(item['figure'] or item['sentence'][:80] for item in issue['items'][:8])} for issue in issues]
+        fresh_notes=(state.get('external_notes','') if state.get('external_notes_digest') !=
+                     state.get('external_notes_reviewed_digest') else '')
+        earlier=state['review_history'][-1] if iteration and state.get('review_history') else None
+        ledger=('\nFindings from the previous review. Verify whether each is resolved in this draft; do not re-raise a '
+                'resolved one, and raise a new material finding only for a defect present in this draft:\n'+
+                json.dumps([{key:finding.get(key) for key in ('id','severity','issue')} for finding in earlier.get('findings',[])])
+                if earlier else '')
+        prompt=('Review this equity memo against its supplied evidence and the Python valuation, using the shared quality '
+                'standard below, and classify each defect as blocker, major or minor by that standard. Rounding within '
+                'the last displayed digit is never material; an unverified excerpt used only as attributed outside view '
+                'or context is not material, but a company fact or number resting only on one is (rule M1); style '
+                'preferences are not findings. Check: (1) every figure in the prose against the computed summary, the computed tables, the '
+                'valuation output or the cited source, and every comparison with the price by arithmetic; (2) that the '
+                'memo does not contradict the computed account of which inputs alone can and cannot bring value to the '
+                'price (explaining why the house forecast differs from what the price requires is the variant view, not '
+                'a contradiction; the conclusion need not restate the account); (3) that company facts rest on primary sources and unverified '
+                'excerpts are labelled context; (4) that the strongest sourced opposing case is answered with evidence; '
+                '(5) that no trading-layer language appears; (6) that convention rows are never added together; (7) that '
+                'repurchase, multiple and monitoring statements use the computed diagnostics and their fixed inputs. A '
+                'disclosed house forecast is a judgment, not a defect, unless primary evidence contradicts it or it is '
+                'unexplained. Never write a fix that asks the author to compute a value the engine has not computed. '
+                'Before flagging an omission, check the whole memo. Report every material defect you find and at most '
+                'three minor ones; there is no target number of findings. '
+                'Every finding must quote one contiguous passage of the CURRENT draft (between the draft markers) verbatim, without added quotation '
+                'marks or ellipses; for an omission, quote the heading or sentence where the missing content belongs and '
+                'name the omission in issue. Earlier notes can be stale; never report an accusation that the current '
+                'draft already resolves. Keep each issue under 100 words and each fix under 70.\n'+
+                EVIDENCE_TIER_RULE+'\n'+RUBRIC+ledger+'\n'+REVIEW_SCHEMA+
+                '\nThe evidence and the valuation are in the blocks above; the draft is at the end.'+
+                '\nDeterministic diagnostics (not semantic proof):\n'+json.dumps(deterministic)+
+                '\nNew external notes for this draft only; verify against the CURRENT wording and omit resolved allegations:\n'+fresh_notes+
+                ('\nArtifact integrity recheck record: '+state['artifact_review_record']+
+                 '. Original state-derived artifacts were reconstructed; deliberate edits require explicit supplied inputs. '
+                 'Reassess this frozen draft and model.' if state.get('artifact_review_record') else '')+
+                (LATER_EVIDENCE+later if later else '')+_draft_block(visible))
+        prior_review=next((r for r in reversed(state['review_history']) if r['iteration']==iteration),None)
+        reusable=(prior_review and not state.get('review_invalidated') and
+                  prior_review.get('review_model',strong)==reviewer and
+                  prior_review.get('manifest',{}).get('memo_sha256')==manifest['memo_sha256'] and
+                  prior_review.get('manifest',{}).get('valuation_sha256')==manifest['valuation_sha256'])
+        if reusable:
+            # Targeted evidence may have arrived after this frozen review. It
+            # belongs in the correction; the unchanged draft need not be paid
+            # for again after an interrupted model-response or revision step.
+            record=prior_review
+            combined=record['findings']
+        else:
+            review_prefix=_review_prefix(context,valuation_context)
+            raw=call(f'review_{iteration}',reviewer,prompt,tokens=12000,prefix=review_prefix)
+            try:
+                review_value,normalized=_response_json(raw)
+                # Live GPT-5.4 reviews (2026-11-14) wrapped quotes in quotation
+                # marks or joined fragments, and each paid a format repair whose
+                # result was then anchored to its longest exact span anyway. The
+                # same anchoring applies to the first response; the reviewer's
+                # wording stays on record beside the anchored excerpt.
+                review=parse_review(json.dumps(review_value),memo=visible,anchor_embellished=True)
+            except ValueError as exc:
+                (reviews/f'review-{iteration}-unparsed.txt').write_text(raw,encoding='utf-8')
+                # This call repairs presentation only. Repeating the full source
+                # packet and valuation wastes context and invites a new audit.
+                repair=('Reformat the recorded review below; do not conduct a new audit, add findings, '
+                        'or discard unresolved substantive findings. Preserve IDs, severities and meaning. '
+                        'For each finding copy ONE short contiguous verbatim excerpt, preferably 50–300 '
+                        'characters, from the CURRENT FROZEN MEMO. Do not join passages, use ellipses, '
+                        'wrap the excerpt in extra quotation marks, or write literal backslash-n text. '
+                        'For an omission quote the adjacent actual wording and describe the omission in issue. '
+                        'Omit only accusations explicitly withdrawn or described as already resolved in '
+                        'the recorded review. Return exactly the schema.\n'+REVIEW_SCHEMA+
+                        '\nFormat error: '+str(exc)+'\nCURRENT FROZEN MEMO:\n'+visible+
+                        '\nRECORDED REVIEW:\n'+raw)
+                raw=call(f'review_format_{iteration}',reviewer,repair,tokens=12000)
+                (reviews/f'review-{iteration}-reformatted.txt').write_text(raw,encoding='utf-8')
+                try:
+                    review_value,normalized=_response_json(raw)
+                    review=parse_review(json.dumps(review_value),memo=visible,anchor_embellished=True)
+                except ValueError as failed:
+                    # A saved response is replayed on resume. Keeping a review
+                    # that cannot be validated would stop every later attempt
+                    # here, so it is discarded (both raw texts stay on disk and
+                    # the spending stays in the ledger) and the next attempt
+                    # requests a fresh review.
+                    for name in [name for name in state['stages']
+                                 if name.split(':')[0] in (f'review_{iteration}',f'review_format_{iteration}')]:
+                        state['stages'].pop(name)
+                    checkpoint()
+                    raise ValueError(str(failed)+'. The rejected review was discarded; run the same command again '
+                                     'for a fresh review') from None
+            if normalized:
+                recovery={'stage':f'review_{iteration}','method':'one_explicit_complete_json_fence'}
+                if recovery not in state.setdefault('response_normalizations',[]):
+                    state['response_normalizations'].append(recovery)
+            known={s['id'] for s in state['sources']}
+            for finding in review['findings']:
+                if not set(finding['source_refs']).issubset(known):
+                    raise RuntimeError('Reviewer cited a source outside the research snapshot')
+            # A reviewer ID equal to one Python assigns (the assessment finding, a
+            # deterministic check) is renamed so records and the check stay distinct.
+            reserved={'central-weakness-unhandled','review-assessment-missing'}|{f.get('id') for f in deterministic}
+            for finding in review['findings']:
+                if finding['id'] in reserved:
+                    finding['id']=finding['id']+'-reviewer'
+            # The reviewer's assessment finding is checked with its majors. It is
+            # kept only when no checked reviewer major survives, as before the
+            # check existed; its minor form (assessment missing) is always kept.
+            assessment=assessment_findings({**review,'findings':[]})
+            material=[f for f in review['findings']+assessment if f.get('severity') in {'blocker','major'}]
+            refuted,check_note={},None
+            # Python settles "this number is in no source" itself: a replay review
+            # (2026-11-15) called a figure from the reported-history table absent,
+            # and the model check upheld it.
+            pools=trace_pools(state['sources'],computed_inputs)
+            # A finding the check refuted earlier on the same text under the same
+            # rule is not paid for again (the check flip-flopped between reviews).
+            earlier_refuted=_carried_refutations(state,iteration,manifest)
+            for index,finding in enumerate(material):
+                rule,excerpt=finding.get('rule'),finding.get('current_excerpt') or ''
+                if rule=='M3':
+                    missing=untraced_figures(excerpt,pools)
+                    if missing==[]:
+                        refuted[index]=('Python traced every figure in the quoted text to the computed output, the reported '
+                                        'tables or a primary source.')
+                elif rule=='B2' and excerpt and not TRADING_TERMS.search(excerpt):
+                    refuted[index]='The quoted text contains none of the trading-layer terms the standard names.'
+                elif rule=='M6' and HOUSE_ATTRIBUTION.search(excerpt):
+                    refuted[index]='The quoted text names the figure as a house, computed or forecast figure.'
+                if index not in refuted and (rule,excerpt) in earlier_refuted:
+                    refuted[index]=earlier_refuted[(rule,excerpt)]
+            pending=[f for index,f in enumerate(material) if index not in refuted]
+            if pending:
+                try:
+                    check=call(f'finding_check_{iteration}',reviewer,FINDING_CHECK+'\n'+EVIDENCE_TIER_RULE+'\n'+RUBRIC+
+                        '\nFindings:\n'+json.dumps([dict({key:f.get(key) for key in ('severity','rule','issue','current_excerpt','fix','source_refs')},id=check_id)
+                                                    for f,check_id in zip(pending,_check_ids(pending))])+
+                        '\nThe evidence and the valuation are in the blocks above; the draft is at the end.'+
+                        (LATER_EVIDENCE+later if later else '')+_draft_block(visible),tokens=FINDING_CHECK_TOKENS,
+                        prefix=review_prefix)
+                    for index,reason in _refuted_findings(check,pending).items():
+                        refuted[material.index(pending[index])]=reason
+                except core.IncompleteResponse as exc:
+                    # Charged and recorded; every remaining finding stands, as if the check upheld it.
+                    check_note='The check response was incomplete; every finding it was asked about was kept.'
+                    progress(f'Finding check not used: {exc}'.split(', so it')[0])
+            removed={id(material[index]) for index in refuted}
+            kept=[f for f in review['findings'] if id(f) not in removed]
+            if any(f.get('severity') in {'blocker','major'} for f in kept):
+                assessment=[f for f in assessment if f.get('severity') not in {'blocker','major'}]
+            else:
+                assessment=[f for f in assessment if id(f) not in removed]
+            combined=kept+deterministic+assessment
+            effective='revise' if any(f.get('severity') in {'blocker','major'} for f in combined) else 'pass'
+            record={'iteration':iteration,'verdict':effective,'model_verdict':review.get('verdict_as_reviewed',review['verdict']),
+                    'findings':combined,'manifest':manifest,
+                    'diagnostic_scope':DIAGNOSTIC_SCOPE,'review_model':reviewer,'author_model':strong}
+            if material:
+                record['finding_check']={'model':reviewer,'checked':[f['id'] for f in material],
+                                         'refuted':[dict(material[index],check_reason=reason) for index,reason in sorted(refuted.items())]}
+                if check_note:
+                    record['finding_check']['note']=check_note
+            for key in ('central_weakness','gap_explained'):
+                if key in review:
+                    record[key]=review[key]
+            state['review_history']=[r for r in state['review_history'] if r['iteration']!=iteration]+[record]
+            core.save(reviews/f'review-{iteration}.json',record)
+            (reviews/f'review-{iteration}.txt').write_text(raw,encoding='utf-8')
+            state.pop('review_invalidated',None)
+        state['external_notes_reviewed_digest']=state.get('external_notes_digest')
+        major=[f for f in combined if f.get('severity') in {'blocker','major'}]
+        state['quality_status']='reviewed_draft' if not major and result else 'needs_review'
+        report=_render(memo,state['sources'],state['gaps'],plan,result,state)
+        (folder/'memo.md').write_text(report,encoding='utf-8')
+        core.save(folder/'source-ledger.json',claim_ledger(report))
+        checkpoint()
+        if not major:
+            state['complete']=bool(result)
+            if not result:
+                state['quality_status']='missing_valuation'
+            break
+        if _revisions_used(state)==max_revisions:
+            state['complete']=False
+            state['quality_status']='unresolved_findings'
+            break
+        call(f'targeted_research_{iteration+1}',easy,
+             f'Investigate {ticker} primary evidence needed to resolve these specific findings. '
+             'Find exact dated source passages; do not repeat unverified assertions. '
+             'Answer in at most about 900 words. Findings:\n'+json.dumps(major),
+             tokens=WEB_RESEARCH_TOKENS,web=True)
+        research_row=next(r for r in reversed(state['ledger'])
+                          if r['stage']==f'targeted_research_{iteration+1}' and r.get('status')=='complete')
+        for annotation in research_row.get('annotations',[]):
+            if annotation.get('content') and not any(s.get('url')==annotation['url'] for s in state['sources']):
+                _register(folder,state['sources'],{'title':annotation['title'] or 'Targeted review evidence',
+                    'url':annotation['url'],'kind':'search_excerpt','source_tier':'search_excerpt_unverified',
+                    'data':{'excerpt':annotation['content'],'review_iteration':iteration+1}})
+        # The cached block stays as written; the new sources follow it uncached.
+        context,later=_evidence_blocks(state)
+        checkpoint()
+        # Review may identify economic or evidentiary defects in the model.
+        # Correct the editable plan first and independently recompute it, rather
+        # than letting prose quietly contradict an unchanged spreadsheet.
+        # The forecast is reopened only for findings a prose edit cannot answer
+        # (see _forecast_findings). Live runs (2026-11-27) paid $1.12-1.34 for a
+        # forecast response that answered "unchanged" for Microsoft and Apple.
+        python_ids={f.get('id') for f in deterministic}|PYTHON_FINDING_IDS
+        reasons=_forecast_findings(combined,memo,python_ids)
+        required=_edit_required(combined,memo,python_ids)
+        if reasons:
+            adjudication,decision=forecast_response(iteration,memo,combined)
+        else:
+            adjudication={'skipped':True,'reason':FORECAST_SKIP_REASON,
+                          'findings':[f.get('id') for f in combined if f.get('severity') in {'blocker','major'}]}
+            decision='skipped'
+            core.save(reviews/f'model-response-{iteration+1}.json',adjudication)
+        note_round(iteration+1,forecast_response=decision,forecast_reasons=[list(item) for item in reasons])
+        if decision in ('corrected','unavailable'):
+            # The plan changed, so the computed sections changed: rewrite the prose.
+            save_pending(iteration,memo,combined,adjudication,'rewrite',record['manifest'])
+            note_round(iteration+1,revision='rewrite',rewrite_reason='the plan changed')
+            finish_revision(iteration,memo,combined,adjudication)
+            continue
+        save_pending(iteration,memo,combined,adjudication,'edits',record['manifest'],required)
+        edit_round(iteration,memo,combined,adjudication,required,record['manifest'])
     final_report=_render(state['current_memo'],state['sources'],state['gaps'],plan,result,state)
     (folder/'memo.md').write_text(final_report,encoding='utf-8')
     core.save(folder/'source-ledger.json',claim_ledger(final_report))

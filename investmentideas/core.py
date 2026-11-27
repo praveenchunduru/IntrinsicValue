@@ -383,6 +383,8 @@ class Router:
                       {'type': 'text', 'text': prefix, 'cache_control': {'type': 'ephemeral', 'ttl': '1h'}}]
             content = prompt
             row['cached_prefix_utf8_bytes'] = len(prefix.encode())
+            # Equal digests across stages show the provider was sent identical cached bytes.
+            row['cached_prefix_sha256'] = hashlib.sha256(prefix.encode()).hexdigest()[:16]
         else:
             system, content = SYSTEM, (prefix or '') + prompt
         payload = {
