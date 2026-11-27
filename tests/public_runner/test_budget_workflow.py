@@ -368,6 +368,7 @@ class FindingCheckTests(unittest.TestCase):
             folder = pipeline.run('AAPL', 'synthetic-key', directory=directory)
             state = json.loads((folder/'state.json').read_text())
             memo = (folder/'memo.md').read_text()
+            notes_file = (folder/pipeline.METHOD_NOTES_FILE).read_text()
         stages = [row['stage'] for row in state['ledger']]
         self.assertIn('finding_check_0', stages)
         self.assertNotIn('revise_1', stages)
@@ -375,7 +376,7 @@ class FindingCheckTests(unittest.TestCase):
         record = state['review_history'][-1]
         self.assertEqual(record['verdict'], 'pass')
         self.assertEqual([f['id'] for f in record['finding_check']['refuted']], ['F1'])
-        self.assertIn('not upheld on a second check', memo)
+        self.assertIn('not upheld on a second check', notes_file)
 
     def test_an_upheld_major_still_drives_the_revision(self):
         fixture = FullContractTransport(revisions=1)

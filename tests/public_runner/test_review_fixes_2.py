@@ -83,7 +83,7 @@ class EngineTextTests(unittest.TestCase):
         self.assertIn('per_share_value_at_house_terminal_growth', row)
         self.assertIn('moves with the comparison', row['fixed_assumptions'])
         text = pipeline.valuation_section(value, valuation.evaluate(value))
-        self.assertIn('Value at house terminal growth ($)', text)
+        self.assertIn('/ at the base terminal growth', text)
 
     def test_return_diagnostics_describe_stub_timing(self):
         result = valuation.evaluate(plan())
@@ -571,9 +571,14 @@ class SourceRegisterLabelTests(unittest.TestCase):
     def test_unverified_sources_are_labelled_in_the_register(self):
         sources = [{'id': 'S1', 'title': 'Annual report', 'url': 'https://sec.example/10k', 'source_tier': 'regulatory_primary'},
                    {'id': 'S2', 'title': 'Blog post', 'url': 'https://blog.example/a', 'source_tier': 'search_excerpt_unverified'}]
-        text = pipeline._render('# T\n\nBody [S1].\n', sources, [], {}, None, {'quality_status': 'needs_review'})
+        text = pipeline._render('# T\n\nBody [S1]. Outside view [S2].\n', sources, [], {}, None, {'quality_status': 'needs_review'})
         self.assertIn('- [S1] Annual report', text)
         self.assertIn('- [S2 unverified] Blog post', text)
+        # Changed 2026-11-27 (readability review): the memo lists cited sources; method-notes.md lists all.
+        uncited = pipeline._render('# T\n\nBody [S1].\n', sources, [], {}, None, {'quality_status': 'needs_review'})
+        self.assertNotIn('Blog post', uncited)
+        self.assertIn('- [S2 unverified] Blog post', pipeline.method_notes_document('# T\n\nBody [S1].\n', sources, [], {}, None,
+                                                                                {'quality_status': 'needs_review'}))
 
 
 class FencedCheckTests(unittest.TestCase):
@@ -613,13 +618,17 @@ class GapAttributionTests(unittest.TestCase):
         # Changed 2026-11-27 (memo redesign): one row per input states whether it reaches the price alone.
         # Changed again 2026-11-27 (final Walmart run): an unreached row says what was tested, or gives the
         # constant-growth reverse DCF's answer, or that the input does not change the value.
-        table = summary[summary.index('**What the price needs.**'):].split('**Conventions')[0]
-        lines = [line for line in table.split('\n') if line.startswith('| ') and not line.startswith('| Discount rate')]
-        self.assertNotIn('cannot reach the price', table)
-        unreached = sum(1 for line in lines if any(text in line for text in
-                        ('not reached within the range tested', ' a year for ', 'does not change the value')))
-        self.assertEqual(unreached, len([row for row in rows if row['status'] == 'not_reachable']))
-        self.assertIn('Each row is an alternative, and the inputs interact.', pipeline.valuation_section(value, result))
+        # Changed again 2026-11-27 (readability review): reaching inputs are table rows; the others are named once
+        # in one plain sentence, or, for revenue, as the constant-growth answer.
+        table = summary[summary.index('**What the price needs.**'):].split('**Dated tests')[0].split('Of the method')[0]
+        lines = [line for line in table.split('\n') if line.startswith('| ') and not line.startswith(('| Discount rate', '| Input', '|---'))]
+        reverse = 1 if any(line.startswith('| Revenue growth, one rate') for line in lines) else 0
+        self.assertEqual(len(lines) - reverse, len(solved) - sum(1 for row in solved if row['input'] == 'terminal_growth'))
+        unreached = len([row for row in rows if row['status'] == 'not_reachable'])
+        if unreached - reverse:
+            self.assertIn('alone: ', table)
+        self.assertNotIn('not reached within the range tested', table)
+        self.assertIn('Rows are alternatives, and the inputs interact.', pipeline.valuation_section(value, result))
         self.assertTrue(solved or unreached)
 
     def test_sections_and_review_use_the_computed_attribution(self):
@@ -900,7 +909,7 @@ class ProseCheckTests(unittest.TestCase):
     def test_scale_check_and_reported_tables_are_printed(self):
         value = plan()
         result = valuation.evaluate(value)
-        self.assertIn('### Scale check', pipeline.valuation_section(value, result))
+        self.assertIn('In year 10 of the base case, revenue is', pipeline.valuation_section(value, result))
         source = {'id': 'S2', 'data': {}, 'historical_baseline': {'rows': [
             {'fiscal_year_end': '2025-06-30', 'currency': 'USD', 'revenue': 100e9, 'revenue_growth': .1, 'gross_margin': .6,
              'operating_margin': .3, 'research_and_development_to_revenue': .1, 'selling_general_administrative_to_revenue': .1,

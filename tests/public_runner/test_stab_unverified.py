@@ -144,11 +144,12 @@ class DiscountRateRowTests(unittest.TestCase):
             if not result.get('implied_return_at_price') or not (result.get('price_requirements') or {}).get('rows'):
                 continue
             page = pipeline.computed_summary(plan, result)
-            table = page.split('**What the price needs.**')[1].split('**Conventions')[0]
-            self.assertIn('| Discount rate, one flat rate |', table, folder)
-            rows = [line for line in table.split('\n') if line.startswith('| ') and not line.startswith('| Input')]
-            count = next(word for number, word in pipeline.NUMBER_WORDS.items() if number == len(rows))
-            self.assertIn(f'The table lists {count} inputs, each changed alone', table, folder)
+            # Changed 2026-11-27 (readability review): a solved flat rate is a row; an unsolved one is named once
+            # among the inputs that cannot reach the price alone.
+            table = page.split('**What the price needs.**')[1].split('**Dated tests')[0]
+            self.assertTrue('| Discount rate, one flat rate in every year |' in table or 'one flat discount rate' in table,
+                            folder)
+            self.assertIn('Each input changed alone, the rest held at the base case.', table, folder)
             found += 1
         if not found:
             self.skipTest('INTRINSICVALUE_SAVED_RUNS names no saved run with an implied return')

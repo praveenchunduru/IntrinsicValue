@@ -196,8 +196,13 @@ The same ticker/models/evidence on the same UTC date resume saved stages rather
 than paying again. A new day refreshes the evidence; use `--output fresh-folder`
 for a new same-day snapshot. OS file locks prevent duplicate concurrent full runs.
 
-- `memo.md`: a computed first page, the eight prose sections, the valuation detail,
-  reported history, method notes, sources and review status.
+- `memo.md`: a computed first page (value, price and the S&P 500 ratio under the same method,
+  an optional three-sentence "In brief" from the writer, scenarios, the exit multiple, what the
+  price needs, dated tests), the prose sections, Appendix A (the model, one sensitivity table and
+  one table of what would change the value), Appendix B (reported history), the notes specific
+  to this company and run, the sources the memo cites and a two-line review footer.
+- `method-notes.md`: the house method notes for the run, every source collected and the full
+  review and retrieval record; the memo links it.
 - `sources.json`, `sources_raw/`: provenance, exact excerpts, retrieval dates and document archives.
 - `source-ledger.json`: paragraph-to-citation mapping; citation syntax is not semantic proof.
 - `assumptions.json`, `valuation.json`, `cashflows.csv`, `sensitivity.csv`: editable inputs and reproducible calculations.

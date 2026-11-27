@@ -1829,6 +1829,14 @@ def evaluate(plan):
         if history is not None:
             panel['rate_history'] = history
         result['index_benchmark'] = _index_benchmark(plan, definitions['base'], scenarios['base'].get('value_to_price'))
+        index_ratio = result['index_benchmark'].get('value_to_price')
+        if isinstance(index_ratio, (int, float)) and index_ratio > 0:
+            # Each ratio relative to the index ratio, as the memo's first page prints it (readability review, 2026-11-27).
+            relative = {name: row['value_to_price'] / index_ratio for name, row in scenarios.items()
+                        if isinstance(row.get('value_to_price'), (int, float))}
+            if isinstance(result.get('weighted_value_to_price'), (int, float)):
+                relative['weighted'] = result['weighted_value_to_price'] / index_ratio
+            result['index_benchmark']['relative_value_to_price'] = relative
         if 'country_risk_reference' in plan:
             _country_risk_row(result['convention_panel'], plan['country_risk_reference'], actuals,
                               definitions['base'], scenarios['base']['per_share_value'], calibration)

@@ -562,9 +562,10 @@ class PipelineReviewFixTests(unittest.TestCase):
         self.assertNotIn('Competitive advantage period', summary)
         self.assertNotIn('Treasury rate', summary)
         detail = pipeline.valuation_section(value, result)
-        horizons = detail[detail.index('### Other horizons'):detail.index('### Rate regimes')]
-        self.assertIn('Competitive advantage period of 20 years', horizons)
-        self.assertIn('Month giving the highest value', detail[detail.index('### Rate regimes'):])
+        # Changed again 2026-11-27 (readability review): one sensitivity table holds them.
+        table = detail[detail.index('### Sensitivity'):]
+        self.assertRegex(table, r'Competitive advantage period of [\d / ]*20 years')
+        self.assertIn('highest (', table)
 
     def test_minor_wording_fixes(self):
         self.assertIn('base-rate tables may be cited', pipeline.FORECAST_SCHEMA)
