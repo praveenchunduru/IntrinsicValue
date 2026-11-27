@@ -429,13 +429,15 @@ class LoopFlowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             folder, state = run_loop(directory, fixture)
             memo = (folder / 'memo.md').read_text()
+            record = (folder / pipeline.METHOD_NOTES_FILE).read_text()
             saved = json.loads((folder / 'computed-text-findings.json').read_text())
         sequence = stages(state)
         self.assertEqual(sequence[-2:], ['review_0', 'finding_check_0'])
         self.assertEqual(state['quality_status'], 'unresolved_findings')
         self.assertFalse(state['complete'])
         self.assertEqual(state['computed_text_findings']['ids'], ['F1'])
-        status = memo.split('## Review status', 1)[1]
+        self.assertIn('Review status: unresolved findings.', memo)
+        status = record.split('## Run record', 1)[1]
         heading = status.index(pipeline.COMPUTED_TEXT_HEADING)
         self.assertGreater(status.index('The row contradicts the convention panel'), heading)  # listed, under its line
         self.assertEqual([f['id'] for f in saved['findings']], ['F1'])

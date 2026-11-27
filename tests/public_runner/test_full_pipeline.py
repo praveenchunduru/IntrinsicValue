@@ -513,8 +513,8 @@ class FullPipelineTests(unittest.TestCase):
             self.assertTrue(visible.startswith('# AAPL: intrinsic value'))
             self.assertIn('## Summary',visible)
             self.assertIn('The base-case value is $',visible)
-            self.assertIn('needs_review',visible)
-            self.assertIn('Review is incomplete',visible)
+            self.assertIn('Review status: needs review.',visible)
+            self.assertIn('Review is incomplete',(folder/pipeline.METHOD_NOTES_FILE).read_text())
             self.assertFalse(state['complete'])
             self.assertTrue((folder/'source-ledger.json').exists())
 
@@ -550,7 +550,7 @@ class FullPipelineTests(unittest.TestCase):
             self.assertEqual(len(state['sources']),3)
             self.assertFalse(state['complete'])
             self.assertEqual(state['quality_status'],'needs_review')
-            self.assertIn('needs_review',(folder/'memo.md').read_text())
+            self.assertIn('Review status: needs review.',(folder/'memo.md').read_text())
             from investmentideas import memo_style
             self.assertIn(memo_style.Style('USD').per_share(state['valuation']['weighted_per_share_value']),(folder/'memo.md').read_text())
             frozen=(folder/'revisions'/'memo-0.md').read_text()
@@ -683,7 +683,7 @@ class FullPipelineTests(unittest.TestCase):
             value=json.loads((folder/'valuation.json').read_text())
             self.assertEqual(value['weighted_per_share_value'],initial)
             self.assertIn('growth_10pct',value['counterfactuals'])
-            self.assertIn('### Counterfactual cases',(folder/'memo.md').read_text())
+            self.assertIn('### What would change the value',(folder/'memo.md').read_text())
             self.assertEqual(json.loads((folder/'assumptions.json').read_text())['counterfactuals'],cases)
             count=len(FakeRouter.calls)
             pipeline.run('AAPL','synthetic',directory=directory,counterfactuals=cases)
@@ -744,7 +744,7 @@ class FullPipelineTests(unittest.TestCase):
             self.assertFalse(state['complete'])
             self.assertEqual(state['quality_status'],'needs_review')
             self.assertEqual(state['review_model'],'synthetic/other')
-            self.assertIn('needs_review',(folder/'memo.md').read_text())
+            self.assertIn('Review status: needs review.',(folder/'memo.md').read_text())
 
     def test_primary_focus_preserves_source_identity_and_checks_archive_integrity(self):
         document='<html><h2>Research and Development</h2><p>R&D expense increased due to infrastructure and headcount expenses.</p></html>'
@@ -800,7 +800,7 @@ class FullPipelineTests(unittest.TestCase):
             state=json.loads((folder/'state.json').read_text())
             self.assertFalse(state['complete'])
             self.assertEqual(state['quality_status'],'missing_valuation')
-            self.assertIn('missing_valuation',(folder/'memo.md').read_text())
+            self.assertIn('Review status: missing valuation.',(folder/'memo.md').read_text())
 
     def test_withdrawn_target_removes_stale_downloads_but_archives_history(self):
         FakeRouter.revise=True;FakeRouter.withdraw=True
@@ -818,7 +818,7 @@ class FullPipelineTests(unittest.TestCase):
             state=json.loads((folder/'state.json').read_text())
             self.assertFalse(state['complete'])
             self.assertEqual(state['quality_status'],'needs_review')
-            self.assertIn('needs_review',(folder/'memo.md').read_text())
+            self.assertIn('Review status: needs review.',(folder/'memo.md').read_text())
 
     def test_combined_verdict_and_final_memo_status_are_consistent(self):
         finding={'id':'D1','severity':'major','issue':'Synthetic discrepancy','source_refs':['S1'],'fix':'Investigate'}
@@ -828,7 +828,7 @@ class FullPipelineTests(unittest.TestCase):
             self.assertEqual(state['review_history'][0]['model_verdict'],'pass')
             self.assertEqual(state['review_history'][0]['verdict'],'revise')
             self.assertEqual(state['quality_status'],'unresolved_findings')
-            self.assertIn('unresolved_findings',(folder/'memo.md').read_text())
+            self.assertIn('Review status: unresolved findings.',(folder/'memo.md').read_text())
 
     def test_primary_supplement_reuses_searches_and_gets_a_fresh_review(self):
         extra={'title':'Complete primary filing','url':'https://example.com/complete-filing','kind':'regulatory_primary',
@@ -992,10 +992,10 @@ class ComputedMemoExhibitTests(unittest.TestCase):
         # Valuation research only: an entry threshold is never rendered, even if a plan carries one.
         self.assertNotIn('USD 11.85',text)
         self.assertNotIn('entry threshold',text.lower())
-        self.assertIn('| 15.6 |',text)  # Remaining1.48bn / remaining95m shares.
-        self.assertIn('| 5.0 |',text)
+        self.assertIn('gives $15.6 a share',text)  # Remaining1.48bn / remaining95m shares.
+        self.assertIn('$100M at an average of $20.0 a share',text)
         self.assertIn('Entry earnings are the first forecast year',text)
-        self.assertIn('A historical case compares that price with today\'s house value',text)
+        self.assertIn('A historical case compares the price paid with today\'s value only',text)
 
     def test_assumptions_label_follows_canonical_lease_allocation_and_selected_asset_policy(self):
         from tests.public_runner.test_inputs import sources as primary_sources, fact

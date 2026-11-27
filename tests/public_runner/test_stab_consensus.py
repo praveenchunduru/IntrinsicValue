@@ -592,7 +592,8 @@ class CorrectionTests(unittest.TestCase):
     def test_a_corrected_plan_is_marked_edited_and_the_range_is_past_tense(self):
         folder, state = self.run_plan(Transport([taxed(.20), taxed(.22), taxed(.30)]), 3)
         plan, result = state['plan'], state['valuation']
-        summary = pipeline.computed_summary(plan, result)
+        # Changed 2026-11-27 (readability review): the sample sentence is a company-specific note in the memo.
+        summary = pipeline._render('# Prose\nText [S1].\n', state['sources'], [], plan, result, state).split('\n## Notes', 1)[1]
         self.assertIn('The base case combines three samples of the same forecast request, input by input; the samples\' '
                       'own values ranged from', summary)
         corrected = copy.deepcopy(plan)
@@ -602,18 +603,19 @@ class CorrectionTests(unittest.TestCase):
         record = value['forecast_consensus']
         self.assertTrue(record['edited_after_consensus'])
         self.assertAlmostEqual(record['current_values']['base'], value['scenarios']['base']['per_share_value'])
-        text = pipeline.computed_summary(corrected, value)
-        self.assertIn('and the forecast was revised after review.', text)
-        self.assertNotIn('their values ranged from', text)
         memo = pipeline._render('# Prose\nText [S1].\n', state['sources'], [], corrected, value, state)
-        self.assertIn('**Forecast samples**', memo)
-        self.assertIn('A forecast correction after review then edited the plan valued.', memo)
+        self.assertIn('and the forecast was revised after review.', memo)
+        self.assertNotIn('their values ranged from', memo)
+        notes = pipeline.method_notes_document('# Prose\nText [S1].\n', state['sources'], [], corrected, value, state)
+        self.assertIn('**Forecast samples**', notes)
+        self.assertIn('A forecast correction after review then edited the plan valued.', notes)
         # Relocking the unchanged plan, as every later run does, is not an edit.
         relocked, _ = pipeline._lock_plan(plan, state['sources'])
         self.assertEqual(pipeline.consensus.fingerprint(relocked), state['plan_consensus']['plan_fingerprint'])
         # A run saved before the record existed shows neither.
         result.pop('forecast_consensus')
         old = pipeline._render('# Prose\nText [S1].\n', state['sources'], [], plan, result, {'ticker': 'AAPL'})
+        old += pipeline.method_notes_document('# Prose\nText [S1].\n', state['sources'], [], plan, result, {'ticker': 'AAPL'})
         self.assertNotIn('samples of the same forecast request', old)
         self.assertNotIn('Forecast samples', old)
 

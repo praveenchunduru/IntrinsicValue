@@ -288,7 +288,14 @@ class SixSectionRunTests(unittest.TestCase):
         self.assertEqual([(record['finding'], record['applied']) for record in log['edits']], [('F1', True)])
         self.assertNotIn('section-empty', log['free_checks_after'])
         self.assertTrue(state['complete'])
-        self.assertIn('## In brief', memo)
+        # The saved prose keeps its heading; the delivered memo shows the brief on page one, under the
+        # headline and above the scenario table, without repeating the heading.
+        self.assertIn('## In brief', state['current_memo'])
+        brief = state['current_memo'].split('## In brief', 1)[1].split('\n## ', 1)[0].strip()
+        self.assertTrue(brief)
+        self.assertNotIn('## In brief', memo)
+        self.assertIn(brief.split('.')[0], memo.split('| Scenario |', 1)[0])
+        self.assertEqual(memo.count(brief.split('.')[0]), 1)
         self.assertIn('That rate is ours.', state['current_memo'])
         self.assertEqual(prose_outline(state['current_memo']), 'six')
 
@@ -314,6 +321,53 @@ class SixSectionRunTests(unittest.TestCase):
         self.assertTrue(state['complete'])
         self.assertIn('Services margins by product are undisclosed', state['current_memo'])
 
+
+class HollowingEditTests(unittest.TestCase):
+    """An edit may not delete a section down to a stub (the cause of the Walmart section 1 of 2026-11-27)."""
+
+    FIRST = ('The company earns a thin operating margin on a very large revenue base, and the forecast keeps that '
+             'margin inside the range the last five reported years show [S1].')
+    SECOND = ('Advertising and membership income grow faster than sales, which lifts the mix a little each year, and '
+              'the base case already credits that gain in its margin path [S2].')
+    OTHER = ('Grocery anchors the business and turns its capital about four times a year, which is how a margin '
+             'near four percent still earns a return above the cost of capital across the five reported years, '
+             'and why the forecast holds capital efficiency close to its reported level in every one of the ten years [S3].')
+    STUB = '## 1. Conclusion and the gap to price\n\nThin margins explain the value.\n'
+
+    def memo(self):
+        return (f'## 1. Conclusion and the gap to price\n\n{self.FIRST}\n\n{self.SECOND}\n\n'
+                f'## 2. Business economics\n\n{self.OTHER}\n')
+
+    def test_the_conclusion_section_is_held_to_the_full_minimum(self):
+        # Its title contains "gap"; only the evidence-gaps section may be as short as one line.
+        self.assertFalse(pipeline.structure_problems(self.memo()))
+        problems = pipeline.structure_problems(self.STUB)
+        self.assertEqual(len(problems), 1)
+        self.assertIn('needs at least 50', problems[0])
+        self.assertFalse(pipeline.structure_problems('## 6. Evidence gaps\n\n- The 10-Q is not filed [S4].\n'))
+        self.assertFalse(pipeline.structure_problems('## 8. Evidence gaps and unresolved questions\n\nNone found.\n'))
+
+    def test_deleting_most_of_a_section_is_refused_and_the_text_stays(self):
+        memo = self.memo()
+        edits = [{'quote': self.FIRST + '\n\n' + self.SECOND, 'replacement': 'Thin margins explain the value.'}]
+        self.assertEqual(memo.count(edits[0]['quote']), 1)
+        after, applied, skipped = pipeline._apply_edits(memo, edits)
+        self.assertEqual((after, applied), (memo, 0))
+        self.assertIn('empty or too short', skipped[0])
+        emptied, applied, skipped = pipeline._apply_edits(memo, [{'quote': self.FIRST + '\n\n' + self.SECOND, 'replacement': ''}])
+        self.assertEqual((emptied, applied), (memo, 0))
+
+    def test_an_ordinary_deletion_and_a_repair_still_apply(self):
+        memo = self.memo().replace(self.SECOND, self.SECOND + ' ' + self.OTHER.replace('[S3]', '[S5]'))  # room to trim
+        trimmed, applied, skipped = pipeline._apply_edits(memo, [{'quote': ', which lifts the mix a little each year', 'replacement': ''}])
+        self.assertEqual((applied, skipped), (1, []))
+        self.assertNotIn('lifts the mix', trimmed)
+        repaired, applied, skipped = pipeline._apply_edits(self.STUB, [{'quote': 'Thin margins explain the value.',
+                                                                        'replacement': self.FIRST + ' ' + self.SECOND}])
+        self.assertEqual((applied, skipped), (1, []))
+        self.assertFalse(pipeline.structure_problems(repaired))
+        # An edit that leaves an already thin section thin is not this guard's business.
+        self.assertFalse(pipeline._hollows_a_section(self.STUB, self.STUB.replace('Thin', 'Low')))
 
 if __name__ == '__main__':
     unittest.main()

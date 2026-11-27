@@ -112,10 +112,13 @@ def bare_change(value, reference):
 
 
 def table_scale(values):
-    """('B', 1e9, 1), ('M', 1e6, 0) or whole units ('', 1, 0) for a column set, so cells stay short."""
+    """('B', 1e9, 1), ('M', 1e6, 0) or whole units ('', 1, 0) for a column set, so cells stay short.
+
+    Billions start at $1B: a column of $M digit strings such as 8,397 read badly (readability review, 2026-11-27).
+    """
     finite = [abs(value) for value in values if _finite(value)]
     largest = max(finite) if finite else 0
-    return ('B', 1e9, 1) if largest >= 1e10 else ('M', 1e6, 0) if largest >= 1e7 else ('', 1, 0)
+    return ('B', 1e9, 1) if largest >= 1e9 else ('M', 1e6, 0) if largest >= 1e7 else ('', 1, 0)
 
 
 def scaled(value, scale, decimals=1):

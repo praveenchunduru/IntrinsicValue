@@ -33,7 +33,14 @@ NEVER = ('less for low-margin', 'The lower rate is the reference', 'gives either
 def render(value, memo=PROSE, sources=SOURCES):
     result = evaluate(value)
     state = {'ticker': 'EXMP', 'quality_status': 'reviewed_draft', 'complete': True, 'review_history': []}
-    return pipeline._render(memo, sources, [], value, result, state), result
+    return with_notes(pipeline._render(memo, sources, [], value, result, state),
+                      pipeline.method_notes_document(memo, sources, [], value, result, state)), result
+
+
+def with_notes(memo, notes):
+    """The memo with its method-notes file placed before the sources, so the checks read both."""
+    head, tail = memo.split('\n## Sources', 1)
+    return head + '\n' + notes.split('## Sources collected')[0] + '\n## Sources' + tail
 
 
 def rerender_saved():
@@ -43,7 +50,7 @@ def rerender_saved():
     spec.loader.exec_module(tool)
     for folder in saved_runs():
         state = json.loads((Path(folder) / 'state.json').read_text(encoding='utf-8'))
-        yield Path(folder).name, tool.rerender(folder), state
+        yield Path(folder).name, with_notes(tool.rerender(folder), tool.method_notes(folder)), state
 
 
 def check_conditions(case, memo, result, plan):
@@ -90,7 +97,7 @@ def check_conditions(case, memo, result, plan):
     cash = ((plan.get('net_debt_bridge') or {}).get('cash_coverage') or {}).get('excluded_reported_categories')
     if cash and 'An omitted investment category counts as zero by assumption.' in computed:
         failures.append(f'{case}: omitted-category note beside the listed excluded categories')
-    if cash and 'excluded by house policy' not in computed:
+    if cash and 'are left out of the bridge:' not in computed:
         failures.append(f'{case}: excluded cash categories not listed')
     annual = computed.split('### Annual results')[1].split('###')[0] if '### Annual results' in computed else ''
     if '| outside filings scanned' in annual.lower() and 'older filings report' not in annual:
@@ -187,7 +194,7 @@ class DataHookTests(unittest.TestCase):
                       'assumption)', text)
         self.assertIn('less preferred stock (no concept reported on the date, zero by assumption)', text)
         self.assertNotIn('not a reported fact', text)
-        self.assertIn('Reported available-for-sale debt securities of $1.8B [S1] are excluded by house policy: the '
+        self.assertIn('Reported available-for-sale debt securities of $1.8B [S1] are left out of the bridge: the '
                       'available-for-sale total is used only when no other investment category is reported.', text)
         omitted = pipeline._assumption_notes('An omitted investment category counts as zero by assumption.', result, value)
         self.assertEqual(omitted, [])
@@ -226,7 +233,7 @@ class NoteFactTests(unittest.TestCase):
         row = next(row for row in result['price_requirements']['rows'] if row['input'] == 'terminal_growth')
         if row['status'] == 'not_reachable':
             self.assertIn('| Terminal growth |', memo)
-            self.assertIn('does not change the value', memo)
+            self.assertIn('growth leaves the value unchanged', memo)
 
     def test_changes_are_true_differences_rounded(self):
         # Changes are the true difference, rounded (re-audit, 2026-11-27): 45.529 - 42.8625 is +2.7.
@@ -296,9 +303,9 @@ def wording_failures(case, memo, result, sources=()):
     if 'Every rate test moves the terminal return' in computed:
         failures.append(f'{case}: fixed rate-test sentence')
     if line:
-        shown = {'the rate methods': '| Rate method' in computed, 'the beta checks': '### Beta cross-checks' in computed,
-                 'the country-risk row': '### Country risk' in computed,
-                 'the implied return': '### What the price implies' in computed}
+        shown = {'the rate methods': '| Rate method' in computed, 'the beta checks': 'Regression beta' in computed,
+                 'the country-risk row': '| Country risk premium' in computed,
+                 'the implied return': 'One flat discount rate' in computed or 'flat discount rate' in computed}
         for phrase, present in shown.items():
             if phrase in line.lower() and not present:
                 failures.append(f'{case}: rate-test note names {phrase}, which the memo does not show')
@@ -381,7 +388,7 @@ def requirement_failures(case, memo, result, plan):
     failures = []
     if 'cannot reach the price' in computed:
         failures.append(f'{case}: "cannot reach the price" printed for a bounded search')
-    page = computed.split('**What the price needs.**')[1].split('**Conventions')[0] if '**What the price needs.**' in computed else ''
+    page = computed.split('**What the price needs.**')[1].split('\n## ')[0] if '**What the price needs.**' in computed else ''
     for row in (result.get('price_requirements') or {}).get('rows') or []:
         if row.get('status') != 'not_reachable':
             continue
@@ -390,7 +397,7 @@ def requirement_failures(case, memo, result, plan):
         reverse = pipeline._reverse_growth(result) if row.get('input') == 'revenue_growth' else None
         if reverse:
             rate = memo_style.pct(reverse[0][0])
-            if f'{rate} a year for' not in line:
+            if f'{rate} a year' not in line:
                 failures.append(f'{case}: revenue cell omits the reverse-DCF answer {rate}')
             if 'Revenue growth, one constant rate in every forecast year (reverse DCF)' not in computed:
                 failures.append(f'{case}: detail table omits the reverse-DCF row')

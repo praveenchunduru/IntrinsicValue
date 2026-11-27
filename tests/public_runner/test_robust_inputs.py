@@ -304,7 +304,7 @@ class RerenderToolTests(unittest.TestCase):
             state.write_text('{"current_memo": "x", "sources": []}', encoding='utf-8')
             code, _, err = quiet(rerender.main, [folder, str(state)])
             self.assertEqual(code, 1)
-            self.assertIn('would replace', err)
+            self.assertIn('only reads', err)  # the saved run folder is never written to
             self.assertEqual(json.loads(state.read_text(encoding='utf-8')), {'current_memo': 'x', 'sources': []})
             for out in (folder, str(Path(folder) / 'missing' / 'out.md')):
                 self.assertEqual(quiet(rerender.main, [folder, out])[0], 1)
@@ -314,10 +314,16 @@ class RerenderToolTests(unittest.TestCase):
             (Path(folder) / 'state.json').write_text(json.dumps(
                 {'ticker': 'EXMP', 'current_memo': '## 1. Valuation conclusion\n\nText.', 'sources': [], 'gaps': []}),
                 encoding='utf-8')
-            code, _, err = quiet(rerender.main, [folder, str(Path(folder) / 'memo.md')])
-            self.assertEqual(code, 0)
-            self.assertIn('no valuation', err)
-            self.assertIn('no forecast plan', err)
+            with tempfile.TemporaryDirectory() as elsewhere:
+                code, out, err = quiet(rerender.main, [folder, str(Path(elsewhere) / 'memo.md')])
+                self.assertEqual(code, 0)
+                self.assertIn('no valuation', err)
+                self.assertIn('no forecast plan', err)
+                # The memo, its method notes and the readable HTML copy are written together, outside the run.
+                for name in ('memo.md', 'method-notes.md', 'memo.html'):
+                    self.assertTrue((Path(elsewhere) / name).is_file(), name)
+                    self.assertIn(name, out)
+            self.assertEqual(sorted(path.name for path in Path(folder).iterdir()), ['state.json'])
 
 
 class ReplayToolTests(unittest.TestCase):

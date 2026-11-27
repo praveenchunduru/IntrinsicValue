@@ -406,15 +406,17 @@ class PipelineTests(unittest.TestCase):
         summary = pipeline.computed_summary(value, result)
         ratio = result['index_benchmark']['value_to_price']
         # Changed 2026-11-27 (memo redesign): the index's basis is a method note.
-        self.assertIn(f'| S&P 500 valued under the same house conventions (stylized) |  |  | {ratio:.2f} |', summary)
-        self.assertLess(summary.index('| Weighted |'), summary.index('| S&P 500'))
+        # Changed again 2026-11-27 (readability review): each ratio sits beside the index ratio.
+        self.assertIn(f'| Relative to the S&P 500 at {ratio:.2f} |', summary)
+        self.assertIn(f'values the S&P 500 at {ratio:.2f} of its price', summary)
         panel = pipeline.valuation_section(value, result)
-        self.assertIn('The S&P 500 row is a stylized index discounted at the 2026-03-01 Treasury rate of 4.50%', panel)
-        for text in ('### Other horizons', '### Rate regimes', 'Horizon rows change only', 'median base value across',
-                     'Convention rows are alternatives'):
+        self.assertIn('The S&P 500 ratio values a stylized index discounted at the 2026-03-01 Treasury rate of 4.50%', panel)
+        # Changed again 2026-11-27 (readability review): one sensitivity table holds horizons and rate regimes.
+        for text in ('### Sensitivity', 'Competitive advantage period of', 'Monthly Treasury rate and premium pairs',
+                     'Horizon rows change only', 'Convention rows are alternatives'):
             self.assertIn(text, panel)
         self.assertIn('- No industry-fade row', panel)
-        self.assertEqual(pipeline.computed_summary(value, result).count('**Conventions that move the value most.**'), 1)
+        self.assertEqual(pipeline.computed_summary(value, result).count('Of the method\'s conventions'), 1)
 
     def test_models_and_figure_checks_do_not_see_the_monthly_pairs(self):
         value = history_plan([['2021-08-01', .0123, .0431], ['2026-03-01', RF, ERP]])

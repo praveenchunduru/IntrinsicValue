@@ -331,7 +331,8 @@ class ImpliedReturnTests(unittest.TestCase):
     def test_a_solved_rate_keeps_the_summary_sentence(self):
         value = steady(glide_plan())
         result = evaluate(value)
-        self.assertIn('One flat discount rate of', pipeline.valuation_section(value, result))
+        self.assertIn('One flat discount rate in every year sets value equal to the price at',
+                      pipeline.valuation_section(value, result))
 
 
 class SalesToCapitalPathTests(unittest.TestCase):
@@ -399,7 +400,11 @@ class SalesToCapitalPathTests(unittest.TestCase):
         self.assertEqual(row['house_sales_to_capital_path'], [2, 3, 4, 4, 4])
         self.assertIn('one ratio in every explicit year', row['label'])
         summary = pipeline.computed_summary(value, result)
-        self.assertIn('| Sales-to-capital | 2.00 to 4.00 |', summary)
+        if row['status'] == 'solved':
+            self.assertIn('| Sales-to-capital | 2.00 to 4.00 |', summary)
+        else:
+            self.assertIn('sales-to-capital (', summary)
+        self.assertIn('| Sales-to-capital | 2.00 to 4.00 |', pipeline.valuation_section(value, result))
 
     def test_the_three_year_window_still_catches_a_jump_after_year_one(self):
         def checked(spec):
@@ -496,7 +501,10 @@ class ForecastReturnOnCapitalTests(unittest.TestCase):
         self.assertIn('| 10.0% |', text)
         self.assertIn('including goodwill and acquired intangibles', text)
         self.assertIn("EBIT after the plan's tax rate", text)
-        self.assertIn('### Forecast return on invested capital', pipeline.valuation_section(value, result))
+        # Changed 2026-11-27 (readability review): the memo shows the base ROIC as the forecast's last column.
+        section = pipeline.valuation_section(value, result)
+        self.assertIn('| FCFF ($', section)
+        self.assertIn(f'| {base["years"][0]["return_on_invested_capital"]:.1%} |', section)
         self.assertEqual(pipeline._forecast_roic_parts(evaluate(constant_plan()), memo_style.Style('USD')), ([], []))
 
 

@@ -25,6 +25,7 @@ from .sec_http import sec_contact_scope
 DOWNLOADS = {
     'memo.html': 'text/html; charset=utf-8',
     'memo.md': 'text/markdown; charset=utf-8',
+    'method-notes.md': 'text/markdown; charset=utf-8',
     'assumptions.json': 'application/json',
     'valuation.json': 'application/json',
     'cashflows.csv': 'text/csv; charset=utf-8',

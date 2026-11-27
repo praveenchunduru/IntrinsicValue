@@ -1,14 +1,15 @@
 """Rebuild a saved run's memo with the current rendering code, at no cost.
 
 Usage:
-  python tools/rerender.py SAVED_RUN_FOLDER OUT.md
+  python tools/rerender.py SAVED_RUN_FOLDER OUT.md [METHOD_NOTES.md]
 
-The computed parts (first page, valuation detail, reported history, method
-notes, sources and review status) are re-rendered from the saved plan,
-valuation and sources in state.json. The saved prose sections are kept as
-they are. Nothing is fetched and no model is called. OUT.md may be the run's
-own memo.md or a new file; any other existing file inside the run folder is
-refused, so the saved run cannot be overwritten.
+The computed parts (first page, appendices, notes, sources and review footer)
+are re-rendered from the saved plan, valuation and sources in state.json. The
+saved prose sections are kept as they are. The house method notes go to
+METHOD_NOTES.md, by default method-notes.md beside OUT.md, which the memo links,
+and a readable OUT.html is written beside OUT.md. Nothing is fetched and no model
+is called. The saved run folder is only read: an output path inside it is refused,
+so a saved run cannot be overwritten.
 """
 from __future__ import annotations
 
@@ -70,38 +71,51 @@ def warnings(state):
 
 
 def rerender(folder):
+    """The memo text."""
     state = _load_state(folder)
     return pipeline._render(state['current_memo'], state['sources'], state.get('gaps') or [],
                             state.get('plan') or {}, state.get('valuation'), state)
 
 
-def _output_path(folder, out):
-    """The output file, refused when it would overwrite anything saved in the run except memo.md."""
+def _output_path(folder, out, what='the memo'):
+    """An output file outside the saved run folder; the run folder is only ever read."""
     folder, out = Path(folder).resolve(), Path(out)
     target = out.resolve()
     if target.is_dir():
         raise RerenderStopped(f'{out} is a folder; give a file name such as {out / "memo.md"}')
     if not target.parent.is_dir():
         raise RerenderStopped(f'The folder {out.parent} does not exist; create it or choose another output path')
-    inside = folder in target.parents
-    if inside and target.exists() and target != folder / 'memo.md':
-        raise RerenderStopped(f'{out} is a saved file of the run in {folder}, and writing the memo there would replace '
-                              f'it; write to {folder / "memo.md"}, a new file name or a path outside the folder')
+    if folder == target.parent or folder in target.parents:
+        raise RerenderStopped(f'{out} is inside the saved run folder {folder}, which this tool only reads; '
+                              f'write {what} to a path outside it')
     return target
+
+
+def _write(path, text):
+    temp = path.with_name(path.name + '.tmp')
+    temp.write_text(text, encoding='utf-8')
+    temp.replace(path)
+
+
+def method_notes(folder):
+    """The method-notes.md text that goes beside the memo."""
+    state = _load_state(folder)
+    return pipeline.method_notes_document(state['current_memo'], state['sources'], state.get('gaps') or [],
+                                          state.get('plan') or {}, state.get('valuation'), state)
 
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
-    if len(argv) != 2:
+    if len(argv) not in (2, 3):
         print(__doc__.strip(), file=sys.stderr)
         return 2
     try:
-        target = _output_path(argv[0], argv[1])
         state = _load_state(argv[0])
-        text = rerender(argv[0])
-        temp = target.with_name(target.name + '.tmp')
-        temp.write_text(text, encoding='utf-8')
-        temp.replace(target)
+        target = _output_path(argv[0], argv[1])
+        notes = _output_path(argv[0], argv[2] if len(argv) == 3 else target.with_name(pipeline.METHOD_NOTES_FILE),
+                             'the method notes')
+        _write(target, rerender(argv[0]))
+        _write(notes, method_notes(argv[0]))
         html = memo_html.write_for(target) if target.suffix.lower() == '.md' else None
     except RerenderStopped as exc:
         print(f'rerender stopped: {exc}', file=sys.stderr)
@@ -113,7 +127,8 @@ def main(argv=None):
         return 1
     for note in warnings(state):
         print(f'rerender warning: {note}', file=sys.stderr)
-    print(argv[1])
+    print(target)
+    print(notes)
     if html:
         print(html)
     return 0

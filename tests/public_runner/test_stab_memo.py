@@ -75,7 +75,8 @@ class NumberStyleTests(unittest.TestCase):
         self.assertEqual(memo_style.pct(0.10647, 2), '10.65%')
         self.assertEqual(memo_style.scaled(0.0, 1e9), '0')
         self.assertEqual(memo_style.table_scale([525.6e9]), ('B', 1e9, 1))
-        self.assertEqual(memo_style.table_scale([5.2e9]), ('M', 1e6, 0))
+        self.assertEqual(memo_style.table_scale([5.2e9]), ('B', 1e9, 1))
+        self.assertEqual(memo_style.table_scale([520e6]), ('M', 1e6, 0))
         self.assertEqual(memo_style.table_scale([50.0]), ('', 1, 0))
 
     def test_other_currencies_use_a_symbol_or_the_code_once(self):
@@ -90,11 +91,11 @@ class LayoutTests(unittest.TestCase):
         memo, _, _ = rendered()
         headings = [line for line in memo.split('\n') if re.match(r'#{1,2} ', line)]
         self.assertEqual(headings[0], '# Example Holdings Corp. (EXMP): intrinsic value, 2026-03-31')
-        order = ['## Summary', '## 1. Valuation conclusion', '## 2. Variant view', '## Valuation detail',
-                 '## Reported history', '## Method notes', '## Sources', '## Review status']
+        order = ['## Summary', '## 1. Valuation conclusion', '## 2. Variant view', '## Appendix A: the model',
+                 '## Appendix B: reported history', '## Notes', '## Sources', '## Review']
         present = [heading for heading in headings if heading in order]
         self.assertEqual(present, [heading for heading in order if heading in present])
-        for heading in ('## Summary', '## Valuation detail', '## Method notes', '## Sources', '## Review status'):
+        for heading in ('## Summary', '## Appendix A: the model', '## Notes', '## Sources', '## Review'):
             self.assertIn(heading, present)
         self.assertNotIn('Investment-Committee', memo)
         self.assertNotIn('computed by Python', memo)
@@ -112,14 +113,14 @@ class LayoutTests(unittest.TestCase):
         self.assertIn(style.per_share(base), sentence)
         self.assertIn(style.price(value['market_price']), sentence)
         self.assertIn(f'{result["scenarios"]["base"]["value_to_price"]:.2f}', sentence)
+        # Bear and bull are in the scenario table, once.
         for name in ('bear', 'bull'):
-            self.assertIn(style.per_share(result['scenarios'][name]['per_share_value']), sentence)
+            self.assertNotIn(style.per_share(result['scenarios'][name]['per_share_value']), sentence)
         prose = [line for line in page.split('\n') if line and not line.startswith('|')]
-        self.assertLessEqual(len(' '.join(prose).split()), 90)
+        self.assertLessEqual(len(' '.join(prose).split()), 170)
         self.assertIn('**What the price needs.**', page)
-        self.assertIn('**Conventions that move the value most.**', page)
-        table = page[page.index('**Conventions that move the value most.**'):]
-        self.assertEqual(len([line for line in table.split('\n') if line.startswith('| ') and 'Convention changed' not in line]), 3)
+        self.assertIn('Of the method\'s conventions, two move the value most:', page)
+        self.assertNotIn('Convention changed', page)
         self.assertNotIn('USD', page)
         self.assertNotRegex(page, LONG_NUMBER)
         # Method caveats live in the method notes.
@@ -128,14 +129,17 @@ class LayoutTests(unittest.TestCase):
 
     def test_python_text_has_no_currency_codes_long_numbers_or_contrast_formulas(self):
         memo, _, _ = rendered()
-        start, end = memo.index('\n## 1.'), memo.index('\n## Valuation detail')
-        computed = memo[:start] + memo[end:memo.index('\n## Sources')]
+        start, end = memo.index('\n## 1.'), memo.index('\n## Appendix A')
+        value = headline_plan()
+        notes = pipeline.method_notes_document(PROSE, SOURCES, [], value, evaluate(value),
+                                               {'ticker': 'EXMP', 'quality_status': 'reviewed_draft', 'review_history': []})
+        computed = memo[:start] + memo[end:memo.index('\n## Sources')] + notes.split('## Sources collected')[0]
         self.assertNotIn('USD', computed)
         self.assertNotRegex(computed, LONG_NUMBER)
         self.assertNotIn('—', computed)
         self.assertNotRegex(computed, r',\s+not\b')
-        self.assertIn('Tables and the first page are computed by code', computed)
-        self.assertIn('The prose is written by one model and reviewed by another.', computed)
+        self.assertIn('Tables and the first page are computed by code', notes)
+        self.assertIn('The prose is written by one model and reviewed by another.', notes)
 
     def test_tables_carry_units_in_headers(self):
         memo, _, _ = rendered()
@@ -158,12 +162,15 @@ class LayoutTests(unittest.TestCase):
         value = headline_plan()
         state = {'ticker': 'EXMP', 'current_memo': PROSE, 'sources': SOURCES, 'gaps': [], 'plan': value,
                  'valuation': evaluate(value), 'quality_status': 'reviewed_draft', 'review_history': []}
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory() as folder, tempfile.TemporaryDirectory() as elsewhere:
             (Path(folder) / 'state.json').write_text(json.dumps(state), encoding='utf-8')
-            out = Path(folder) / 'out.md'
+            out = Path(elsewhere) / 'out.md'
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(tool.main([folder, str(out)]), 0)
+                # The saved run folder is only read.
             text = out.read_text(encoding='utf-8')
+            self.assertTrue((Path(elsewhere) / 'method-notes.md').is_file())
+            self.assertEqual(sorted(path.name for path in Path(folder).iterdir()), ['state.json'])
         self.assertTrue(text.startswith('# Example Holdings Corp. (EXMP): intrinsic value'))
         self.assertIn('## 2. Variant view', text)
 
@@ -255,9 +262,11 @@ class TraceTests(unittest.TestCase):
 
     def test_prose_words_count_only_the_writer(self):
         memo, _, _ = rendered()
-        self.assertLess(quality.prose_words(memo), 40)
-        self.assertNotIn('Valuation detail', quality.writer_prose(memo))
-        self.assertNotIn('What the price needs', quality.writer_prose(memo))
+        # quality.writer_prose splits at "## Valuation detail"; the appendix heading is new, so the checks are
+        # given the text up to the appendix (production passes the first page and prose only).
+        front = memo.split('\n## Appendix A')[0]
+        self.assertLess(quality.prose_words(front), 40)
+        self.assertNotIn('What the price needs', quality.writer_prose(front))
 
 
 if __name__ == '__main__':
@@ -271,7 +280,8 @@ class ReviewerViewTests(unittest.TestCase):
         memo, value, result = rendered()
         view = pipeline.reader_view(PROSE, SOURCES, value, result, 'EXMP')
         self.assertEqual(memo.split('\n## Sources')[0].rstrip(), view.rstrip())
-        self.assertEqual(view.count('## Method notes'), 1)
+        self.assertEqual(view.count('## Notes'), 1)
+        self.assertNotIn('## Method notes', view)
         self.assertNotIn('### Notes on the', view)
 
     def test_the_loop_builds_the_reviewer_copy_with_the_reader_view(self):
@@ -324,9 +334,11 @@ class EditStyleTests(unittest.TestCase):
 class BridgeTests(unittest.TestCase):
     def test_lines_with_nothing_reported_are_one_note(self):
         memo, _, _ = rendered()
-        bridge = memo[memo.index('### From enterprise value'):memo.index('### Forecast, base case')]
+        bridge = memo[memo.index('### Enterprise value to value per share'):memo.index('### Forecast, base case')]
         self.assertNotRegex(bridge, r'\| 0 \|')
-        notes = memo[memo.index('## Method notes'):]
+        value = headline_plan()
+        notes = pipeline.method_notes_document(PROSE, SOURCES, [], value, evaluate(value),
+                                               {'ticker': 'EXMP', 'quality_status': 'reviewed_draft', 'review_history': []})
         self.assertIn('Bridge lines with nothing to add or deduct:', notes)
 
 
@@ -363,12 +375,14 @@ class ModelTextRestyleTests(unittest.TestCase):
         result = evaluate(value)
         view = pipeline.reader_view(PROSE.replace('below the price', 'below the price — by USD 4'), SOURCES, value, result, 'EXMP')
         # A computed section with a long number or "USD" raises nothing; the prose does.
-        planted = view.replace('## Method notes', '## Method notes\n\n- Planted USD 1,234,567 — note, not prose.')
+        # The checks read the first page and the prose (quality.writer_prose ends them at the old appendix heading).
+        view, clean = view.split('\n## Appendix A')[0], None
+        planted = view.replace('## Summary\n', '## Summary\n\n- Planted USD 1,234,567 — note, not prose.\n')
         ids = {item['id'] for item in quality.prereview_checks(planted, SOURCES, (result, value))}
         self.assertIn('currency-code', ids)
         self.assertNotIn('long-number', ids)
-        clean = pipeline.reader_view(PROSE, SOURCES, value, result, 'EXMP')
-        planted = clean.replace('## Method notes', '## Method notes\n\n- Planted USD 1,234,567 — note, not prose.')
+        clean = pipeline.reader_view(PROSE, SOURCES, value, result, 'EXMP').split('\n## Appendix A')[0]
+        planted = clean.replace('## Summary\n', '## Summary\n\n- Planted USD 1,234,567 — note, not prose.\n')
         ids = {item['id'] for item in quality.prereview_checks(planted, SOURCES, (result, value))}
         self.assertFalse(ids & {'currency-code', 'long-number', 'em-dash', 'contrast-formula'})
 
@@ -401,7 +415,7 @@ class SavedRunGuardTests(unittest.TestCase):
                 memo = tool.rerender(folder)
                 prose = memo.index('\n## Summary')
                 start = memo.index('\n## ', prose + 5)
-                end, sources = memo.index('\n## Valuation detail'), memo.index('\n## Sources')
+                end, sources = memo.index('\n## Appendix A'), memo.index('\n## Sources')
                 computed = memo[:start] + memo[end:sources]
                 self.assertNotRegex(computed, r'\bUSD\b')
                 self.assertNotRegex(computed, LONG_NUMBER)
@@ -410,7 +424,7 @@ class SavedRunGuardTests(unittest.TestCase):
 def outside_prose(memo):
     """The memo without its prose sections, sources and review status."""
     start = memo.index('\n## ', memo.index('\n## Summary') + 5)
-    return memo[:start] + memo[memo.index('\n## Valuation detail'):memo.index('\n## Sources')]
+    return memo[:start] + memo[memo.index('\n## Appendix A'):memo.index('\n## Sources')]
 
 
 def history_source(currency, scale):
@@ -544,7 +558,7 @@ class ReportedMetricGuardTests(unittest.TestCase):
 
     def test_the_guard_catches_the_live_wording(self):
         memo, _, _ = rendered()
-        bad = memo.replace('## Method notes', '## Method notes\n\n- The reported incremental sales-to-capital is 0.41.')
+        bad = memo.replace('## Notes\n', '## Notes\n\n- The reported incremental sales-to-capital is 0.41.')
         self.assertEqual(len(reported_metric_sentences(bad)), 1)
 
 

@@ -196,7 +196,7 @@ class UnderwritingIntegrationTests(unittest.TestCase):
             self.assertNotIn('growth_rates',edited['scenarios']['base'])
             edited['operating_model']['scenarios']['base']['components']['services']['growth_rates'][0]=.1
             self.assertGreater(evaluate(edited)['scenarios']['base']['cashflows'][0]['revenue'],1000)
-        self.assertIn('## Valuation detail',valuation_section(plan,evaluate(plan)))
+        self.assertIn('## Appendix A: the model',valuation_section(plan,evaluate(plan)))
 
     def test_conflicting_dates_leases_or_comparable_financial_records_reject(self):
         mutations=[lambda p:p.update(valuation_date='2026-01-01'),

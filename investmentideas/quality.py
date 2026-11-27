@@ -523,7 +523,7 @@ def _traced(number, decimals, unit, pool):
 # The computed first page and the computed sections after the prose, in the current
 # layout and in the layout before the 2026-11-27 redesign.
 COMPUTED_FIRST_PAGE = re.compile(r'(?ms)^## (?:Valuation summary \(computed by Python\)|Summary)\n.*?(?=^#|\Z)')
-COMPUTED_AFTER_PROSE = re.compile(r'\n## (?:Executable valuation|Valuation detail)\b')
+COMPUTED_AFTER_PROSE = re.compile(r'\n## (?:Executable valuation|Valuation detail|Appendix A)\b')
 
 
 def writer_prose(memo):
@@ -554,7 +554,7 @@ _NUMBERED = re.compile(r'^##\s+\**\s*(\d+)\.\s')
 _LEGACY_TITLE = re.compile(r'^##\s+\**\s*\d+\.\s+(?:valuation conclusion|variant view)\b', re.I)
 _WORD = re.compile(r"[A-Za-z][A-Za-z'\-]*")
 # A gaps section is a list of bullets and may hold one short item; every other section argues.
-_GAPS_TITLE = re.compile(r'gaps?|unresolved|diligence|questions|limitation', re.I)
+_GAPS_TITLE = re.compile(r'\bgaps\b|unresolved|diligence|questions|limitation', re.I)
 SECTION_MIN_WORDS = 50
 GAPS_MIN_WORDS = 1
 IN_BRIEF_MIN_WORDS = 15
