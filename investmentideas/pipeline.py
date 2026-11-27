@@ -19,7 +19,7 @@ import shutil
 import time
 from urllib.request import Request, urlopen
 
-from . import core
+from . import base_rates, core
 from .costs import cost_summary
 from .analytics import annual_metrics
 from .fundamentals import yahoo_financials
@@ -565,6 +565,10 @@ def _evaluate(plan):
     costs=cost_path_continuity(plan,result)
     if costs:
         result['cost_path_continuity']=costs
+    # Published sales-growth base rates: printed for the reader and the models, never a gate.
+    rates=base_rates.compare(plan,result)
+    if rates:
+        result['base_rates']=rates
     return result
 
 
@@ -1290,7 +1294,7 @@ def _workflow_contract():
             'review':_digest(REVIEW_SCHEMA), 'sections':_digest(SECTIONS),
             'implementation':_digest({name:hashlib.sha256((root/name).read_bytes()).hexdigest()
                 for name in ('pipeline.py','prompt_context.py','quality.py','valuation.py','inputs.py','operating.py','rates.py','primary_debt.py','companyfacts.py',
-                             'evidence_tables.py','research.py')
+                             'evidence_tables.py','research.py','base_rates.py')
                 if (root/name).is_file()})}
 
 
@@ -2413,6 +2417,7 @@ def valuation_section(plan, result):
                   'Balances are not rolled forward to the quote date; the annual cash-flow model has no stub-period adjustment.']
     lines += _continuity_exhibit(result)
     lines += _scale_exhibit(plan, result, currency)
+    lines += base_rates.memo_lines(result.get('base_rates'), currency)
     lines += _market_consistency_exhibits(result, currency)
     cases=result.get('counterfactuals',{})
     if cases:
@@ -2649,18 +2654,25 @@ def computed_summary(plan, result):
                 return ''
             measure='a year compounded' if path.get('measure')=='compound_annual_growth' else 'average'
             return f'{path["over_forecast"]:.1%} {measure} over {path["years"]} years'
-        def shifted(delta,path):
+        def shifted(delta,path,note=''):
             text=f'{delta*100:+.1f} points in every explicit year'
-            return text+(f': {path["year1"]:.1%} in year 1, {over(path)}' if isinstance(path,dict) else '')
+            return text+(f': {path["year1"]:.1%} in year 1, {over(path)}{note}' if isinstance(path,dict) else '')
+        def base_rate(row,which,path):
+            # Where the compound growth falls in the published base rate for this size of company.
+            if row['input']!='revenue_growth' or not isinstance(path,dict):
+                return ''
+            return base_rates.summary_note(result.get('base_rates'),which,path.get('years'))
         for row in requirements:
-            house=(f'{row["house"]:.1%} in year 1'+(f', {over(row.get("house_path"))}' if row.get('house_path') else '')
+            house=(f'{row["house"]:.1%} in year 1'+(f', {over(row.get("house_path"))}'+base_rate(row,'house',row.get('house_path'))
+                                                    if row.get('house_path') else '')
                    if row['kind']=='shift' else
                    f'{row["house"]:.2f}' if row['input']=='sales_to_capital' else f'{row["house"]:.2%}')
             if row['status']=='solved':
-                needed=(shifted(row['needed'],row.get('needed_path')) if row['kind']=='shift' else
+                needed=(shifted(row['needed'],row.get('needed_path'),base_rate(row,'needed',row.get('needed_path')))
+                        if row['kind']=='shift' else
                         f'{row["needed"]:.2f}' if row['input']=='sales_to_capital' else f'{row["needed"]:.2%}')
             elif row['status']=='not_reachable':
-                limit=(shifted(row['at'],row.get('at_path')) if row['kind']=='shift' else
+                limit=(shifted(row['at'],row.get('at_path'),base_rate(row,'needed',row.get('at_path'))) if row['kind']=='shift' else
                        f'{row["at"]:.2f}' if row['input']=='sales_to_capital' else f'{row["at"]:.2%}')
                 needed=(f'not reachable; the closest is {money(row["closest_value"])} at {limit}, still '
                         f'{"above" if row["direction"]=="above" else "below"} the price')
@@ -3247,6 +3259,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
                   json.dumps(reinvestment_reference(state['sources']))) if reinvestment_reference(state['sources']) else '')+
                 (('\nReported operating margins (reference for the final-year margin ceilings):\n'+
                   json.dumps(cost_path_reference(state['sources']))) if cost_path_reference(state['sources']) else '')+
+                base_rates.plan_context(reported)+
                 EVIDENCE_ABOVE+'\nDiligence synthesis:\n'+thesis+'\nRetrieval gaps:\n'+gaps+
                 # A rerun after a discarded plan would otherwise resend the identical request.
                 ('\nAn earlier attempt at this plan was rejected for these reasons; avoid them: '+
@@ -3699,6 +3712,7 @@ def _run(folder,ticker,key,easy,strong,budget,evidence,progress,max_revisions,re
              if plan.get('reinvestment_reference') else '')+
             ('\nReported operating margins (reference for the final-year margin ceilings):\n'+json.dumps(plan['cost_path_reference'])
              if plan.get('cost_path_reference') else '')+
+            base_rates.result_context(result)+
             '\nComputed diagnostics for verification:\n'+json.dumps((result or {}).get('computed_diagnostics',{}))+
             '\nComputed counterfactuals:\n'+json.dumps((result or {}).get('counterfactuals',{}))+
             '\nComputed reverse-DCF projections:\n'+json.dumps((result or {}).get('reverse_dcf',{}).get('solution_projections',[]))+
